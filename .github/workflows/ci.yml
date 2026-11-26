@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      exodus_ref:
+        description: "Which exodus build to take from Kontor (a commit sha of Pymann/exodus, or latest)"
+        required: false
+        default: "latest"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      EXODUS_CACHE: ${{ github.workspace }}/__exodus_cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # exodus: requires-python >= 3.12
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang
+          clang++ --version
+
+      # exodus comes from Kontor's generic store, where exodus's own CI puts the
+      # wheel it built and tested: generic/exodus/<commit>/exodus.whl, and on main
+      # also generic/exodus/latest/.  Each value is read as a secret first, then as
+      # a repository variable, so either place works.
+      - name: Install exodus from Kontor
+        env:
+          KONTOR_URL: ${{ secrets.KONTOR_URL || vars.KONTOR_URL }}
+          KONTOR_TOKEN: ${{ secrets.KONTOR_TOKEN || vars.KONTOR_TOKEN }}
+          KONTOR_CA: ${{ secrets.KONTOR_CA || vars.KONTOR_CA }}
+          EXODUS_REF: ${{ inputs.exodus_ref || 'latest' }}
+        run: |
+          set -eu
+          missing=""
+          for v in KONTOR_URL KONTOR_TOKEN KONTOR_CA; do
+            [ -n "${!v:-}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Kontor not configured, missing:$missing (repo secrets or variables)"
+            exit 1
+          fi
+          work="$RUNNER_TEMP/kontor"
+          mkdir -p "$work"
+          printf '%s\n' "$KONTOR_CA" > "$work/ca.crt"
+          src="${KONTOR_URL%/}/generic/exodus/${EXODUS_REF}/exodus.whl"
+          # No `curl -k`: the token must not go to a server we did not verify.
+          curl --silent --show-error --fail-with-body --max-time 300 \
+               --cacert "$work/ca.crt" \
+               -H "Authorization: Bearer $KONTOR_TOKEN" \
+               -o "$work/exodus.whl" "$src"
+          # pip only takes a wheel under its proper name, which the dist-info inside says.
+          name=$(python3 - "$work/exodus.whl" <<'PY'
+          import sys, zipfile
+          names = zipfile.ZipFile(sys.argv[1]).namelist()
+          info = next(n.split("/")[0] for n in names if n.split("/")[0].endswith(".dist-info"))
+          print(info[: -len(".dist-info")] + "-py3-none-any.whl")
+          PY
+          )
+          mv "$work/exodus.whl" "$work/$name"
+          python3 -m pip install -q "$work/$name"
+          rm -f "$work/ca.crt"
+          echo "installed $name from generic/exodus/${EXODUS_REF}"
+          exodus --help > /dev/null
+
+      - name: Build
+        run: exodus build -j "$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./out/oculus/oculus --version

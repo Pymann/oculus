@@ -1,0 +1,11 @@
+{
+  "name": "oculus",
+  "version": "0.0.1",
+  "sources": ["src/**/*.cpp"],
+  "search_paths": ["src"],
+  "compiler": {
+    "name": "clang++",
+    "lang_standard": "20"
+  },
+  "werror": true
+}
