@@ -1,0 +1,35 @@
+# RuleInformation: everything a rule may read about one translation unit.  The
+# frontend fills it, after that it is never changed (doc/ir.md).  It holds no
+# reference into the frontend: the Clang worker writes it as one JSON document,
+# and Oculus reads it with sys.deserialize.  `problem` is set when the frontend
+# could not deliver it.
+
+- import: "src/ir/entities.aiml"
+
+- model:
+    name: RuleInformation
+    fields:
+      - [frontend, string, ""]
+      - [language, string, ""]
+      - [standard, string, ""]
+      - [problem, string, ""]
+      - [files, list<IrFile>]
+      - [types, list<IrType>]
+      - [decls, list<IrDecl>]
+
+# Bounds checks for uids.  Rules read a record inline with
+# `{ at: [info.types, uid] }` after the check; returning a list element by value
+# from a function is avoided (see doc/ir.md, section 12).
+- def:
+    name: info_has_type
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - return: { "&&": [{ gte: [type_uid, 0] }, { lt: [type_uid, info.types.len] }] }
+
+- def:
+    name: info_has_decl
+    args: [[info, RuleInformation], [decl_uid, i32]]
+    return: bool
+    body:
+      - return: { "&&": [{ gte: [decl_uid, 0] }, { lt: [decl_uid, info.decls.len] }] }

@@ -1,0 +1,6 @@
+bad.c:2:5
+bad_hidden.c:7:5
+bad_hidden.c:8:5
+bad_hidden.c:9:5
+bad_hidden.c:10:5
+bad_hidden.c:11:5

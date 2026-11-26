@@ -7,6 +7,7 @@
     members:
       - [scanned_units, i32, 0, { access: public }]
       - [planned_workers, i32, 0, { access: public }]
+      - [unit_problems, list<string>, null, { access: public }]
     methods:
       - def:
           name: count_unit

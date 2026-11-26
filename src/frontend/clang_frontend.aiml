@@ -1,0 +1,88 @@
+# The Clang frontend: one worker process (`oculus-clang`, worker/oculus_clang.cpp)
+# per translation unit.  The worker parses the unit with Clang and prints its
+# RuleInformation as JSON; this side reads it back with sys.deserialize.  Nothing of
+# Clang reaches the rest of Oculus.  A missing or failing worker is a problem of
+# that unit only (`unit.info.problem`), the other units go on.
+
+- import: "src/ir/ir.aiml"
+- import: "src/scan/compile_db.aiml"
+- import: "src/frontend/frontend.aiml"
+
+# The worker binary: next to the oculus executable.
+- def:
+    name: worker_path
+    args: []
+    return: string
+    body:
+      - decl: [exe, path, { call: [path.from_string, { call: [sys.exe_path] }] }]
+      - decl: [dir, path, { call: [exe.parent] }]
+      - decl: [worker, path, { call: [dir.join, "oculus-clang"] }]
+      - return: { call: [worker.to_string] }
+
+# The worker's command line for one compile command.
+- def:
+    name: worker_argv
+    args: [[cmd, CompileCommand]]
+    return: list<string>
+    body:
+      - decl: [argv, list<string>]
+      - call: [argv.push, { call: [worker_path] }]
+      - call: [argv.push, "."]
+      - call: [argv.push, cmd.file]
+      - if:
+          condition: { gt: [cmd.arguments.len, 0] }
+          then:
+            - call: [argv.push, "--"]
+            - decl: [compiler_argv, list<string>, cmd.arguments]
+            - call: [argv.extend, compiler_argv]
+          else:
+            - if:
+                condition: { gt: [cmd.command.len, 0] }
+                then:
+                  - call: [argv.push, "--command"]
+                  - call: [argv.push, cmd.command]
+      - return: argv
+
+- def:
+    name: run_worker
+    args: [[cmd, CompileCommand]]
+    return: RuleInformation
+    body:
+      - decl: [info, RuleInformation]
+      - decl: [argv, list<string>, { call: [worker_argv, cmd] }]
+      - decl: [where, string, cmd.directory]
+      - if: { condition: { eq: [where.len, 0] }, then: [{ set: [where, "."] }] }
+      - decl: [child, process, { call: [sys.exe, argv, { cwd: where, capture: true, timeout: 600000 }] }]
+      - if:
+          condition: { eq: [child, null] }
+          then:
+            - set: [info.problem, "cannot start the Clang worker for ${cmd.file}"]
+            - return: info
+      - decl: [code, i32, { call: [child.wait] }]
+      - if:
+          condition: { neq: [code, 0] }
+          then:
+            - set: [info.problem, "the Clang worker failed on ${cmd.file} (exit ${code}): ${child.stderr_buffer}"]
+            - return: info
+      - decl: [text, string, child.stdout_buffer]
+      - set: [info, { call: [sys.deserialize, text, "RuleInformation"] }]
+      - decl: [bad_json, string, { call: [sys.json_error] }]
+      - if:
+          condition: { gt: [bad_json.len, 0] }
+          then:
+            - set: [info.problem, "unreadable output of the Clang worker for ${cmd.file}: ${bad_json}"]
+      - return: info
+
+- class:
+    name: ClangFrontend
+    implements: [Frontend]
+    methods:
+      - def: { name: frontend_name, args: [], return: string, body: [{ return: "clang" }] }
+      - def:
+          name: parse_unit
+          args: [[cmd, CompileCommand]]
+          return: IrUnit
+          body:
+            - decl: [unit, IrUnit, { call: [read_unit_text, cmd] }]
+            - set: [unit.info, { call: [run_worker, cmd] }]
+            - return: unit

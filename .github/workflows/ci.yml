@@ -69,8 +69,23 @@ jobs:
           echo "$venv/bin" >> "$GITHUB_PATH"
           echo "installed aiml ${ref} into $venv"
 
+      # The newest stable LLVM from apt.llvm.org; the Clang worker is built against it.
+      - name: Install LLVM
+        run: |
+          set -eu
+          curl --silent --show-error --fail -o "$RUNNER_TEMP/llvm.sh" https://apt.llvm.org/llvm.sh
+          ver="$(sed -n 's/^CURRENT_LLVM_STABLE=\([0-9][0-9]*\).*/\1/p' "$RUNNER_TEMP/llvm.sh")"
+          [ -n "$ver" ] || { echo "::error::no CURRENT_LLVM_STABLE in llvm.sh"; exit 1; }
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$ver"
+          sudo apt-get install -y "libclang-$ver-dev" "libclang-cpp$ver-dev" "llvm-$ver-dev"
+          echo "LLVM_CONFIG=/usr/lib/llvm-$ver/bin/llvm-config" >> "$GITHUB_ENV"
+          echo "installed LLVM $ver"
+
       - name: Build
         run: aiml build
+
+      - name: Build the Clang worker
+        run: worker/build.sh
 
       - name: Test
         run: tests/run_tests.sh out/oculus/oculus

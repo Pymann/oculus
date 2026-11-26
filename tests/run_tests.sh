@@ -43,5 +43,13 @@ expect threshold 0 - "$OCULUS" -p "$FIX" --config "$FIX/oculus.json" --threshold
 expect default-limit 0 - "$OCULUS" -p "$FIX"
 expect paths 0 - "$OCULUS" "$FIX/short.cpp"
 
+# Without its Clang worker oculus must fail the unit, not report it clean.
+lonely="$(mktemp -d)"
+cp "$OCULUS" "$lonely/oculus"
+expect no-worker 2 - "$lonely/oculus" "$FIX/short.cpp"
+rm -rf "$lonely"
+
+if tests/run_catalog.sh "$OCULUS"; then :; else fails=$((fails + 1)); fi
+
 if [ "$fails" -gt 0 ]; then echo "$fails test(s) failed"; exit 1; fi
 echo "all tests passed"

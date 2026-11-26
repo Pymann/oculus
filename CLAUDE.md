@@ -9,7 +9,9 @@ to be defined; do not treat anything below as a spec.
 - Everything in this repository is in English: docs, comments, messages, CLI options,
   config keys and program symbols (classes, functions, variables, files).
 - Implementation language: AIML v2 (Pymann/aiml `masterv2`).
-- Frontend: Clang. How Oculus binds to it is open (see `doc/architecture.md`).
+- Frontend: Clang, through a C++ LibTooling worker `oculus-clang` (`worker/`), one
+  process per TU, built against the newest stable LLVM. It writes the RuleInformation
+  of `doc/ir.md` as JSON; nothing of Clang reaches the AIML side.
 - Scope: C and C++ only.
 - Name: Oculus only (binary `oculus`, config `oculus.json`). Config format: JSON only.
 - No Cppcheck and no other GPL code, not even as a reference copied from.
@@ -28,8 +30,7 @@ to be defined; do not treat anything below as a spec.
 ## Open
 
 - Target standard: MISRA C:2012 or a newer edition, and which C++ guidelines.
-- Clang binding (libclang C API through the AIML FFI, or a C++ LibTooling worker).
-- IR design and the rule interface. Draft: `doc/architecture.md`.
+- The rest of the IR (`doc/ir.md`) and the rule interface details.
 
 ## Language and layout
 
@@ -48,7 +49,12 @@ to be defined; do not treat anything below as a spec.
 - Toolchain: the aiml venv from Kontor, `generic/aiml/<commit>/aiml-x86_64-linux.tar.gz`
   (credentials in the `AIML_KONTOR_*` repo secrets). The pinned commit is
   `AIML_PINNED_REF` in `.github/workflows/ci.yml`.
-- Build: `aiml build` (reads `exodus.json`, aiml spec/68 section 7) gives `out/oculus/oculus`.
-- Test: `tests/run_tests.sh out/oculus/oculus` runs `tests/unit/*.aiml` (JIT, exit 0 = pass)
-  and the end-to-end checks against `tests/e2e/`.
+- Build: `aiml build` (reads `exodus.json`, aiml spec/68 section 7) gives `out/oculus/oculus`;
+  then `worker/build.sh` (needs `llvm-config` or `$LLVM_CONFIG`, LLVM and Clang dev
+  packages) gives `out/oculus/oculus-clang`. `aiml build` clears `out/oculus`, so the
+  worker is built after it.
+- Test: `tests/run_tests.sh out/oculus/oculus` runs `tests/unit/*.aiml` (JIT, exit 0 = pass),
+  the end-to-end checks against `tests/e2e/`, and `tests/run_catalog.sh`: the bad and good
+  examples of each implemented rule, copied from coding-rules into `tests/catalog/` with
+  `tools/sync_catalog_tests.sh`.
 - Commit directly to `main`, no pull requests.

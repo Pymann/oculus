@@ -1,0 +1,60 @@
+# Files, types and declarations of one translation unit (doc/ir.md, sections 2
+# and 5).  Every record has a dense `uid` that is its index in its table;
+# references to other records are uids, -1 meaning "none".
+
+- import: "src/ir/position.aiml"
+
+# kind: "source" (the main file), "header" or "system_header".
+- model:
+    name: IrFile
+    fields:
+      - [uid, i32, -1]
+      - [path, string, ""]
+      - [kind, string, ""]
+      - [is_main, bool, false]
+
+# One type without qualifiers.  `sugar_uid` is the next step of the typedef or
+# alias chain (-1 at its end), `canonical_uid` the type with all sugar removed.
+# The integer fields describe builtin types; `kind` is informative only.
+- model:
+    name: IrType
+    fields:
+      - [uid, i32, -1]
+      - [kind, string, ""]
+      - [name, string, ""]
+      - [canonical_uid, i32, -1]
+      - [sugar_uid, i32, -1]
+      - [decl_uid, i32, -1]
+      - [is_typedef, bool, false]
+      - [is_builtin, bool, false]
+      - [is_bool, bool, false]
+      - [is_integer, bool, false]
+      - [int_signed, bool, false]
+      - [int_width, i32, 0]
+      - [plain_char, bool, false]
+      - [is_enum, bool, false]
+      - [is_record, bool, false]
+      - [is_dependent, bool, false]
+      - [enum_underlying_uid, i32, -1]
+
+# One declaration.  `pos` is the start of the declaration (its type specifiers),
+# `name_pos` the declared name, `instantiation_pos` the point of instantiation
+# when the declaration belongs to a template instantiation (origin.instantiated).  `written_builtin` and `sign_written` keep the type
+# as spelled: plain `int` and `signed int` are one type, only the spelling differs.
+- model:
+    name: IrDecl
+    fields:
+      - [uid, i32, -1]
+      - [kind, string, ""]
+      - [name, string, ""]
+      - [pos, IrSrcPos]
+      - [name_pos, IrPos]
+      - [origin, IrOrigin]
+      - [instantiation_pos, IrPos]
+      - [type_uid, i32, -1]
+      - [parent_uid, i32, -1]
+      - [is_definition, bool, false]
+      - [is_bit_field, bool, false]
+      - [bit_width, i32, -1]
+      - [written_builtin, bool, false]
+      - [sign_written, string, ""]

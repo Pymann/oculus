@@ -29,6 +29,9 @@
                     body:
                       - decl: [cmd, CompileCommand, { at: [commands, idx] }]
                       - decl: [unit, IrUnit, { call: [<.frontend.parse_unit, cmd] }]
+                      - if:
+                          condition: { gt: [unit.info.problem.len, 0] }
+                          then: [{ call: [<.unit_problems.push, unit.info.problem] }]
                       - decl: [metrics, map<string:i32>]
                       - call: [<.line_metric.measure, unit, metrics]
                       - call: [<.check_rules, unit, metrics, opts, found]

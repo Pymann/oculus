@@ -1,0 +1,131 @@
+# OC-0040 bitfield_type of the catalogue in Pymann/coding-rules: a bit-field is
+# declared as signed int, unsigned int (written explicitly, also through typedefs)
+# or bool.  Plain `int` has implementation-defined signedness for bit-fields; enum,
+# char, short and long bit-fields are implementation-defined.
+#
+# Reads from RuleInformation: the field declarations with `is_bit_field`, their
+# origin (system headers are not reported), the canonical type, and the type as
+# written (`written_builtin`, `sign_written`), following the typedef chain until
+# a typedef spells a builtin type.  Until the catalogue is loaded, its attributes
+# are repeated in spec().
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+
+# Was `signed` or `unsigned` written for this declaration's builtin type, directly
+# or in the typedef that finally spells it?
+- def:
+    name: sign_explicit
+    args: [[info, RuleInformation], [field, IrDecl]]
+    return: bool
+    body:
+      - if: { condition: field.written_builtin, then: [{ return: { gt: [field.sign_written.len, 0] } }] }
+      - decl: [cur_uid, i32, field.type_uid]
+      - decl: [steps, i32, 0]
+      - while:
+          condition: { "&&": [{ call: [info_has_type, info, cur_uid] }, { lt: [steps, 64] }] }
+          body:
+            - decl: [cur, ref<IrType>, { at: [info.types, cur_uid] }]
+            - if:
+                condition: { "&&": [cur.is_typedef, { call: [info_has_decl, info, cur.decl_uid] }] }
+                then:
+                  - decl: [alias, ref<IrDecl>, { at: [info.decls, cur.decl_uid] }]
+                  - if: { condition: alias.written_builtin, then: [{ return: { gt: [alias.sign_written.len, 0] } }] }
+            - set: [cur_uid, cur.sugar_uid]
+            - set: [steps, { "+": [steps, 1] }]
+      - return: false
+
+- def:
+    name: bitfield_type_allowed
+    args: [[info, RuleInformation], [field, IrDecl]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_type, info, field.type_uid] }, false] }, then: [{ return: true }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, field.type_uid] }]
+      # a dependent type is decided in each instantiation, not in the template
+      - if: { condition: declared.is_dependent, then: [{ return: true }] }
+      - if: { condition: { eq: [{ call: [info_has_type, info, declared.canonical_uid] }, false] }, then: [{ return: true }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, declared.canonical_uid] }]
+      - if: { condition: canon.is_bool, then: [{ return: true }] }
+      # 1 int (needs an explicit sign), 2 unsigned int, 0 anything else
+      - decl: [kinds, map<string:i32>, { "int": 1, "unsigned int": 2 }]
+      - decl: [kind, i32, { call: [kinds.get, canon.name, 0] }]
+      - if: { condition: { eq: [kind, 2] }, then: [{ return: true }] }
+      - if: { condition: { eq: [kind, 1] }, then: [{ return: { call: [sign_explicit, info, field] } }] }
+      - return: false
+
+# The file of a finding as the user named it: the unit's own name for the main
+# file, otherwise the worker's path, relative to the compile command's directory.
+- def:
+    name: finding_file
+    args: [[unit, IrUnit], [file_uid, i32]]
+    return: string
+    body:
+      - if:
+          condition: { "&&": [{ gte: [file_uid, 0] }, { lt: [file_uid, unit.info.files.len] }] }
+          then:
+            - decl: [file, ref<IrFile>, { at: [unit.info.files, file_uid] }]
+            - if: { condition: file.is_main, then: [{ return: unit.file_name }] }
+            - if: { condition: { call: [file.path.starts_with, "/"] }, then: [{ return: file.path }] }
+            - decl: [plain, bool, { "||": [{ eq: [unit.directory.len, 0] }, { eq: [unit.directory, "."] }] }]
+            - if: { condition: plain, then: [{ return: file.path }] }
+            - return: "${unit.directory}/${file.path}"
+      - return: unit.file_name
+
+- class:
+    name: BitfieldTypeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - decl: [info, RuleSpec]
+            - set: [info.rule_id, 40]
+            - set: [info.rule_key, "safety.c90-.6.1.bitfield_type"]
+            - set: [info.title, "Bit-fields use only an explicitly signed or unsigned integer type, or bool"]
+            - set: [info.category, "safety"]
+            - set: [info.subcategory, "6.1"]
+            - set: [info.severity, "error"]
+            - call: [info.languages.push, "c"]
+            - call: [info.languages.push, "c++"]
+            - return: info
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [field, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - decl: [candidate, bool, { "&&": [field.is_bit_field, { eq: [field.origin.in_system_header, false] }] }]
+                  - if:
+                      condition: { "&&": [candidate, { eq: [{ call: [bitfield_type_allowed, info, field] }, false] }] }
+                      then:
+                        - decl: [type_name, string, ""]
+                        - if:
+                            condition: { call: [info_has_type, info, field.type_uid] }
+                            then:
+                              - decl: [declared, ref<IrType>, { at: [info.types, field.type_uid] }]
+                              - set: [type_name, declared.name]
+                        - decl: [hit, Finding]
+                        - set: [hit.file_name, { call: [finding_file, unit, field.pos.expansion.file_uid] }]
+                        - set: [hit.line, field.pos.expansion.line]
+                        - set: [hit.column, field.pos.expansion.column]
+                        - set: [hit.rule_id, 40]
+                        - set: [hit.message, "bit-field '${field.name}' has type '${type_name}'; use signed int, unsigned int or bool"]
+                        # in a template instantiation: reported where the template was instantiated
+                        - if:
+                            condition: field.origin.instantiated
+                            then:
+                              - set: [hit.file_name, { call: [finding_file, unit, field.instantiation_pos.file_uid] }]
+                              - set: [hit.line, field.instantiation_pos.line]
+                              - set: [hit.column, field.instantiation_pos.column]
+                              - set: [hit.message, "bit-field '${field.name}' has type '${type_name}' in this template instantiation; use signed int, unsigned int or bool"]
+                        - call: [out.push, hit]
+                  - set: [idx, { "+": [idx, 1] }]

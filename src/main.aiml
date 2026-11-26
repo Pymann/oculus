@@ -72,5 +72,11 @@
             - return: 2
       - decl: [found, list<Finding>, { call: [runtime.scanner.scan_units, units, opts] }]
       - call: [io.write, io.stdout, { call: [runtime.reporter.render, found, opts.format] }]
+      - if:
+          condition: { gt: [runtime.scanner.unit_problems.len, 0] }
+          then:
+            - decl: [failed, string, { call: [runtime.scanner.unit_problems.join, "\n"] }]
+            - call: [io.write, io.stderr, "oculus: ${failed}\n"]
+            - return: 2
       - if: { condition: { gt: [found.len, 0] }, then: [{ return: 1 }] }
       - return: 0

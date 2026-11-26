@@ -1,10 +1,11 @@
 # ScanRuntime wires the parts of one scan together (aiml spec/58, class groups).
-# The frontend and the metric are wired through their interfaces, so replacing the
-# stub frontend is a change of this file only.
+# The frontend and the metric are wired through their interfaces; the frontend is
+# the Clang worker (src/frontend/clang_frontend.aiml).
 
 - import: "src/config/config_io.aiml"
 - import: "src/rules/registry.aiml"
 - import: "src/frontend/frontend.aiml"
+- import: "src/frontend/clang_frontend.aiml"
 - import: "src/metrics/metric.aiml"
 - import: "src/report/reporter.aiml"
 - import: "src/scan/scanner.aiml"
@@ -18,7 +19,7 @@
       - class: RuleRegistry
         instance: registry
         constructor: [register_builtin]
-      - class: StubFrontend
+      - class: ClangFrontend
         instance: frontend
       - class: LineMetric
         instance: line_metric

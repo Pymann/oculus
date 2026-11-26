@@ -1,0 +1,29 @@
+# Positions and origin of an IR entity (doc/ir.md, section 2).  Ids are Oculus'
+# own: `file_uid` indexes RuleInformation.files.
+
+- model:
+    name: IrPos
+    fields:
+      - [file_uid, i32, -1]
+      - [line, i32, 0]
+      - [column, i32, 0]
+
+# Where the characters are written (`spelling`) and where the code takes effect
+# (`expansion`, the macro call site).  Equal when no macro is involved.
+- model:
+    name: IrSrcPos
+    fields:
+      - [spelling, IrPos]
+      - [expansion, IrPos]
+      - [from_macro, bool, false]
+
+# Where an entity comes from.  Rules filter on these flags instead of guessing from
+# text; most false positives come from code the user did not write in that place.
+- model:
+    name: IrOrigin
+    fields:
+      - [in_system_header, bool, false]
+      - [from_macro, bool, false]
+      - [from_macro_arg, bool, false]
+      - [implicit, bool, false]
+      - [instantiated, bool, false]

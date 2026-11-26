@@ -424,7 +424,37 @@ becomes: which binding can fill `Expr.implicit`, `Expr.constant`, `Type.sugar`,
 `Layout` and the `pp` events completely. The libclang C API cannot fill
 `Expr.implicit`; that remains the reason for the LibTooling worker.
 
-## 11. Open
+## 11. Implemented so far
+
+The first slice runs end to end for OC-0040 bitfield_type (C and C++):
+
+- `worker/oculus_clang.cpp` fills files (2.2, `kind` only), types (5.1: kind, name,
+  canonical, one sugar step, typedef or tag declaration, the builtin integer fields,
+  `is_dependent`) and declarations (5.3: kind, name, `SrcPos`, origin, type, parent,
+  definition, bit-field width, the written type specifiers). Declarations of system
+  headers are added only when a type refers to them.
+- `src/ir/` holds the same records as AIML models; `RuleInformation` is their
+  container and `IrUnit.info` carries it to the rules.
+
+Three fields were missing in the draft above and were found by implementing the rule:
+
+- `IrDecl.written_builtin` and `IrDecl.sign_written`: plain `int` and `signed int`
+  are one type; only the spelling of the declaration (or of the typedef that finally
+  spells the builtin type) tells them apart. `Type.sugar` alone is not enough.
+- `IrDecl.instantiation_pos`: a declaration inside a template instantiation is
+  reported at the point of instantiation, so the record has to carry it.
+- `IrType.is_dependent`: the template pattern itself must not be checked; its
+  instantiations are.
+
+## 12. Notes on the AIML side
+
+- Returning an element of a `list<Model>` by value from a function (`return: { at:
+  [list, idx] }`, also through a local copy) corrupts the strings of the list element
+  with the aiml build pinned in CI: the copy is dropped without the strings having
+  been retained. Rules therefore read records inline as `ref<...>` borrows after a
+  bounds check (`info_has_type`, `info_has_decl`). To be reported upstream.
+
+## 13. Open
 
 - Exact enums (`NodeKind`, `OpKind`, `ConversionKind`) and their numbering.
 - Serialisation of the per-TU IR from the worker (binary tables versus JSON Lines);

@@ -40,8 +40,11 @@ only speaks the C ABI and cannot call the C++ LibTooling API directly.
 Implementation language: AIML v2 (the `masterv2` line of `Pymann/aiml`), built
 with `aiml build`. The parts are wired by one class group, `ScanRuntime`
 (`src/runtime.aiml`, aiml spec/58). The frontend sits behind the `Frontend`
-interface; until the binding is decided, `StubFrontend` reads only the source
-text, so rules that need no AST (line counts) already run end to end.
+interface. **Decided and implemented:** the LibTooling worker `oculus-clang`
+(`worker/oculus_clang.cpp`), one process per TU, started by `ClangFrontend`
+(`src/frontend/clang_frontend.aiml`). It prints the RuleInformation of `doc/ir.md`
+as JSON, which Oculus reads with `sys.deserialize`. `StubFrontend` (text only)
+remains for tests.
 
 ## 3. Pipeline
 
@@ -182,17 +185,19 @@ oculus [-p BUILD_DIR] [PATHS ...]
 Done: CLI (`sys.arg_dump`), `oculus.json`, `compile_commands.json`, the
 `ScanRuntime` group, `Rule` and `MetricProvider` interfaces, the registry, one
 example rule (OC-0380 file_length from the catalogue), the line metric, text/JSON/CSV output, exit codes, unit and
-end-to-end tests in CI.
+end-to-end tests in CI. The Clang worker and RuleInformation (files, types with
+their sugar chain, declarations with origin and written type specifiers), and the
+first AST rule on it, OC-0040 bitfield_type, tested in CI against its catalogue
+examples.
 
-Not yet: the Clang frontend, the IR beyond file and function, worker processes
-(the planner computes the count, the scanner still runs the units one after
-another in one process), the thread pool, phase 2, loading the catalogue from
+Not yet: the IR beyond files, types and declarations (statements, expressions,
+preprocessor events, CFG), running several workers at once (the scanner starts
+one worker per unit, one after another), the thread pool, phase 2, loading the catalogue from
 `Pymann/coding-rules`. An unknown or malformed flag exits with 1 instead of 2,
 because `sys.arg_dump` ends the process itself.
 
 ## 8. Open
 
-- Clang binding (section 2) and implementation language.
 - Target standard.
 - IR design, including what rules need from it (RuleInformation): draft in
   `doc/ir.md`.

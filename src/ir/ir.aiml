@@ -1,6 +1,9 @@
 # Oculus' own immutable IR.  A frontend builds it from one translation unit; after
 # that nothing in Oculus touches the frontend's AST again.  This is the minimal start:
-# it grows with the rules that need more (see doc/architecture.md, "RuleInformation").
+# it grows with the rules that need more.  `info` is the RuleInformation of
+# doc/ir.md, filled by the Clang worker; `source_text` serves the line metrics.
+
+- import: "src/ir/rule_information.aiml"
 
 - model:
     name: SourceLoc
@@ -23,4 +26,6 @@
       - [file_name, string, ""]
       - [language, string, "c"]
       - [source_text, string, ""]
+      - [directory, string, ""]
       - [functions, list<IrFunction>]
+      - [info, RuleInformation]

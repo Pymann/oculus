@@ -2,6 +2,7 @@
 
 - import: "src/rules/rule.aiml"
 - import: "src/rules/file_length.aiml"
+- import: "src/rules/bitfield_type.aiml"
 
 - class:
     name: RuleRegistry
@@ -15,6 +16,8 @@
           body:
             - decl: [file_length, ptr<Rule>, { new: FileLengthRule }]
             - call: [<.rules.push, file_length]
+            - decl: [bitfield_type, ptr<Rule>, { new: BitfieldTypeRule }]
+            - call: [<.rules.push, bitfield_type]
       - def:
           name: rule_count
           args: []

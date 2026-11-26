@@ -1,0 +1,5 @@
+bad.cpp:4:5
+bad_hidden.cpp:11:5
+bad_hidden.cpp:12:5
+bad_hidden.cpp:13:5
+bad_hidden.cpp:17:17
