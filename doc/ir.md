@@ -457,6 +457,25 @@ Three fields were missing in the draft above and were found by implementing the 
 - `IrType.is_dependent`: the template pattern itself must not be checked; its
   instantiations are.
 
+Built since then, rule by rule (the models in `src/ir/` are the reference):
+
+- Statements and expressions (5.4) as one node table `IrNode` with the facts the
+  statement rules need (`has_skipped_code`, switch label counts, the default's place,
+  operator and cast spelling), see the note after 5.4.
+- The preprocessor (4) as `IrMacro`: one record per `#define`, `#undef` and
+  `#pragma`/`_Pragma` of active code outside system headers, collected by
+  `PPCallbacks` while Clang parses (`worker/unit_tables.h`, `MacroCollector`). A
+  define carries its body as spelled tokens, the parameter facts, the `#` and `##`
+  operators with their positions, and whether it uses the call site (`__FILE__`,
+  `__LINE__`, `__func__`, or a macro that does); an undef the file of the definition
+  it removes. Expansions and conditions (`MacroExp`, `Cond`) are not recorded yet.
+- `IrFile.include_guarded` for headers: Clang's multiple-include optimisation (an
+  `#ifndef` guard around everything, or `#pragma once`), or else a raw-token check
+  that every piece of code sits in some guard block (amalgamated headers have
+  several). Code in a skipped `#if` does not count, a header of directives only is
+  harmless. `included_in_declaration` marks data and X-macro files included in the
+  middle of an enum, an initializer or a namespace.
+
 ## 12. Notes on the AIML side
 
 - Returning an element of a `list<Model>` by value from a function (`return: { at:

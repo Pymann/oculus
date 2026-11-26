@@ -1,0 +1,159 @@
+# OC-0145 no_undef, OC-0362 undef_local_macros_only and OC-0144 no_keyword_macro
+# (catalogue in Pymann/coding-rules).  Read from RuleInformation.macros: #define
+# and #undef outside system headers; for #undef the file of the definition it
+# removes.  Keywords count from the standard that introduced them, for the
+# unit's language (`inline` is a C keyword from C99 on).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Adds the space-separated words, each counting from `year`.
+- def:
+    name: add_words
+    args: [[names, map<string:i32>], [text, string], [year, i32]]
+    return: map<string:i32>
+    body:
+      - decl: [result, map<string:i32>, names]
+      - decl: [words, list<string>, { call: [text.split, " "] }]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, words.len] }
+          body:
+            - call: [result.set, { at: [words, idx] }, year]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: result
+
+# The keywords of C or C++ with the year of the standard that made them one, and
+# the standard macros, which count from the first standard (year 1).
+- def:
+    name: reserved_names
+    args: [[cxx, bool]]
+    return: map<string:i32>
+    body:
+      - decl: [names, map<string:i32>]
+      - set: [names, { call: [add_words, names, "assert NULL errno offsetof EOF setjmp va_arg va_start va_end va_copy defined __FILE__ __LINE__ __DATE__ __TIME__ __STDC__ __STDC_VERSION__ __STDC_HOSTED__ __cplusplus", 1] }]
+      - set: [names, { call: [add_words, names, "auto break case char const continue default do double else enum extern float for goto if int long register return short signed sizeof static struct switch typedef union unsigned void volatile while", 1] }]
+      - if:
+          condition: cxx
+          then:
+            - set: [names, { call: [add_words, names, "and and_eq asm bitand bitor bool catch class compl const_cast delete dynamic_cast explicit export false friend inline mutable namespace new not not_eq operator or or_eq private protected public reinterpret_cast static_cast template this throw true try typeid typename using virtual wchar_t xor xor_eq", 1998] }]
+            - set: [names, { call: [add_words, names, "alignas alignof char16_t char32_t constexpr decltype noexcept nullptr static_assert thread_local", 2011] }]
+            - set: [names, { call: [add_words, names, "char8_t concept consteval constinit co_await co_return co_yield requires", 2020] }]
+            - return: names
+      - set: [names, { call: [add_words, names, "inline restrict _Bool _Complex _Imaginary", 1999] }]
+      - set: [names, { call: [add_words, names, "_Alignas _Alignof _Atomic _Generic _Noreturn _Static_assert _Thread_local", 2011] }]
+      - set: [names, { call: [add_words, names, "alignas alignof bool constexpr false nullptr static_assert thread_local true typeof typeof_unqual _BitInt _Decimal32 _Decimal64 _Decimal128", 2023] }]
+      - return: names
+
+# The year of the unit's standard; unknown: the first standard of its language.
+- def:
+    name: unit_year
+    args: [[info, RuleInformation]]
+    return: i32
+    body:
+      - decl: [year, i32, { call: [standard_year, info.standard] }]
+      - if: { condition: { gt: [year, 0] }, then: [{ return: year }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^c\\+\\+$", info.language] }, 0] }, then: [{ return: 1998 }] }
+      - return: 1990
+
+- def:
+    name: keyword_message
+    args: [[rec, ref<IrMacro>]]
+    return: string
+    body:
+      - decl: [word, string, { call: [directive_word, rec] }]
+      - return: "${word} ${rec.name}: the name is a keyword or a standard macro"
+
+- def:
+    name: directive_word
+    args: [[rec, ref<IrMacro>]]
+    return: string
+    body:
+      - if: { condition: { eq: [{ call: [regex.search, "^define$", rec.kind] }, 0] }, then: [{ return: "#define" }] }
+      - return: "#undef"
+
+- class:
+    name: NoUndefRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 145, "style.c90-.12.2.no_undef", "#undef is not used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { eq: [{ call: [regex.search, "^undef$", rec.kind] }, 0] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 145, "#undef ${rec.name}: a macro whose meaning changes within the file is hard to follow"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: UndefLocalMacrosOnlyRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 362, "style.cpp98-.12.2.undef_local_macros_only", "#undef is applied only to macros defined earlier in the same file", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^undef$", rec.kind] }, 0] }, { gte: [rec.defined_file_uid, 0] }, { neq: [rec.defined_file_uid, rec.pos.file_uid] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 362, "#undef ${rec.name} removes a macro defined in another file"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoKeywordMacroRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 144, "safety.c90-.12.2.no_keyword_macro", "No macro has the name of a keyword", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [cxx, bool, { eq: [{ call: [regex.search, "^c\\+\\+$", info.language] }, 0] }]
+            - decl: [reserved, map<string:i32>, { call: [reserved_names, cxx] }]
+            - decl: [year, i32, { call: [unit_year, info] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ gt: [{ call: [reserved.get, rec.name, 0] }, 0] }, { lte: [{ call: [reserved.get, rec.name, 0] }, year] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 144, { call: [keyword_message, rec] }] }]
+                  - set: [idx, { "+": [idx, 1] }]

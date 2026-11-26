@@ -19,7 +19,7 @@ LibTooling. The interface is specified in AIML. The C header is generated from i
 
 - `src/frontend/clang_shim.aiml`: the field ids, as `wire` enums (`ClangUnitText`,
   `ClangDeclNum`, `ClangPosWhich`, ...), and the ABI version `ClangShimAbi.version`.
-- `src/frontend/inproc_frontend.aiml`: the `extern: "C"` block with the 13 functions.
+- `src/frontend/inproc_frontend.aiml`: the `extern: "C"` block with the 19 functions.
   It lives there because an `extern` declaration is visible only in its own file.
 - `tools/gen_shim_header.py` turns both into `out/gen/oculus_shim.h`.
   `worker/oculus_shim.cpp` includes that header, so a definition that differs from
@@ -37,10 +37,13 @@ The functions:
 | `oc_dropped_flag(unit, index)` | compiler flags Clang did not know (dropped, unit parsed again) |
 | `oc_file_text/num`, `oc_type_text/num`, `oc_decl_text/num(unit, index, field)` | one field of one record |
 | `oc_decl_pos(unit, index, which, part)` | one part (`file_uid`, `line`, `column`) of one position of a declaration |
+| `oc_node_text/num/pos`, `oc_macro_text/num/pos` | the same for statement nodes and preprocessor records |
 
 The rules of the interface:
 
-- **Copied, not borrowed.** `oc_parse` walks the AST once and copies the records
+- **Copied, not borrowed.** `oc_parse` parses with a frontend action of its own: the
+  preprocessor callbacks record the macros and directives while Clang parses, and
+  when Sema is done the AST is walked once and copied into records
   (`worker/unit_tables.h`, the same code the JSON worker uses). The AST is freed
   before `oc_parse` returns. A unit handle holds plain records, never a Clang pointer.
 - **Null-safe and range-checked.** A null unit, a wrong index or a wrong field

@@ -49,6 +49,10 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("path", file.path);
                     out.attribute("kind", file.kind);
                     out.attribute("is_main", file.is_main);
+                    out.attribute("include_guarded", file.include_guarded);
+                    out.attribute("first_line", static_cast<int64_t>(file.first_line));
+                    out.attribute("first_column", static_cast<int64_t>(file.first_column));
+                    out.attribute("included_in_declaration", file.included_in_declaration);
                 });
             }
         });
@@ -156,6 +160,29 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("label_count", node.label_count);
                     out.attribute("clause_count", node.clause_count);
                     out.attribute("has_skipped_code", node.has_skipped_code);
+                });
+            }
+        });
+        out.attributeArray("macros", [&] {
+            for (const MacroRec &macro : tables->macros) {
+                out.object([&] {
+                    out.attribute("uid", macro.uid);
+                    out.attribute("kind", macro.kind);
+                    out.attribute("name", macro.name);
+                    out.attribute("body", macro.body);
+                    write_pos(out, "pos", macro.pos);
+                    write_pos(out, "name_pos", macro.name_pos);
+                    out.attribute("function_like", macro.function_like);
+                    out.attribute("variadic", macro.variadic);
+                    out.attribute("param_count", macro.param_count);
+                    out.attribute("stringize_count", macro.stringize_count);
+                    out.attribute("paste_count", macro.paste_count);
+                    write_pos(out, "first_operator", macro.first_operator);
+                    write_pos(out, "second_operator", macro.second_operator);
+                    write_pos(out, "stringize_paste", macro.stringize_paste);
+                    out.attribute("uses_call_site", macro.uses_call_site);
+                    out.attribute("line_count", macro.line_count);
+                    out.attribute("defined_file_uid", macro.defined_file_uid);
                 });
             }
         });

@@ -29,6 +29,9 @@
     - def: { name: oc_node_text, args: [[unit, ptr], [index, i32], [field, i32]], return: string }
     - def: { name: oc_node_num, args: [[unit, ptr], [index, i32], [field, i32]], return: i32 }
     - def: { name: oc_node_pos, args: [[unit, ptr], [index, i32], [which, i32], [part, i32]], return: i32 }
+    - def: { name: oc_macro_text, args: [[unit, ptr], [index, i32], [field, i32]], return: string }
+    - def: { name: oc_macro_num, args: [[unit, ptr], [index, i32], [field, i32]], return: i32 }
+    - def: { name: oc_macro_pos, args: [[unit, ptr], [index, i32], [which, i32], [part, i32]], return: i32 }
 
 - def:
     name: shim_pos
@@ -65,6 +68,10 @@
       - set: [file.path, { call: [oc_file_text, unit, index, ClangFileText.path] }]
       - set: [file.kind, { call: [oc_file_text, unit, index, ClangFileText.kind] }]
       - set: [file.is_main, { eq: [{ call: [oc_file_num, unit, index, ClangFileNum.is_main] }, 1] }]
+      - set: [file.include_guarded, { eq: [{ call: [oc_file_num, unit, index, ClangFileNum.include_guarded] }, 1] }]
+      - set: [file.first_line, { call: [oc_file_num, unit, index, ClangFileNum.first_line] }]
+      - set: [file.first_column, { call: [oc_file_num, unit, index, ClangFileNum.first_column] }]
+      - set: [file.included_in_declaration, { eq: [{ call: [oc_file_num, unit, index, ClangFileNum.included_in_declaration] }, 1] }]
       - return: file
 
 - def:
@@ -185,6 +192,42 @@
       - set: [rec.has_skipped_code, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.has_skipped_code] }, 1] }]
       - return: rec
 
+- def:
+    name: shim_macro_pos
+    args: [[unit, ptr], [index, i32], [which, i32]]
+    return: IrPos
+    body:
+      - decl: [pos, IrPos]
+      - set: [pos.file_uid, { call: [oc_macro_pos, unit, index, which, ClangPosPart.file_uid] }]
+      - set: [pos.line, { call: [oc_macro_pos, unit, index, which, ClangPosPart.line] }]
+      - set: [pos.column, { call: [oc_macro_pos, unit, index, which, ClangPosPart.column] }]
+      - return: pos
+
+- def:
+    name: shim_macro
+    args: [[unit, ptr], [index, i32]]
+    return: IrMacro
+    body:
+      - decl: [rec, IrMacro]
+      - set: [rec.uid, index]
+      - set: [rec.kind, { call: [oc_macro_text, unit, index, ClangMacroText.kind] }]
+      - set: [rec.name, { call: [oc_macro_text, unit, index, ClangMacroText.name] }]
+      - set: [rec.body, { call: [oc_macro_text, unit, index, ClangMacroText.body] }]
+      - set: [rec.pos, { call: [shim_macro_pos, unit, index, ClangMacroPos.directive] }]
+      - set: [rec.name_pos, { call: [shim_macro_pos, unit, index, ClangMacroPos.name_pos] }]
+      - set: [rec.first_operator, { call: [shim_macro_pos, unit, index, ClangMacroPos.first_operator] }]
+      - set: [rec.second_operator, { call: [shim_macro_pos, unit, index, ClangMacroPos.second_operator] }]
+      - set: [rec.stringize_paste, { call: [shim_macro_pos, unit, index, ClangMacroPos.stringize_paste] }]
+      - set: [rec.function_like, { eq: [{ call: [oc_macro_num, unit, index, ClangMacroNum.function_like] }, 1] }]
+      - set: [rec.variadic, { eq: [{ call: [oc_macro_num, unit, index, ClangMacroNum.variadic] }, 1] }]
+      - set: [rec.param_count, { call: [oc_macro_num, unit, index, ClangMacroNum.param_count] }]
+      - set: [rec.stringize_count, { call: [oc_macro_num, unit, index, ClangMacroNum.stringize_count] }]
+      - set: [rec.paste_count, { call: [oc_macro_num, unit, index, ClangMacroNum.paste_count] }]
+      - set: [rec.uses_call_site, { eq: [{ call: [oc_macro_num, unit, index, ClangMacroNum.uses_call_site] }, 1] }]
+      - set: [rec.line_count, { call: [oc_macro_num, unit, index, ClangMacroNum.line_count] }]
+      - set: [rec.defined_file_uid, { call: [oc_macro_num, unit, index, ClangMacroNum.defined_file_uid] }]
+      - return: rec
+
 # Everything of one parsed unit, copied out of the shim.
 - def:
     name: shim_info
@@ -232,6 +275,13 @@
           condition: { lt: [idx, total] }
           body:
             - call: [info.nodes.push, { call: [shim_node, unit, idx] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - set: [idx, 0]
+      - set: [total, { call: [oc_unit_num, unit, ClangUnitNum.macro_count] }]
+      - while:
+          condition: { lt: [idx, total] }
+          body:
+            - call: [info.macros.push, { call: [shim_macro, unit, idx] }]
             - set: [idx, { "+": [idx, 1] }]
       - return: info
 

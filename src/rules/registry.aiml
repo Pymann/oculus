@@ -12,6 +12,9 @@
 - import: "src/rules/switches.aiml"
 - import: "src/rules/operators.aiml"
 - import: "src/rules/handlers.aiml"
+- import: "src/rules/macro_operators.aiml"
+- import: "src/rules/macro_names.aiml"
+- import: "src/rules/directives.aiml"
 
 - class:
     name: RuleRegistry
@@ -69,6 +72,22 @@
             - call: [<.rules.push, no_unary_plus]
             - decl: [rethrow_handler, ptr<Rule>, { new: RethrowInHandlerRule }]
             - call: [<.rules.push, rethrow_handler]
+            - decl: [no_stringize, ptr<Rule>, { new: NoStringizeOrPasteRule }]
+            - call: [<.rules.push, no_stringize]
+            - decl: [stringize_paste, ptr<Rule>, { new: NoStringizeThenPasteRule }]
+            - call: [<.rules.push, stringize_paste]
+            - decl: [single_operator, ptr<Rule>, { new: SingleStringizeOrPasteRule }]
+            - call: [<.rules.push, single_operator]
+            - decl: [no_undef, ptr<Rule>, { new: NoUndefRule }]
+            - call: [<.rules.push, no_undef]
+            - decl: [undef_local, ptr<Rule>, { new: UndefLocalMacrosOnlyRule }]
+            - call: [<.rules.push, undef_local]
+            - decl: [keyword_macro, ptr<Rule>, { new: NoKeywordMacroRule }]
+            - call: [<.rules.push, keyword_macro]
+            - decl: [no_pragma, ptr<Rule>, { new: NoPragmaRule }]
+            - call: [<.rules.push, no_pragma]
+            - decl: [include_guards, ptr<Rule>, { new: IncludeGuardsRule }]
+            - call: [<.rules.push, include_guards]
       - def:
           name: rule_count
           args: []

@@ -1,0 +1,3 @@
+#define TEMPORARY_LIMIT 4
+int limit = TEMPORARY_LIMIT;
+#undef TEMPORARY_LIMIT

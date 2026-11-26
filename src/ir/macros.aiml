@@ -1,0 +1,35 @@
+# Preprocessor directives (doc/ir.md, section 5.5): one record per #define,
+# #undef and #pragma (or _Pragma) of active code outside system headers, in
+# source order.  `pos` is the # of the directive (a _Pragma written in a macro body:
+# its place in the #define).  Positions of a missing part have line 0.
+#
+# define: `body` the replacement tokens separated by single spaces (at most about
+# 4 KB), the parameter facts, the # and ## operators (# counts only in
+# function-like macros), `uses_call_site` when the body names __FILE__, __LINE__,
+# __func__ and the like or a macro that does.  undef: `defined_file_uid` the file
+# of the definition it removes, -1 if the name was not defined, -2 if it was
+# defined outside any file (command line, predefines).  pragma: `body` the text
+# from the # (or _Pragma) to the end of the line.
+
+- import: "src/ir/position.aiml"
+
+- model:
+    name: IrMacro
+    fields:
+      - [uid, i32, -1]
+      - [kind, string, ""]
+      - [name, string, ""]
+      - [body, string, ""]
+      - [pos, IrPos]
+      - [name_pos, IrPos]
+      - [function_like, bool, false]
+      - [variadic, bool, false]
+      - [param_count, i32, 0]
+      - [stringize_count, i32, 0]
+      - [paste_count, i32, 0]
+      - [first_operator, IrPos]
+      - [second_operator, IrPos]
+      - [stringize_paste, IrPos]
+      - [uses_call_site, bool, false]
+      - [line_count, i32, 1]
+      - [defined_file_uid, i32, -1]

@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 3;
+constexpr int32_t OC_SHIM_ABI = 4;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -117,6 +117,7 @@ OC_EXPORT int32_t oc_unit_num(void *unit, int32_t field) {
     case ClangUnitNum_decl_count: return static_cast<int32_t>(res->decls.size());
     case ClangUnitNum_dropped_count: return static_cast<int32_t>(res->dropped.size());
     case ClangUnitNum_node_count: return static_cast<int32_t>(res->nodes.size());
+    case ClangUnitNum_macro_count: return static_cast<int32_t>(res->macros.size());
     default: return -1;
     }
 }
@@ -143,10 +144,17 @@ OC_EXPORT char *oc_file_text(void *unit, int32_t index, int32_t field) {
 OC_EXPORT int32_t oc_file_num(void *unit, int32_t index, int32_t field) {
     const UnitResult *res = unit_of(unit);
     const FileRec *file = res != nullptr ? record_at(res->files, index) : nullptr;
-    if (file == nullptr || field != ClangFileNum_is_main) {
+    if (file == nullptr) {
         return -1;
     }
-    return flag(file->is_main);
+    switch (field) {
+    case ClangFileNum_is_main: return flag(file->is_main);
+    case ClangFileNum_include_guarded: return flag(file->include_guarded);
+    case ClangFileNum_first_line: return static_cast<int32_t>(file->first_line);
+    case ClangFileNum_first_column: return static_cast<int32_t>(file->first_column);
+    case ClangFileNum_included_in_declaration: return flag(file->included_in_declaration);
+    default: return -1;
+    }
 }
 
 OC_EXPORT char *oc_type_text(void *unit, int32_t index, int32_t field) {
@@ -312,6 +320,61 @@ OC_EXPORT int32_t oc_node_pos(void *unit, int32_t index, int32_t which, int32_t 
     }
     const Pos *pos = which == ClangPosWhich_spelling ? &node->pos.spelling
                    : which == ClangPosWhich_expansion ? &node->pos.expansion : nullptr;
+    if (pos == nullptr) {
+        return -1;
+    }
+    switch (part) {
+    case ClangPosPart_file_uid: return pos->file;
+    case ClangPosPart_line: return static_cast<int32_t>(pos->line);
+    case ClangPosPart_column: return static_cast<int32_t>(pos->column);
+    default: return -1;
+    }
+}
+
+OC_EXPORT char *oc_macro_text(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const MacroRec *macro = res != nullptr ? record_at(res->macros, index) : nullptr;
+    if (macro == nullptr) {
+        return fresh("");
+    }
+    switch (field) {
+    case ClangMacroText_kind: return fresh(macro->kind);
+    case ClangMacroText_name: return fresh(macro->name);
+    case ClangMacroText_body: return fresh(macro->body);
+    default: return fresh("");
+    }
+}
+
+OC_EXPORT int32_t oc_macro_num(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const MacroRec *macro = res != nullptr ? record_at(res->macros, index) : nullptr;
+    if (macro == nullptr) {
+        return -1;
+    }
+    switch (field) {
+    case ClangMacroNum_function_like: return flag(macro->function_like);
+    case ClangMacroNum_variadic: return flag(macro->variadic);
+    case ClangMacroNum_param_count: return macro->param_count;
+    case ClangMacroNum_stringize_count: return macro->stringize_count;
+    case ClangMacroNum_paste_count: return macro->paste_count;
+    case ClangMacroNum_uses_call_site: return flag(macro->uses_call_site);
+    case ClangMacroNum_line_count: return macro->line_count;
+    case ClangMacroNum_defined_file_uid: return macro->defined_file_uid;
+    default: return -1;
+    }
+}
+
+OC_EXPORT int32_t oc_macro_pos(void *unit, int32_t index, int32_t which, int32_t part) {
+    const UnitResult *res = unit_of(unit);
+    const MacroRec *macro = res != nullptr ? record_at(res->macros, index) : nullptr;
+    if (macro == nullptr) {
+        return -1;
+    }
+    const Pos *pos = which == ClangMacroPos_directive ? &macro->pos
+                   : which == ClangMacroPos_name_pos ? &macro->name_pos
+                   : which == ClangMacroPos_first_operator ? &macro->first_operator
+                   : which == ClangMacroPos_second_operator ? &macro->second_operator
+                   : which == ClangMacroPos_stringize_paste ? &macro->stringize_paste : nullptr;
     if (pos == nullptr) {
         return -1;
     }

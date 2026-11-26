@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 3
+      - version: 4
 
 - enum:
     name: ClangUnitText
@@ -42,6 +42,7 @@
       - decl_count
       - dropped_count
       - node_count
+      - macro_count
 
 - enum:
     name: ClangFileText
@@ -55,6 +56,10 @@
     wire: true
     values:
       - is_main
+      - include_guarded
+      - first_line
+      - first_column
+      - included_in_declaration
 
 - enum:
     name: ClangTypeText
@@ -159,6 +164,38 @@
       - label_count
       - clause_count
       - has_skipped_code
+
+- enum:
+    name: ClangMacroText
+    wire: true
+    values:
+      - kind
+      - name
+      - body
+
+- enum:
+    name: ClangMacroNum
+    wire: true
+    values:
+      - function_like
+      - variadic
+      - param_count
+      - stringize_count
+      - paste_count
+      - uses_call_site
+      - line_count
+      - defined_file_uid
+
+# Which position of a macro record.
+- enum:
+    name: ClangMacroPos
+    wire: true
+    values:
+      - directive
+      - name_pos
+      - first_operator
+      - second_operator
+      - stringize_paste
 
 # Which position of a declaration, and which part of it.
 - enum:

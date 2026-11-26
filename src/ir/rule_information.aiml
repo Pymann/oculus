@@ -7,6 +7,7 @@
 
 - import: "src/ir/entities.aiml"
 - import: "src/ir/nodes.aiml"
+- import: "src/ir/macros.aiml"
 
 - model:
     name: RuleInformation
@@ -22,6 +23,7 @@
       - [types, list<IrType>]
       - [decls, list<IrDecl>]
       - [nodes, list<IrNode>]
+      - [macros, list<IrMacro>]
 
 # Bounds checks for uids.  Rules read a record inline with
 # `{ at: [info.types, uid] }` after the check; returning a list element by value

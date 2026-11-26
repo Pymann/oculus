@@ -20,17 +20,25 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
 #include "clang/Frontend/ASTUnit.h"
-#include "clang/Lex/PreprocessingRecord.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/FrontendAction.h"
+#include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/Lexer.h"
+#include "clang/Lex/MacroInfo.h"
+#include "clang/Lex/PPCallbacks.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/ArgumentsAdjusters.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/StringSaver.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -69,6 +77,37 @@ struct FileRec {
     std::string path;
     std::string kind;   // source | header | system_header
     bool is_main = false;
+    // headers: protected against a second inclusion (#ifndef guard or #pragma
+    // once, as Clang's multiple-include optimisation sees it), and where the
+    // first token after the leading comments is
+    bool include_guarded = true;
+    unsigned first_line = 0;
+    unsigned first_column = 0;
+    // headers: the #include sits inside a declaration (an enum, an initializer, a
+    // namespace): a data or X-macro file, meant to be included more than once
+    bool included_in_declaration = false;
+};
+
+// One #define, #undef or #pragma (or _Pragma) outside system headers, in source
+// order.  Recorded while the preprocessor runs; only directives of active code.
+struct MacroRec {
+    int uid = 0;
+    std::string kind;           // define | undef | pragma
+    std::string name;           // the macro; for a pragma ""
+    std::string body;           // define: replacement tokens, spaced; pragma: its text
+    Pos pos;                    // the # of the directive (pragma: # or _Pragma)
+    Pos name_pos;
+    bool function_like = false;
+    bool variadic = false;
+    int param_count = 0;
+    int stringize_count = 0;    // # operators (function-like macros only)
+    int paste_count = 0;        // ## operators
+    Pos first_operator;         // ## : its left operand; # : the # itself
+    Pos second_operator;        // the second # or ## operator
+    Pos stringize_paste;        // a ## right after `#param`
+    bool uses_call_site = false;  // __FILE__, __LINE__, __func__ ... or a macro that does
+    int line_count = 1;         // lines of the definition (backslash continuations)
+    int defined_file_uid = -1;  // undef: file of the definition it removes; -2 none in a file
 };
 
 struct TypeRec {
@@ -178,7 +217,10 @@ public:
         }
         FileRec rec;
         rec.uid = static_cast<int>(files.size());
-        rec.path = sm_.getFilename(loc).str();
+        // "./x.h" (a header found next to its includer) is named "x.h"
+        llvm::SmallString<256> path(sm_.getFilename(loc));
+        llvm::sys::path::remove_dots(path, false);
+        rec.path = std::string(path.str());
         rec.is_main = fid == sm_.getMainFileID();
         SrcMgr::CharacteristicKind kind = sm_.getFileCharacteristic(loc);
         if (rec.is_main) {
@@ -522,17 +564,26 @@ public:
         return false;
     }
 
-    // The ranges the preprocessor skipped (#if not taken), by file: sorted
-    // start offsets.  Read before the collectors run.
-    void note_skipped(PreprocessingRecord *record) {
-        if (record == nullptr) return;
-        for (SourceRange range : record->getSkippedRanges()) {
-            SourceLocation start = range.getBegin();
-            if (start.isInvalid() || !start.isFileID()) continue;
-            std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(start);
-            skipped_[at.first].push_back(at.second);
-        }
-        for (auto &entry : skipped_) std::sort(entry.second.begin(), entry.second.end());
+    // A range the preprocessor skipped (#if not taken), kept by file as start
+    // offsets; sorted by finish_files.
+    void note_skipped(SourceRange range) {
+        SourceLocation start = range.getBegin();
+        if (start.isInvalid() || !start.isFileID()) return;
+        std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(start);
+        unsigned length = sm_.getFileOffset(range.getEnd()) >= at.second
+                              ? sm_.getFileOffset(range.getEnd()) - at.second : 0;
+        skipped_[at.first].push_back({at.second, at.second + length});
+    }
+
+    // Is the offset inside a skipped range of the file?
+    bool offset_skipped(FileID fid, unsigned offset) const {
+        auto known = skipped_.find(fid);
+        if (known == skipped_.end()) return false;
+        auto next = std::upper_bound(known->second.begin(), known->second.end(),
+                                     std::make_pair(offset, ~0u));
+        if (next == known->second.begin()) return false;
+        --next;
+        return offset >= next->first && offset <= next->second;
     }
 
     // Does the preprocessor skip any code between the two ends of `range`?
@@ -545,8 +596,126 @@ public:
         if (from.first != upto.first) return false;
         auto known = skipped_.find(from.first);
         if (known == skipped_.end()) return false;
-        auto next = std::lower_bound(known->second.begin(), known->second.end(), from.second);
-        return next != known->second.end() && *next <= upto.second;
+        auto next = std::lower_bound(known->second.begin(), known->second.end(),
+                                     std::make_pair(from.second, 0u));
+        return next != known->second.end() && next->first <= upto.second;
+    }
+
+    // A file the preprocessor enters, so that headers with nothing else recorded
+    // are known too.
+    void note_entered(SourceLocation loc) {
+        if (loc.isValid() && loc.isFileID()) file_of(loc);
+    }
+
+    // Is `loc` in a real file of the user (not a system header, not the command
+    // line or the predefines)?
+    bool user_file_loc(SourceLocation loc) const {
+        if (loc.isInvalid() || !loc.isFileID()) return false;
+        if (!sm_.getFileEntryRefForID(sm_.getFileID(loc))) return false;
+        return !sm_.isInSystemHeader(loc);
+    }
+
+    void note_define(Preprocessor &pp, const Token &name, const MacroDirective *directive) {
+        SourceLocation loc = name.getLocation();
+        const MacroInfo *info = directive != nullptr ? directive->getMacroInfo() : nullptr;
+        if (info == nullptr || !user_file_loc(loc)) return;
+        MacroRec rec = directive_rec("define", pp, name);
+        rec.function_like = info->isFunctionLike();
+        rec.variadic = info->isVariadic();
+        rec.param_count = static_cast<int>(info->getNumParams());
+        rec.line_count = static_cast<int>(sm_.getSpellingLineNumber(info->getDefinitionEndLoc()) -
+                                          sm_.getSpellingLineNumber(info->getDefinitionLoc())) + 1;
+        llvm::ArrayRef<Token> tokens = info->tokens();
+        int operators = 0;
+        for (size_t at = 0; at < tokens.size(); ++at) {
+            const Token &tok = tokens[at];
+            bool stringize = tok.is(tok::hash) && rec.function_like;
+            bool paste = tok.is(tok::hashhash);
+            if (stringize || paste) {
+                ++operators;
+                if (stringize) ++rec.stringize_count; else ++rec.paste_count;
+                if (operators == 1) {
+                    rec.first_operator = pos_of(paste && at > 0 ? tokens[at - 1].getLocation() : tok.getLocation());
+                } else if (operators == 2) {
+                    rec.second_operator = pos_of(tok.getLocation());
+                }
+                if (stringize && at + 2 < tokens.size() && tokens[at + 2].is(tok::hashhash) &&
+                    rec.stringize_paste.line == 0) {
+                    rec.stringize_paste = pos_of(tokens[at + 2].getLocation());
+                }
+            }
+            if (const IdentifierInfo *ident = tok.getIdentifierInfo()) {
+                llvm::StringRef word = ident->getName();
+                if (word == "__FILE__" || word == "__LINE__" || word == "__func__" ||
+                    word == "__FUNCTION__" || word == "__PRETTY_FUNCTION__" ||
+                    word == "__FILE_NAME__" || call_site_macros_.count(word.str()) > 0) {
+                    rec.uses_call_site = true;
+                }
+            }
+            if (rec.body.size() < 4096) {
+                if (!rec.body.empty()) rec.body += ' ';
+                rec.body += pp.getSpelling(tok);
+            }
+        }
+        if (rec.uses_call_site) call_site_macros_.insert(rec.name);
+        macros.push_back(rec);
+    }
+
+    void note_undef(Preprocessor &pp, const Token &name, const MacroDefinition &definition) {
+        if (!user_file_loc(name.getLocation())) return;
+        MacroRec rec = directive_rec("undef", pp, name);
+        if (const MacroInfo *info = definition.getMacroInfo()) {
+            SourceLocation defined = info->getDefinitionLoc();
+            bool in_file = defined.isValid() && defined.isFileID() &&
+                           sm_.getFileEntryRefForID(sm_.getFileID(defined));
+            rec.defined_file_uid = in_file ? file_of(defined) : -2;
+        }
+        macros.push_back(rec);
+    }
+
+    // #pragma and _Pragma.  A _Pragma written in a macro body is placed at the
+    // #define (its spelling); one from a system macro is not recorded.
+    void note_pragma(SourceLocation loc) {
+        SourceLocation spelled = sm_.getSpellingLoc(loc);
+        if (!user_file_loc(spelled)) return;
+        MacroRec rec;
+        rec.uid = static_cast<int>(macros.size());
+        rec.kind = "pragma";
+        rec.pos = pos_of(spelled);
+        rec.name_pos = rec.pos;
+        bool invalid = false;
+        const char *text = sm_.getCharacterData(spelled, &invalid);
+        if (!invalid && text != nullptr) {
+            for (const char *at = text; *at != '\0' && *at != '\n' && rec.body.size() < 512; ++at) {
+                rec.body += *at;
+            }
+        }
+        macros.push_back(rec);
+    }
+
+    // After the preprocessor is done: the include guards of the headers, and the
+    // skipped ranges in order.  A header counts as protected when Clang's
+    // multiple-include optimisation sees a guard or #pragma once, or when every
+    // piece of code in it sits in some guard block (several guarded blocks one
+    // after the other, as in an amalgamated header); a header of directives only
+    // is harmless when included again.  `first_line`/`first_column`: the first
+    // token of code outside any guard.
+    void finish_files(Preprocessor &pp) {
+        for (auto &entry : skipped_) std::sort(entry.second.begin(), entry.second.end());
+        HeaderSearch &search = pp.getHeaderSearchInfo();
+        for (const auto &entry : file_ids_) {
+            FileRec &rec = files[static_cast<size_t>(entry.second)];
+            if (rec.kind != "header") continue;
+            OptionalFileEntryRef file = sm_.getFileEntryRefForID(entry.first);
+            if (!file) continue;
+            if (search.isFileMultipleIncludeGuarded(*file)) continue;
+            SourceLocation unguarded = unguarded_code(entry.first, pp.getLangOpts());
+            if (unguarded.isInvalid()) continue;
+            rec.include_guarded = false;
+            rec.first_line = sm_.getSpellingLineNumber(unguarded);
+            rec.first_column = sm_.getSpellingColumnNumber(unguarded);
+            rec.included_in_declaration = included_in_declaration(sm_.getIncludeLoc(entry.first));
+        }
     }
 
     // Interns one statement or expression (NodeCollector).
@@ -682,8 +851,109 @@ public:
     }
 
     std::vector<NodeRec> nodes;
+    std::vector<MacroRec> macros;
 
 private:
+    // The first token of code in the file that no guard block protects (invalid
+    // if there is none).  A guard block is a top-level `#ifndef NAME` or
+    // `#if !defined NAME` whose next directive is `#define NAME`, up to its
+    // `#endif`; an `#else` or `#elif` of it is not protected.
+    SourceLocation unguarded_code(FileID fid, const LangOptions &lang) const {
+        Lexer lexer(fid, sm_.getBufferOrFake(fid), sm_, lang);
+        Token tok;
+        lexer.LexFromRawLexer(tok);
+        int depth = 0;
+        bool guarded = false;
+        std::string pending;   // guard name waiting for its #define
+        while (tok.isNot(tok::eof)) {
+            if (tok.is(tok::hash) && tok.isAtStartOfLine()) {
+                std::vector<std::string> words;
+                lexer.LexFromRawLexer(tok);
+                while (tok.isNot(tok::eof) && !tok.isAtStartOfLine()) {
+                    words.push_back(tok.is(tok::raw_identifier) ? tok.getRawIdentifier().str()
+                                                                 : std::string(tok::getPunctuatorSpelling(tok.getKind()) ? tok::getPunctuatorSpelling(tok.getKind()) : ""));
+                    lexer.LexFromRawLexer(tok);
+                }
+                std::string name = words.empty() ? "" : words[0];
+                if (!pending.empty()) {
+                    guarded = name == "define" && words.size() > 1 && words[1] == pending;
+                    pending.clear();
+                }
+                if (name == "if" || name == "ifdef" || name == "ifndef") {
+                    if (depth == 0) {
+                        guarded = false;
+                        if (name == "ifndef" && words.size() > 1) {
+                            pending = words[1];
+                        } else if (name == "if" && words.size() > 3 && words[1] == "!" && words[2] == "defined") {
+                            pending = words[3] == "(" && words.size() > 4 ? words[4] : words[3];
+                        }
+                    }
+                    ++depth;
+                } else if (name == "endif") {
+                    if (depth > 0) --depth;
+                    if (depth == 0) guarded = false;
+                } else if ((name == "else" || name == "elif") && depth == 1) {
+                    guarded = false;
+                }
+                continue;
+            }
+            if (!(depth > 0 && guarded) && !offset_skipped(fid, sm_.getFileOffset(tok.getLocation()))) {
+                return tok.getLocation();
+            }
+            lexer.LexFromRawLexer(tok);
+        }
+        return SourceLocation();
+    }
+
+    // Does `include_loc` lie inside a declaration of the TU (looking through
+    // extern "C" blocks, which wrap ordinary includes)?
+    bool included_in_declaration(SourceLocation include_loc) const {
+        if (include_loc.isInvalid()) return false;
+        std::vector<const DeclContext *> todo{context_.getTranslationUnitDecl()};
+        while (!todo.empty()) {
+            const DeclContext *scope = todo.back();
+            todo.pop_back();
+            for (const Decl *decl : scope->decls()) {
+                if (const auto *linkage = dyn_cast<LinkageSpecDecl>(decl)) {
+                    if (linkage->hasBraces()) {
+                        todo.push_back(linkage);
+                        continue;
+                    }
+                }
+                SourceLocation first = sm_.getExpansionLoc(decl->getBeginLoc());
+                SourceLocation last = sm_.getExpansionLoc(decl->getEndLoc());
+                if (first.isInvalid() || last.isInvalid()) continue;
+                if (sm_.isBeforeInTranslationUnit(first, include_loc) &&
+                    sm_.isBeforeInTranslationUnit(include_loc, last)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // The record of a #define or #undef: its name and where its # is.
+    MacroRec directive_rec(const char *kind, Preprocessor &pp, const Token &name) {
+        MacroRec rec;
+        rec.uid = static_cast<int>(macros.size());
+        rec.kind = kind;
+        rec.name = pp.getSpelling(name);
+        SourceLocation loc = name.getLocation();
+        rec.name_pos = pos_of(loc);
+        rec.pos = rec.name_pos;
+        std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(loc);
+        llvm::StringRef buffer = sm_.getBufferData(at.first);
+        for (unsigned back = at.second; back > 0; --back) {
+            char ch = buffer[back - 1];
+            if (ch == '\n') break;
+            if (ch == '#') {
+                rec.pos = pos_of(loc.getLocWithOffset(-static_cast<int>(at.second - back + 1)));
+                break;
+            }
+        }
+        return rec;
+    }
+
     // The type specifiers as written: is the declared type spelled as a builtin
     // type, and was `signed` or `unsigned` written?  Plain `int` and `signed int`
     // are the same type, only the spelling tells them apart.
@@ -718,7 +988,36 @@ private:
     std::map<const Type *, int> type_ids_;
     std::map<const NamedDecl *, int> decl_ids_;
     std::map<const Stmt *, std::string> default_order_;
-    std::map<FileID, std::vector<unsigned>> skipped_;
+    std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> skipped_;
+    std::set<std::string> call_site_macros_;
+};
+
+// Feeds the preprocessor's events into the tables.
+class MacroCollector : public PPCallbacks {
+public:
+    MacroCollector(std::shared_ptr<Tables> tables, Preprocessor &pp) : tables_(std::move(tables)), pp_(pp) {}
+
+    void FileChanged(SourceLocation loc, FileChangeReason reason, SrcMgr::CharacteristicKind,
+                     FileID) override {
+        if (reason == EnterFile) tables_->note_entered(loc);
+    }
+    void MacroDefined(const Token &name, const MacroDirective *directive) override {
+        tables_->note_define(pp_, name, directive);
+    }
+    void MacroUndefined(const Token &name, const MacroDefinition &definition,
+                        const MacroDirective *) override {
+        tables_->note_undef(pp_, name, definition);
+    }
+    void PragmaDirective(SourceLocation loc, PragmaIntroducerKind) override {
+        tables_->note_pragma(loc);
+    }
+    void SourceRangeSkipped(SourceRange range, SourceLocation) override {
+        tables_->note_skipped(range);
+    }
+
+private:
+    std::shared_ptr<Tables> tables_;
+    Preprocessor &pp_;
 };
 
 class Collector : public RecursiveASTVisitor<Collector> {
@@ -881,6 +1180,8 @@ struct UnitResult {
     std::vector<TypeRec> types;
     std::vector<DeclRec> decls;
     std::vector<NodeRec> nodes;
+    std::vector<MacroRec> macros;
+    bool parsed = false;   // the AST was built (with or without compile errors)
 };
 
 // The argv of a `command` string of compile_commands.json.
@@ -893,6 +1194,63 @@ inline std::vector<std::string> tokenize_command(const std::string &line) {
     for (const char *piece : pieces) argv.emplace_back(piece);
     return argv;
 }
+
+// Copies the AST into the tables once Sema is done with the unit (template
+// instantiation at the end of the TU included); the AST is freed afterwards.
+class UnitConsumer : public ASTConsumer {
+public:
+    UnitConsumer(std::shared_ptr<Tables> tables, Preprocessor &pp, UnitResult &result)
+        : tables_(std::move(tables)), pp_(pp), result_(result) {}
+
+    void HandleTranslationUnit(ASTContext &context) override {
+        const LangOptions &lang = context.getLangOpts();
+        result_.language = lang.CPlusPlus ? "c++" : "c";
+        result_.standard = LangStandard::getLangStandardForKind(lang.LangStd).getName();
+        Tables &tables = *tables_;
+        tables.finish_files(pp_);
+        Collector collector(tables, context.getSourceManager());
+        collector.TraverseDecl(context.getTranslationUnitDecl());
+        NodeCollector node_collector(tables, context.getSourceManager());
+        node_collector.TraverseDecl(context.getTranslationUnitDecl());
+        result_.files = std::move(tables.files);
+        result_.types = std::move(tables.types);
+        result_.decls = std::move(tables.decls);
+        result_.nodes = std::move(tables.nodes);
+        result_.macros = std::move(tables.macros);
+        result_.parsed = true;
+    }
+
+private:
+    std::shared_ptr<Tables> tables_;
+    Preprocessor &pp_;
+    UnitResult &result_;
+};
+
+// Parses the unit with the macro collector attached to the preprocessor.
+class UnitAction : public ASTFrontendAction {
+public:
+    explicit UnitAction(UnitResult &result) : result_(result) {}
+
+protected:
+    std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &instance, llvm::StringRef) override {
+        auto tables = std::make_shared<Tables>(instance.getASTContext());
+        Preprocessor &pp = instance.getPreprocessor();
+        pp.addPPCallbacks(std::make_unique<MacroCollector>(tables, pp));
+        return std::make_unique<UnitConsumer>(tables, pp, result_);
+    }
+
+private:
+    UnitResult &result_;
+};
+
+class UnitActionFactory : public tooling::FrontendActionFactory {
+public:
+    explicit UnitActionFactory(UnitResult &result) : result_(result) {}
+    std::unique_ptr<FrontendAction> create() override { return std::make_unique<UnitAction>(result_); }
+
+private:
+    UnitResult &result_;
+};
 
 // Parses FILE in DIRECTORY with the compiler argv of its compile command (argv[0]
 // is the compiler; empty: a plain `clang -c FILE`).  Flags Clang does not know are
@@ -907,20 +1265,19 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
     if (!resource_dir.empty()) {
         command_argv.insert(command_argv.begin() + 1, "-resource-dir=" + resource_dir);
     }
-    std::vector<std::unique_ptr<ASTUnit>> units;
     CountingDiagConsumer quiet;
+    std::vector<std::string> dropped;
     for (int attempt = 0; attempt < 4; ++attempt) {
-        units.clear();
+        result = UnitResult();
         quiet = CountingDiagConsumer();
         SingleCommandDatabase database(tooling::CompileCommand(directory, file, command_argv, ""));
         tooling::ClangTool tool(database, {file});
         tool.appendArgumentsAdjuster(tooling::getClangStripOutputAdjuster());
         tool.appendArgumentsAdjuster(tooling::getClangStripDependencyFileAdjuster());
-        // Keeps the skipped #if ranges (and later the macro records) for the rules.
-        tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
-            {"-Xclang", "-detailed-preprocessing-record"}, tooling::ArgumentInsertPosition::END));
         tool.setDiagnosticConsumer(&quiet);
-        tool.buildASTs(units);
+        tool.setPrintErrorMessage(false);
+        UnitActionFactory factory(result);
+        tool.run(&factory);
         if (quiet.unknown_args.empty()) {
             break;
         }
@@ -928,30 +1285,19 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
             auto at = std::find(command_argv.begin() + 1, command_argv.end(), flag);
             if (at != command_argv.end()) {
                 command_argv.erase(at);
-                result.dropped.push_back(flag);
+                dropped.push_back(flag);
             }
         }
     }
-    if (units.empty() || !units.front()) {
+    result.dropped = dropped;
+    if (!result.parsed) {
+        result = UnitResult();
+        result.dropped = dropped;
         result.problem = "clang could not parse " + file;
         return result;
     }
-    ASTContext &context = units.front()->getASTContext();
-    const LangOptions &lang = context.getLangOpts();
-    result.language = lang.CPlusPlus ? "c++" : "c";
-    result.standard = LangStandard::getLangStandardForKind(lang.LangStd).getName();
-    Tables tables(context);
-    tables.note_skipped(units.front()->getPreprocessor().getPreprocessingRecord());
-    Collector collector(tables, context.getSourceManager());
-    collector.TraverseDecl(context.getTranslationUnitDecl());
-    NodeCollector node_collector(tables, context.getSourceManager());
-    node_collector.TraverseDecl(context.getTranslationUnitDecl());
     result.compile_errors = quiet.errors;
     result.first_error = quiet.first;
-    result.files = std::move(tables.files);
-    result.types = std::move(tables.types);
-    result.decls = std::move(tables.decls);
-    result.nodes = std::move(tables.nodes);
     return result;
 }
 

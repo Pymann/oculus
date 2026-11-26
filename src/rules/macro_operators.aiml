@@ -1,0 +1,98 @@
+# OC-0150 no_stringize_or_paste, OC-0151 no_stringize_then_paste and OC-0320
+# single_stringize_or_paste (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation.macros: the # and ## operators of each #define outside system
+# headers (# counts only in function-like macros, where it is an operator).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: operator_message
+    args: [[rec, ref<IrMacro>]]
+    return: string
+    body:
+      - if: { condition: { gt: [rec.paste_count, 0] }, then: [{ return: "macro '${rec.name}' uses the ## operator" }] }
+      - return: "macro '${rec.name}' uses the # operator"
+
+- class:
+    name: NoStringizeOrPasteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 150, "style.c90-.12.2.no_stringize_or_paste", "The # and ## operators are not used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^define$", rec.kind] }, 0] }, { gt: [{ "+": [rec.stringize_count, rec.paste_count] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.first_operator, 150, { call: [operator_message, rec] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoStringizeThenPasteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 151, "safety.c90-.12.2.no_stringize_then_paste", "A parameter after # is not directly followed by ##", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^define$", rec.kind] }, 0] }, { gt: [rec.stringize_paste.line, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.stringize_paste, 151, "macro '${rec.name}' pastes the result of #; the order of # and ## is unspecified"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: SingleStringizeOrPasteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 320, "style.cpp98-.12.2.single_stringize_or_paste", "A macro definition contains at most one # or ## operator", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^define$", rec.kind] }, 0] }, { gt: [{ "+": [rec.stringize_count, rec.paste_count] }, 1] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.second_operator, 320, "macro '${rec.name}' has more than one # or ## operator; their order is unspecified"] }]
+                  - set: [idx, { "+": [idx, 1] }]

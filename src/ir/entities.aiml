@@ -12,6 +12,15 @@
       - [path, string, ""]
       - [kind, string, ""]
       - [is_main, bool, false]
+      # headers: protected against a second inclusion (an #ifndef guard around
+      # all code, or several guarded blocks, or #pragma once; a header of
+      # directives only counts as protected), else the first token of code
+      # outside a guard; and whether it is included inside a declaration (a data
+      # or X-macro file)
+      - [include_guarded, bool, true]
+      - [first_line, i32, 0]
+      - [first_column, i32, 0]
+      - [included_in_declaration, bool, false]
 
 # One type without qualifiers.  `sugar_uid` is the next step of the typedef or
 # alias chain (-1 at its end), `canonical_uid` the type with all sugar removed.
