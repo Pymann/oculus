@@ -34,5 +34,14 @@ The command line adds `-I` and `-D` to the ones of `oculus.json`, and its `--std
 wins. `.c` files are parsed as C, `.cc`, `.cpp`, `.cxx`, `.C` and C++ headers as C++.
 What the fallback cannot know: flags that differ from file to file, defines set by
 the build system or the toolchain (`-DCONFIG_...`, target macros of a cross compiler),
-and the target itself. Missing include paths show up as unresolved types; a rule
-then sees less than in the real build, so it reports less, not more.
+and the target itself. That is why the compilation database is the normal way to run
+Oculus, and the fallback only a convenience for small projects.
+
+## Units that do not compile
+
+A unit that Clang cannot compile cleanly (a missing include path or define, an
+unknown type, a flag of another compiler that changes the meaning) is **not checked**:
+it gives no findings at all, oculus names it with its first error and exits with 2.
+A partial parse would show the rules wrong types and missing declarations, and a
+finding from a broken parse is worse than none. Fix the flags (better: use the
+compilation database of the real build) and run again.

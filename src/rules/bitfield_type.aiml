@@ -12,6 +12,7 @@
 - import: "src/ir/ir.aiml"
 - import: "src/report/finding.aiml"
 - import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
 
 # Was `signed` or `unsigned` written for this declaration's builtin type, directly
 # or in the typedef that finally spells it?
@@ -54,24 +55,6 @@
       - if: { condition: { eq: [kind, 2] }, then: [{ return: true }] }
       - if: { condition: { eq: [kind, 1] }, then: [{ return: { call: [sign_explicit, info, field] } }] }
       - return: false
-
-# The file of a finding as the user named it: the unit's own name for the main
-# file, otherwise the worker's path, relative to the compile command's directory.
-- def:
-    name: finding_file
-    args: [[unit, IrUnit], [file_uid, i32]]
-    return: string
-    body:
-      - if:
-          condition: { "&&": [{ gte: [file_uid, 0] }, { lt: [file_uid, unit.info.files.len] }] }
-          then:
-            - decl: [file, ref<IrFile>, { at: [unit.info.files, file_uid] }]
-            - if: { condition: file.is_main, then: [{ return: unit.file_name }] }
-            - if: { condition: { call: [file.path.starts_with, "/"] }, then: [{ return: file.path }] }
-            - decl: [plain, bool, { "||": [{ eq: [unit.directory.len, 0] }, { eq: [unit.directory, "."] }] }]
-            - if: { condition: plain, then: [{ return: file.path }] }
-            - return: "${unit.directory}/${file.path}"
-      - return: unit.file_name
 
 - class:
     name: BitfieldTypeRule

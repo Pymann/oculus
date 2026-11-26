@@ -83,13 +83,14 @@
       - if:
           condition: { gt: [runtime.scanner.unclean_units.len, 0] }
           then:
-            - decl: [unclean, string, { call: [runtime.scanner.unclean_units.join, "\noculus: warning: "] }]
-            - call: [io.write, io.stderr, "oculus: warning: ${runtime.scanner.unclean_units.len} unit(s) did not compile cleanly; rules saw only what Clang recovered\noculus: warning: ${unclean}\n"]
+            - decl: [unclean, string, { call: [runtime.scanner.unclean_units.join, "\noculus: error: "] }]
+            - call: [io.write, io.stderr, "oculus: error: ${runtime.scanner.unclean_units.len} unit(s) did not compile; they were not checked and give no findings (fix the flags: doc/compile_commands.md)\noculus: error: ${unclean}\n"]
       - if:
           condition: { gt: [runtime.scanner.unit_problems.len, 0] }
           then:
             - decl: [failed, string, { call: [runtime.scanner.unit_problems.join, "\n"] }]
             - call: [io.write, io.stderr, "oculus: ${failed}\n"]
             - return: 2
+      - if: { condition: { gt: [runtime.scanner.unclean_units.len, 0] }, then: [{ return: 2 }] }
       - if: { condition: { gt: [found.len, 0] }, then: [{ return: 1 }] }
       - return: 0

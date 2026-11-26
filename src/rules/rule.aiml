@@ -17,6 +17,8 @@
       - [severity, string, "warn"]
       - [on_by_default, bool, true]
       - [languages, list<string>]
+      # the oldest language standard the rule applies to, as a year (0 = all)
+      - [from_year, i32, 0]
 
 # How a project configures one rule: one entry of the `rules` list of oculus.json,
 # `rule` being the rule id.  An empty severity and a limit of 0 mean "the rule's

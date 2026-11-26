@@ -1,0 +1,36 @@
+# OC-0277 no_virtual_base (catalogue in Pymann/coding-rules), C++ only.  Read
+# from RuleInformation: the base specifiers of class definitions, recorded as nodes
+# of kind CXXBaseSpecifier with detail "virtual".
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: NoVirtualBaseRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 277, "style.cpp98-.15.2.no_virtual_base", "Classes are not derived from virtual bases", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^CXXBaseSpecifier$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^virtual$", rec.detail] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 277, "virtual base class; virtual inheritance changes layout, construction order and allowed casts"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

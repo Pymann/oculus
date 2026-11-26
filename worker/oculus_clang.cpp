@@ -72,6 +72,10 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("is_record", type.is_record);
                     out.attribute("is_dependent", type.is_dependent);
                     out.attribute("enum_underlying_uid", type.enum_underlying_uid);
+                    out.attribute("array_kind", type.array_kind);
+                    out.attribute("array_size", type.array_size);
+                    out.attribute("element_uid", type.element_uid);
+                    out.attribute("is_pointer", type.is_pointer);
                 });
             }
         });
@@ -102,6 +106,51 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("bit_width", decl.bit_width);
                     out.attribute("written_builtin", decl.written_builtin);
                     out.attribute("sign_written", decl.sign_written);
+                    out.attribute("tag", decl.tag);
+                    out.attribute("storage", decl.storage);
+                    out.attribute("is_inline", decl.is_inline);
+                    out.attribute("is_local", decl.is_local);
+                    out.attribute("is_param", decl.is_param);
+                    out.attribute("param_count", decl.param_count);
+                    out.attribute("virtual_bases", decl.virtual_bases);
+                    out.attribute("is_scoped", decl.is_scoped);
+                    out.attribute("is_fixed", decl.is_fixed);
+                    out.attribute("has_init", decl.has_init);
+                    out.attribute("constant_init", decl.constant_init);
+                    out.attribute("overrides", decl.overrides);
+                    out.attribute("override_written", decl.override_written);
+                    out.attribute("is_noreturn", decl.is_noreturn);
+                    out.attribute("returns_void", decl.returns_void);
+                    out.attribute("explicit_specialization", decl.explicit_specialization);
+                    out.attribute("has_restrict", decl.has_restrict);
+                    out.attribute("in_extern_c", decl.in_extern_c);
+                    out.attribute("is_main", decl.is_main);
+                    out.attribute("field_index", decl.field_index);
+                    out.attribute("field_count", decl.field_count);
+                    out.attribute("target", decl.target);
+                    out.attribute("in_instantiation", decl.in_instantiation);
+                    out.attribute("array_size_literal", decl.array_size_literal);
+                    out.attribute("is_mutated", decl.is_mutated);
+                });
+            }
+        });
+        out.attributeArray("nodes", [&] {
+            for (const NodeRec &node : tables->nodes) {
+                out.object([&] {
+                    out.attribute("uid", node.uid);
+                    out.attribute("kind", node.kind);
+                    out.attribute("detail", node.detail);
+                    out.attributeObject("pos", [&] {
+                        write_pos(out, "spelling", node.pos.spelling);
+                        write_pos(out, "expansion", node.pos.expansion);
+                        out.attribute("from_macro", node.pos.from_macro);
+                    });
+                    out.attribute("in_system_header", node.in_system_header);
+                    out.attribute("from_macro", node.from_macro);
+                    out.attribute("parent_uid", node.parent_uid);
+                    out.attribute("function_uid", node.function_uid);
+                    out.attribute("ref_uid", node.ref_uid);
+                    out.attribute("child_count", node.child_count);
                 });
             }
         });

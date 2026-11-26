@@ -52,6 +52,8 @@ for fe in inproc json; do
     expect "fallback-cli/$fe" 1 tests/e2e/expected_fallback.txt sh -c "\"$OCULUS\" --frontend $fe -I $FB/inc -D WITH_FIELDS --std c11 $FB/main.c 2>/dev/null"
     expect "fallback-config/$fe" 1 tests/e2e/expected_fallback.txt sh -c "\"$OCULUS\" --frontend $fe --config $FB/oculus.json $FB/main.c 2>/dev/null"
     expect "fallback-no-define/$fe" 0 - sh -c "\"$OCULUS\" --frontend $fe -I $FB/inc $FB/main.c 2>/dev/null"
+    # Without the include path the unit does not compile: no findings, exit 2.
+    expect "unclean-no-findings/$fe" 2 - sh -c "out=\$(\"$OCULUS\" --frontend $fe -D WITH_FIELDS $FB/main.c 2>/dev/null); rc=\$?; [ -z \"\$out\" ] && exit \$rc; echo \"\$out\"; exit 9"
 
     if tests/run_catalog.sh "$OCULUS" $fe; then :; else fails=$((fails + 1)); fi
 done

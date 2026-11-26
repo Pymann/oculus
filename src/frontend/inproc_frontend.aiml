@@ -26,6 +26,9 @@
     - def: { name: oc_decl_text, args: [[unit, ptr], [index, i32], [field, i32]], return: string }
     - def: { name: oc_decl_num, args: [[unit, ptr], [index, i32], [field, i32]], return: i32 }
     - def: { name: oc_decl_pos, args: [[unit, ptr], [index, i32], [which, i32], [part, i32]], return: i32 }
+    - def: { name: oc_node_text, args: [[unit, ptr], [index, i32], [field, i32]], return: string }
+    - def: { name: oc_node_num, args: [[unit, ptr], [index, i32], [field, i32]], return: i32 }
+    - def: { name: oc_node_pos, args: [[unit, ptr], [index, i32], [which, i32], [part, i32]], return: i32 }
 
 - def:
     name: shim_pos
@@ -87,6 +90,10 @@
       - set: [rec.is_record, { call: [type_flag, unit, index, ClangTypeNum.is_record] }]
       - set: [rec.is_dependent, { call: [type_flag, unit, index, ClangTypeNum.is_dependent] }]
       - set: [rec.enum_underlying_uid, { call: [oc_type_num, unit, index, ClangTypeNum.enum_underlying_uid] }]
+      - set: [rec.array_kind, { call: [oc_type_text, unit, index, ClangTypeText.array_kind] }]
+      - set: [rec.array_size, { call: [oc_type_num, unit, index, ClangTypeNum.array_size] }]
+      - set: [rec.element_uid, { call: [oc_type_num, unit, index, ClangTypeNum.element_uid] }]
+      - set: [rec.is_pointer, { call: [type_flag, unit, index, ClangTypeNum.is_pointer] }]
       - return: rec
 
 - def:
@@ -115,6 +122,62 @@
       - set: [rec.bit_width, { call: [oc_decl_num, unit, index, ClangDeclNum.bit_width] }]
       - set: [rec.written_builtin, { call: [decl_flag, unit, index, ClangDeclNum.written_builtin] }]
       - set: [rec.sign_written, { call: [oc_decl_text, unit, index, ClangDeclText.sign_written] }]
+      - set: [rec.tag, { call: [oc_decl_text, unit, index, ClangDeclText.tag] }]
+      - set: [rec.storage, { call: [oc_decl_text, unit, index, ClangDeclText.storage] }]
+      - set: [rec.target, { call: [oc_decl_text, unit, index, ClangDeclText.target] }]
+      - set: [rec.is_inline, { call: [decl_flag, unit, index, ClangDeclNum.is_inline] }]
+      - set: [rec.is_local, { call: [decl_flag, unit, index, ClangDeclNum.is_local] }]
+      - set: [rec.is_param, { call: [decl_flag, unit, index, ClangDeclNum.is_param] }]
+      - set: [rec.is_scoped, { call: [decl_flag, unit, index, ClangDeclNum.is_scoped] }]
+      - set: [rec.is_fixed, { call: [decl_flag, unit, index, ClangDeclNum.is_fixed] }]
+      - set: [rec.has_init, { call: [decl_flag, unit, index, ClangDeclNum.has_init] }]
+      - set: [rec.constant_init, { call: [decl_flag, unit, index, ClangDeclNum.constant_init] }]
+      - set: [rec.override_written, { call: [decl_flag, unit, index, ClangDeclNum.override_written] }]
+      - set: [rec.is_noreturn, { call: [decl_flag, unit, index, ClangDeclNum.is_noreturn] }]
+      - set: [rec.returns_void, { call: [decl_flag, unit, index, ClangDeclNum.returns_void] }]
+      - set: [rec.explicit_specialization, { call: [decl_flag, unit, index, ClangDeclNum.explicit_specialization] }]
+      - set: [rec.has_restrict, { call: [decl_flag, unit, index, ClangDeclNum.has_restrict] }]
+      - set: [rec.in_extern_c, { call: [decl_flag, unit, index, ClangDeclNum.in_extern_c] }]
+      - set: [rec.is_main, { call: [decl_flag, unit, index, ClangDeclNum.is_main] }]
+      - set: [rec.param_count, { call: [oc_decl_num, unit, index, ClangDeclNum.param_count] }]
+      - set: [rec.virtual_bases, { call: [oc_decl_num, unit, index, ClangDeclNum.virtual_bases] }]
+      - set: [rec.overrides, { call: [oc_decl_num, unit, index, ClangDeclNum.overrides] }]
+      - set: [rec.field_index, { call: [oc_decl_num, unit, index, ClangDeclNum.field_index] }]
+      - set: [rec.field_count, { call: [oc_decl_num, unit, index, ClangDeclNum.field_count] }]
+      - set: [rec.in_instantiation, { call: [decl_flag, unit, index, ClangDeclNum.in_instantiation] }]
+      - set: [rec.array_size_literal, { call: [decl_flag, unit, index, ClangDeclNum.array_size_literal] }]
+      - set: [rec.is_mutated, { call: [decl_flag, unit, index, ClangDeclNum.is_mutated] }]
+      - return: rec
+
+- def:
+    name: shim_node_pos
+    args: [[unit, ptr], [index, i32], [which, i32]]
+    return: IrPos
+    body:
+      - decl: [pos, IrPos]
+      - set: [pos.file_uid, { call: [oc_node_pos, unit, index, which, ClangPosPart.file_uid] }]
+      - set: [pos.line, { call: [oc_node_pos, unit, index, which, ClangPosPart.line] }]
+      - set: [pos.column, { call: [oc_node_pos, unit, index, which, ClangPosPart.column] }]
+      - return: pos
+
+- def:
+    name: shim_node
+    args: [[unit, ptr], [index, i32]]
+    return: IrNode
+    body:
+      - decl: [rec, IrNode]
+      - set: [rec.uid, index]
+      - set: [rec.kind, { call: [oc_node_text, unit, index, ClangNodeText.kind] }]
+      - set: [rec.detail, { call: [oc_node_text, unit, index, ClangNodeText.detail] }]
+      - set: [rec.pos.spelling, { call: [shim_node_pos, unit, index, ClangPosWhich.spelling] }]
+      - set: [rec.pos.expansion, { call: [shim_node_pos, unit, index, ClangPosWhich.expansion] }]
+      - set: [rec.pos.from_macro, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.pos_from_macro] }, 1] }]
+      - set: [rec.in_system_header, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.in_system_header] }, 1] }]
+      - set: [rec.from_macro, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.from_macro] }, 1] }]
+      - set: [rec.parent_uid, { call: [oc_node_num, unit, index, ClangNodeNum.parent_uid] }]
+      - set: [rec.function_uid, { call: [oc_node_num, unit, index, ClangNodeNum.function_uid] }]
+      - set: [rec.ref_uid, { call: [oc_node_num, unit, index, ClangNodeNum.ref_uid] }]
+      - set: [rec.child_count, { call: [oc_node_num, unit, index, ClangNodeNum.child_count] }]
       - return: rec
 
 # Everything of one parsed unit, copied out of the shim.
@@ -157,6 +220,13 @@
           condition: { lt: [idx, total] }
           body:
             - call: [info.decls.push, { call: [shim_decl, unit, idx] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - set: [idx, 0]
+      - set: [total, { call: [oc_unit_num, unit, ClangUnitNum.node_count] }]
+      - while:
+          condition: { lt: [idx, total] }
+          body:
+            - call: [info.nodes.push, { call: [shim_node, unit, idx] }]
             - set: [idx, { "+": [idx, 1] }]
       - return: info
 

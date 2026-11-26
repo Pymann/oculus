@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 1;
+constexpr int32_t OC_SHIM_ABI = 2;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -116,6 +116,7 @@ OC_EXPORT int32_t oc_unit_num(void *unit, int32_t field) {
     case ClangUnitNum_type_count: return static_cast<int32_t>(res->types.size());
     case ClangUnitNum_decl_count: return static_cast<int32_t>(res->decls.size());
     case ClangUnitNum_dropped_count: return static_cast<int32_t>(res->dropped.size());
+    case ClangUnitNum_node_count: return static_cast<int32_t>(res->nodes.size());
     default: return -1;
     }
 }
@@ -157,6 +158,7 @@ OC_EXPORT char *oc_type_text(void *unit, int32_t index, int32_t field) {
     switch (field) {
     case ClangTypeText_kind: return fresh(type->kind);
     case ClangTypeText_name: return fresh(type->name);
+    case ClangTypeText_array_kind: return fresh(type->array_kind);
     default: return fresh("");
     }
 }
@@ -182,6 +184,9 @@ OC_EXPORT int32_t oc_type_num(void *unit, int32_t index, int32_t field) {
     case ClangTypeNum_is_record: return flag(type->is_record);
     case ClangTypeNum_is_dependent: return flag(type->is_dependent);
     case ClangTypeNum_enum_underlying_uid: return type->enum_underlying_uid;
+    case ClangTypeNum_array_size: return type->array_size;
+    case ClangTypeNum_element_uid: return type->element_uid;
+    case ClangTypeNum_is_pointer: return flag(type->is_pointer);
     default: return -1;
     }
 }
@@ -196,6 +201,9 @@ OC_EXPORT char *oc_decl_text(void *unit, int32_t index, int32_t field) {
     case ClangDeclText_kind: return fresh(decl->kind);
     case ClangDeclText_name: return fresh(decl->name);
     case ClangDeclText_sign_written: return fresh(decl->sign_written);
+    case ClangDeclText_tag: return fresh(decl->tag);
+    case ClangDeclText_storage: return fresh(decl->storage);
+    case ClangDeclText_target: return fresh(decl->target);
     default: return fresh("");
     }
 }
@@ -219,6 +227,28 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_from_macro_arg: return flag(decl->origin.from_macro_arg);
     case ClangDeclNum_implicit: return flag(decl->origin.implicit);
     case ClangDeclNum_instantiated: return flag(decl->origin.instantiated);
+    case ClangDeclNum_is_inline: return flag(decl->is_inline);
+    case ClangDeclNum_is_local: return flag(decl->is_local);
+    case ClangDeclNum_is_param: return flag(decl->is_param);
+    case ClangDeclNum_param_count: return decl->param_count;
+    case ClangDeclNum_virtual_bases: return decl->virtual_bases;
+    case ClangDeclNum_is_scoped: return flag(decl->is_scoped);
+    case ClangDeclNum_is_fixed: return flag(decl->is_fixed);
+    case ClangDeclNum_has_init: return flag(decl->has_init);
+    case ClangDeclNum_constant_init: return flag(decl->constant_init);
+    case ClangDeclNum_overrides: return decl->overrides;
+    case ClangDeclNum_override_written: return flag(decl->override_written);
+    case ClangDeclNum_is_noreturn: return flag(decl->is_noreturn);
+    case ClangDeclNum_returns_void: return flag(decl->returns_void);
+    case ClangDeclNum_explicit_specialization: return flag(decl->explicit_specialization);
+    case ClangDeclNum_has_restrict: return flag(decl->has_restrict);
+    case ClangDeclNum_in_extern_c: return flag(decl->in_extern_c);
+    case ClangDeclNum_is_main: return flag(decl->is_main);
+    case ClangDeclNum_field_index: return decl->field_index;
+    case ClangDeclNum_field_count: return decl->field_count;
+    case ClangDeclNum_in_instantiation: return flag(decl->in_instantiation);
+    case ClangDeclNum_array_size_literal: return flag(decl->array_size_literal);
+    case ClangDeclNum_is_mutated: return flag(decl->is_mutated);
     default: return -1;
     }
 }
@@ -227,6 +257,56 @@ OC_EXPORT int32_t oc_decl_pos(void *unit, int32_t index, int32_t which, int32_t 
     const UnitResult *res = unit_of(unit);
     const DeclRec *decl = res != nullptr ? record_at(res->decls, index) : nullptr;
     const Pos *pos = decl != nullptr ? pos_at(*decl, which) : nullptr;
+    if (pos == nullptr) {
+        return -1;
+    }
+    switch (part) {
+    case ClangPosPart_file_uid: return pos->file;
+    case ClangPosPart_line: return static_cast<int32_t>(pos->line);
+    case ClangPosPart_column: return static_cast<int32_t>(pos->column);
+    default: return -1;
+    }
+}
+
+OC_EXPORT char *oc_node_text(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const NodeRec *node = res != nullptr ? record_at(res->nodes, index) : nullptr;
+    if (node == nullptr) {
+        return fresh("");
+    }
+    switch (field) {
+    case ClangNodeText_kind: return fresh(node->kind);
+    case ClangNodeText_detail: return fresh(node->detail);
+    default: return fresh("");
+    }
+}
+
+OC_EXPORT int32_t oc_node_num(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const NodeRec *node = res != nullptr ? record_at(res->nodes, index) : nullptr;
+    if (node == nullptr) {
+        return -1;
+    }
+    switch (field) {
+    case ClangNodeNum_in_system_header: return flag(node->in_system_header);
+    case ClangNodeNum_from_macro: return flag(node->from_macro);
+    case ClangNodeNum_parent_uid: return node->parent_uid;
+    case ClangNodeNum_function_uid: return node->function_uid;
+    case ClangNodeNum_ref_uid: return node->ref_uid;
+    case ClangNodeNum_child_count: return node->child_count;
+    case ClangNodeNum_pos_from_macro: return flag(node->pos.from_macro);
+    default: return -1;
+    }
+}
+
+OC_EXPORT int32_t oc_node_pos(void *unit, int32_t index, int32_t which, int32_t part) {
+    const UnitResult *res = unit_of(unit);
+    const NodeRec *node = res != nullptr ? record_at(res->nodes, index) : nullptr;
+    if (node == nullptr) {
+        return -1;
+    }
+    const Pos *pos = which == ClangPosWhich_spelling ? &node->pos.spelling
+                   : which == ClangPosWhich_expansion ? &node->pos.expansion : nullptr;
     if (pos == nullptr) {
         return -1;
     }

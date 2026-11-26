@@ -1,0 +1,23 @@
+# Statements and expressions (doc/ir.md, section 5.4): one table, a tree per
+# function body or initializer through `parent_uid`.  Recorded outside system
+# headers and outside template instantiations (the template itself is recorded);
+# implicit casts are not recorded yet.  `kind` is the frontend's node class
+# (GotoStmt, BinaryOperator, CXXReinterpretCastExpr ...), `detail` the operator,
+# cast or label spelling.  `in_system_header` means the node is spelled in a
+# system header, i.e. it comes from a system macro.
+
+- import: "src/ir/position.aiml"
+
+- model:
+    name: IrNode
+    fields:
+      - [uid, i32, -1]
+      - [kind, string, ""]
+      - [detail, string, ""]
+      - [pos, IrSrcPos]
+      - [in_system_header, bool, false]
+      - [from_macro, bool, false]
+      - [parent_uid, i32, -1]
+      - [function_uid, i32, -1]
+      - [ref_uid, i32, -1]
+      - [child_count, i32, 0]

@@ -6,6 +6,7 @@
 # only what Clang recovered), `first_error` is the first of them.
 
 - import: "src/ir/entities.aiml"
+- import: "src/ir/nodes.aiml"
 
 - model:
     name: RuleInformation
@@ -20,6 +21,7 @@
       - [files, list<IrFile>]
       - [types, list<IrType>]
       - [decls, list<IrDecl>]
+      - [nodes, list<IrNode>]
 
 # Bounds checks for uids.  Rules read a record inline with
 # `{ at: [info.types, uid] }` after the check; returning a list element by value

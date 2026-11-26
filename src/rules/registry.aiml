@@ -3,6 +3,11 @@
 - import: "src/rules/rule.aiml"
 - import: "src/rules/file_length.aiml"
 - import: "src/rules/bitfield_type.aiml"
+- import: "src/rules/unions.aiml"
+- import: "src/rules/flexible_arrays.aiml"
+- import: "src/rules/enums.aiml"
+- import: "src/rules/scope_decls.aiml"
+- import: "src/rules/inheritance.aiml"
 
 - class:
     name: RuleRegistry
@@ -18,6 +23,28 @@
             - call: [<.rules.push, file_length]
             - decl: [bitfield_type, ptr<Rule>, { new: BitfieldTypeRule }]
             - call: [<.rules.push, bitfield_type]
+            - decl: [no_union, ptr<Rule>, { new: NoUnionRule }]
+            - call: [<.rules.push, no_union]
+            - decl: [no_bitfield_in_union, ptr<Rule>, { new: NoBitfieldInUnionRule }]
+            - call: [<.rules.push, no_bitfield_in_union]
+            - decl: [no_bitfields, ptr<Rule>, { new: NoBitfieldsRule }]
+            - call: [<.rules.push, no_bitfields]
+            - decl: [no_flexible_array, ptr<Rule>, { new: NoFlexibleArrayRule }]
+            - call: [<.rules.push, no_flexible_array]
+            - decl: [flexible_array_syntax, ptr<Rule>, { new: FlexibleArraySyntaxRule }]
+            - call: [<.rules.push, flexible_array_syntax]
+            - decl: [no_unscoped_enum, ptr<Rule>, { new: NoUnscopedEnumRule }]
+            - call: [<.rules.push, no_unscoped_enum]
+            - decl: [enum_underlying_type, ptr<Rule>, { new: EnumUnderlyingTypeRule }]
+            - call: [<.rules.push, enum_underlying_type]
+            - decl: [no_static_local, ptr<Rule>, { new: NoStaticLocalRule }]
+            - call: [<.rules.push, no_static_local]
+            - decl: [no_block_function, ptr<Rule>, { new: NoBlockScopeFunctionRule }]
+            - call: [<.rules.push, no_block_function]
+            - decl: [no_using_directive, ptr<Rule>, { new: NoUsingDirectiveRule }]
+            - call: [<.rules.push, no_using_directive]
+            - decl: [no_virtual_base, ptr<Rule>, { new: NoVirtualBaseRule }]
+            - call: [<.rules.push, no_virtual_base]
       - def:
           name: rule_count
           args: []

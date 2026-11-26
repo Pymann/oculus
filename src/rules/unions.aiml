@@ -1,0 +1,109 @@
+# OC-0139 no_union, OC-0181 no_bitfield_in_union, OC-0276 no_bitfields (catalogue
+# in Pymann/coding-rules).  Read from RuleInformation: tag declarations (`tag`,
+# `is_definition`) and fields (`is_bit_field`, the parent's tag).  Only the user's
+# declarations count (rule_kit.aiml: no system headers, nothing implicit, a
+# template once and not per instantiation).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: is_union_definition
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [rec.is_definition, false] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [regex.search, "^union$", rec.tag] }, 0] }
+
+- def:
+    name: union_message
+    args: [[rec, ref<IrDecl>]]
+    return: string
+    body:
+      - decl: [label, string, "union '${rec.name}'"]
+      - if: { condition: { eq: [rec.name.len, 0] }, then: [{ set: [label, "anonymous union"] }] }
+      - return: "${label} is defined; use a structure, or a tagged structure for alternatives"
+
+- class:
+    name: NoUnionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 139, "style.c90-.6.7.no_union", "union is not used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [is_union_definition, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 139, { call: [union_message, rec] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoBitfieldInUnionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 181, "safety.c90-.6.1.no_bitfield_in_union", "Unions contain no bit-fields", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.is_bit_field, { eq: [{ call: [regex.search, "^union$", { call: [parent_tag, info, rec.parent_uid] }] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 181, "bit-field '${rec.name}' is a member of a union; how it overlaps the other members is implementation-defined"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoBitfieldsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 276, "style.cpp98-.6.1.no_bitfields", "Bit-fields are not declared", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.is_bit_field] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 276, "bit-field '${rec.name}' is declared; use masks and shifts on an unsigned integer"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

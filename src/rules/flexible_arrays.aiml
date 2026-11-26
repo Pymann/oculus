@@ -1,0 +1,159 @@
+# OC-0136 no_flexible_array_member and OC-0415 flexible_array_syntax (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: the last field of a structure
+# (`field_index`, the parent's `field_count` and tag) and its canonical array type.
+# OC-0415 reports a last array of size 0 always, of size 1 only when the unit
+# indexes it with anything but the literal 0 (statement nodes: a MemberExpr of the
+# field under an ArraySubscriptExpr); a one-element array used as element 0 only is
+# a plain array, not the old flexible-array trick.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Is this the last field of a structure (not a union)?
+- def:
+    name: last_struct_field
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [rec.field_index, -1] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [info_has_decl, info, rec.parent_uid] }, false] }, then: [{ return: false }] }
+      - decl: [parent, ref<IrDecl>, { at: [info.decls, rec.parent_uid] }]
+      - if: { condition: { lt: [{ call: [regex.search, "^(struct|class)$", parent.tag] }, 0] }, then: [{ return: false }] }
+      - return: { eq: [rec.field_index, { "-": [parent.field_count, 1] }] }
+
+# The array kind of the field's canonical type ("" when it is no array).
+- def:
+    name: field_array_kind
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: string
+    body:
+      - if: { condition: { eq: [{ call: [info_has_type, info, rec.type_uid] }, false] }, then: [{ return: "" }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, rec.type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, declared.canonical_uid] }, false] }, then: [{ return: "" }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, declared.canonical_uid] }]
+      - return: canon.array_kind
+
+- def:
+    name: field_array_size
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: i32
+    body:
+      - if: { condition: { eq: [{ call: [info_has_type, info, rec.type_uid] }, false] }, then: [{ return: -1 }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, rec.type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, declared.canonical_uid] }, false] }, then: [{ return: -1 }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, declared.canonical_uid] }]
+      - return: canon.array_size
+
+- def:
+    name: is_flexible_member
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [user_decl, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [last_struct_field, info, rec] }, false] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [regex.search, "^incomplete$", { call: [field_array_kind, info, rec] }] }, 0] }
+
+# Is the field indexed anywhere in the unit with something other than the literal 0?
+- def:
+    name: indexed_beyond_zero
+    args: [[info, RuleInformation], [field_uid, i32]]
+    return: bool
+    body:
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.nodes.len] }
+          body:
+            - decl: [member, ref<IrNode>, { at: [info.nodes, idx] }]
+            - decl: [named, bool, { "&&": [{ eq: [member.ref_uid, field_uid] }, { eq: [{ call: [regex.search, "^MemberExpr$", member.kind] }, 0] }] }]
+            - if:
+                condition: { "&&": [named, { call: [info_has_node, info, member.parent_uid] }] }
+                then:
+                  - decl: [subscript, ref<IrNode>, { at: [info.nodes, member.parent_uid] }]
+                  - if:
+                      condition: { eq: [{ call: [regex.search, "^ArraySubscriptExpr$", subscript.kind] }, 0] }
+                      then:
+                        - decl: [jdx, i32, { "+": [subscript.uid, 1] }]
+                        - while:
+                            condition: { lt: [jdx, info.nodes.len] }
+                            body:
+                              - decl: [index, ref<IrNode>, { at: [info.nodes, jdx] }]
+                              - if:
+                                  condition: { "&&": [{ eq: [index.parent_uid, subscript.uid] }, { neq: [index.uid, member.uid] }] }
+                                  then:
+                                    - decl: [literal_zero, bool, { "&&": [{ eq: [{ call: [regex.search, "^IntegerLiteral$", index.kind] }, 0] }, { eq: [{ call: [regex.search, "^0$", index.detail] }, 0] }] }]
+                                    - if: { condition: { eq: [literal_zero, false] }, then: [{ return: true }] }
+                              - set: [jdx, { "+": [jdx, 1] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: false
+
+- def:
+    name: is_old_flexible_trick
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [user_decl, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [last_struct_field, info, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^constant$", { call: [field_array_kind, info, rec] }] }, 0] }, then: [{ return: false }] }
+      # a bound from a macro or an expression is a configured size, not the old trick
+      - if: { condition: { eq: [rec.array_size_literal, false] }, then: [{ return: false }] }
+      - decl: [size, i32, { call: [field_array_size, info, rec] }]
+      - if: { condition: { eq: [size, 0] }, then: [{ return: true }] }
+      - if: { condition: { eq: [size, 1] }, then: [{ return: { call: [indexed_beyond_zero, info, rec.uid] } }] }
+      - return: false
+
+- class:
+    name: NoFlexibleArrayRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 136, "safety.c99-.10.2.no_flexible_array_member", "Structures do not end in a flexible array member", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { call: [is_flexible_member, info, rec] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 136, "'${rec.name}' is a flexible array member; use a pointer and a separate allocation"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: FlexibleArraySyntaxRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 415, "safety.c99-.6.2.flexible_array_syntax", "A flexible array member is declared as the last member with empty brackets", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { call: [is_old_flexible_trick, info, rec] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 415, "'${rec.name}' is a zero- or one-element last array used as variable-length; declare it with empty brackets"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

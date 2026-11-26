@@ -1,0 +1,96 @@
+# OC-0349 no_unscoped_enum and OC-0348 enum_underlying_type (catalogue in
+# Pymann/coding-rules), C++ only.  Read from RuleInformation: enum definitions with
+# `is_scoped`, `is_fixed` (the underlying type is written) and `in_extern_c`.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: user_enum_definition
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [user_decl, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { eq: [rec.is_definition, false] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [regex.search, "^enum$", rec.tag] }, 0] }
+
+- def:
+    name: enum_label
+    args: [[rec, ref<IrDecl>]]
+    return: string
+    body:
+      - if: { condition: { eq: [rec.name.len, 0] }, then: [{ return: "anonymous enumeration" }] }
+      - return: "enumeration '${rec.name}'"
+
+- def:
+    name: unscoped_message
+    args: [[rec, ref<IrDecl>]]
+    return: string
+    body:
+      - if: { condition: { eq: [rec.name.len, 0] }, then: [{ return: "anonymous enumeration is unscoped; its enumerators leak into the enclosing scope" }] }
+      - return: "enumeration '${rec.name}' is unscoped; use enum class"
+
+- def:
+    name: underlying_message
+    args: [[rec, ref<IrDecl>]]
+    return: string
+    body:
+      - decl: [label, string, { call: [enum_label, rec] }]
+      - return: "${label} does not state its underlying type"
+
+- class:
+    name: NoUnscopedEnumRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 349, "style.cpp11-.6.5.no_unscoped_enum", "Enumerations are scoped", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_enum_definition, rec] }, { eq: [rec.is_scoped, false] }, { eq: [rec.in_extern_c, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 349, { call: [unscoped_message, rec] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: EnumUnderlyingTypeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 348, "style.cpp11-.6.5.enum_underlying_type", "Enumerations state their underlying type", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_enum_definition, rec] }, { eq: [rec.is_fixed, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 348, { call: [underlying_message, rec] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

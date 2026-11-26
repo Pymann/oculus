@@ -7,6 +7,7 @@
 - import: "src/ir/ir.aiml"
 - import: "src/report/finding.aiml"
 - import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
 - import: "src/config/options.aiml"
 - import: "src/scan/compile_db.aiml"
 - import: "src/scan/planner.aiml"
@@ -42,9 +43,15 @@
                       - if:
                           condition: { gt: [unit.info.compile_errors, 0] }
                           then: [{ call: [<.unclean_units.push, "${unit.file_name}: ${unit.info.compile_errors} compile error(s), first: ${unit.info.first_error}"] }]
-                      - decl: [metrics, map<string:i32>]
-                      - call: [<.line_metric.measure, unit, metrics]
-                      - call: [<.check_rules, unit, metrics, opts, found]
+                      # A unit Clang could not compile cleanly gets no findings at all: the
+                      # rules would see a partial AST (missing includes or defines turn
+                      # types into errors), and a broken parse must never produce findings.
+                      - if:
+                          condition: { eq: [unit.info.compile_errors, 0] }
+                          then:
+                            - decl: [metrics, map<string:i32>]
+                            - call: [<.line_metric.measure, unit, metrics]
+                            - call: [<.check_rules, unit, metrics, opts, found]
                       - call: [<.count_unit]
                       - set: [idx, { "+": [idx, 1] }]
                 - return: found
@@ -71,12 +78,21 @@
                             - if: { condition: { eq: [entry.rule, info.rule_id] }, then: [{ set: [setting, entry] }] }
                             - set: [six, { "+": [six, 1] }]
                       - decl: [wanted, bool, setting.enabled]
+                      # a rule runs only on the languages it is written for
+                      - decl: [lang, string, unit.info.language]
+                      - if: { condition: { eq: [lang.len, 0] }, then: [{ set: [lang, unit.language] }] }
+                      - decl: [speaks, bool, { call: [info.languages.contains, lang] }]
+                      # ... and from the standard it is written for (an `enum class` rule
+                      # does not apply to C++98)
+                      - decl: [unit_year, i32, { call: [standard_year, unit.info.standard] }]
+                      - if: { condition: { "&&": [{ gt: [unit_year, 0] }, { lt: [unit_year, info.from_year] }] }, then: [{ set: [speaks, false] }] }
+                      - decl: [c_too, bool, { call: [info.languages.contains, "c"] }]
                       - if:
                           condition: { gt: [opts.single_rule, 0] }
                           then:
                             - set: [wanted, { eq: [info.rule_id, opts.single_rule] }]
                       - if:
-                          condition: wanted
+                          condition: { "&&": [wanted, speaks] }
                           then:
                             - decl: [sev, string, setting.severity]
                             - if: { condition: { eq: [sev.len, 0] }, then: [{ set: [sev, info.severity] }] }
@@ -91,9 +107,13 @@
                                       body:
                                         - decl: [hit, Finding, { at: [hits, hix] }]
                                         - set: [hit.severity, sev]
+                                        # a C++-only rule does not judge a C source a C++
+                                        # unit includes (C code compiled for compatibility)
+                                        - decl: [c_file, bool, { gte: [{ call: [regex.search, "\\.c$", hit.file_name] }, 0] }]
+                                        - if: { condition: { "&&": [c_file, { eq: [c_too, false] }] }, then: [{ set: [hit.rule_id, 0] }] }
                                         - decl: [where, string, "${hit.file_name}:${hit.line}:${hit.column}:${hit.rule_id}"]
                                         - if:
-                                            condition: { eq: [{ call: [<.reported.has, where] }, 0] }
+                                            condition: { "&&": [{ gt: [hit.rule_id, 0] }, { eq: [{ call: [<.reported.has, where] }, 0] }] }
                                             then:
                                               - call: [<.reported.set, where, 1]
                                               - call: [found.push, hit]

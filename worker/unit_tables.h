@@ -15,6 +15,7 @@
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/Analysis/Analyses/ExprMutationAnalyzer.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
@@ -87,6 +88,10 @@ struct TypeRec {
     bool is_record = false;
     bool is_dependent = false;
     int enum_underlying_uid = -1;
+    std::string array_kind;     // "" | constant | incomplete | variable | dependent
+    int array_size = -1;        // element count of a constant array
+    int element_uid = -1;       // element type of an array, pointee of a pointer
+    bool is_pointer = false;
 };
 
 struct DeclRec {
@@ -104,6 +109,48 @@ struct DeclRec {
     int bit_width = -1;
     bool written_builtin = false;
     std::string sign_written;   // "" | signed | unsigned
+    std::string tag;            // struct | union | class | enum, for tag declarations
+    std::string storage;        // written storage class: "" | static | extern | register | auto
+    bool is_inline = false;     // `inline` written
+    bool is_local = false;      // declared inside a function body
+    bool is_param = false;
+    int param_count = -1;       // functions
+    int virtual_bases = 0;      // records: base specifiers written with `virtual`
+    bool is_scoped = false;     // enum class / enum struct
+    bool is_fixed = false;      // enum with a written underlying type
+    bool has_init = false;      // variable, enumerator or field with an initializer
+    bool constant_init = false; // const variable whose initializer is a constant
+    int overrides = 0;          // methods: number of overridden methods
+    bool override_written = false;  // `override` or `final` written
+    bool is_noreturn = false;
+    bool returns_void = false;
+    bool explicit_specialization = false;
+    bool has_restrict = false;  // restrict anywhere in the declared type
+    bool in_extern_c = false;
+    bool is_main = false;
+    int field_index = -1;       // fields: position in the record
+    int field_count = -1;       // records: number of fields
+    std::string target;         // using directive: the nominated namespace
+    bool in_instantiation = false;  // inside a template instantiation (any enclosing context)
+    bool array_size_literal = false;  // declared array bound is a plain integer literal
+    bool is_mutated = false;    // static local: modified, or its address escapes, in its function
+};
+
+// One statement or expression of a function body or initializer, outside system
+// headers and outside template instantiations (the template itself is recorded).
+// `kind` is Clang's class name without the namespace (GotoStmt, BinaryOperator,
+// CXXReinterpretCastExpr ...), `detail` the operator, cast or label spelling.
+struct NodeRec {
+    int uid = 0;
+    std::string kind;
+    std::string detail;
+    SrcPos pos;
+    bool in_system_header = false;  // spelled in a system header (a system macro)
+    bool from_macro = false;
+    int parent_uid = -1;
+    int function_uid = -1;          // the function whose body holds it
+    int ref_uid = -1;               // the declaration it names (DeclRefExpr, label ...)
+    int child_count = 0;
 };
 
 // The tables of one TU, filled while the AST is alive.
@@ -223,6 +270,23 @@ public:
             rec.is_record = true;
             rec.decl_uid = decl_of(ptr->getAsTagDecl());
         }
+        if (const auto *array = dyn_cast<ArrayType>(ptr)) {
+            rec.element_uid = type_of(array->getElementType());
+            if (const auto *sized = dyn_cast<ConstantArrayType>(array)) {
+                rec.array_kind = "constant";
+                rec.array_size = static_cast<int>(sized->getSize().getLimitedValue(INT32_MAX));
+            } else if (isa<IncompleteArrayType>(array)) {
+                rec.array_kind = "incomplete";
+            } else if (isa<VariableArrayType>(array)) {
+                rec.array_kind = "variable";
+            } else {
+                rec.array_kind = "dependent";
+            }
+        }
+        if (const auto *pointer = dyn_cast<PointerType>(ptr)) {
+            rec.is_pointer = true;
+            rec.element_uid = type_of(pointer->getPointeeType());
+        }
         types[uid] = rec;
         return uid;
     }
@@ -270,6 +334,7 @@ public:
         if (written != nullptr) {
             note_written(written->getTypeLoc(), rec);
         }
+        note_kind_details(decl, rec);
         if (const auto *field = dyn_cast<FieldDecl>(decl)) {
             rec.is_bit_field = field->isBitField();
             if (rec.is_bit_field && !field->getBitWidth()->isValueDependent()) {
@@ -294,6 +359,218 @@ public:
     std::vector<FileRec> files;
     std::vector<TypeRec> types;
     std::vector<DeclRec> decls;
+
+    // Records, by declaration kind, what the rules on declarations read.
+    void note_kind_details(const NamedDecl *decl, DeclRec &rec) {
+        rec.in_instantiation = inside_instantiation(decl);
+        const DeclContext *lexical = decl->getLexicalDeclContext();
+        rec.is_local = lexical != nullptr && lexical->isFunctionOrMethod();
+        rec.in_extern_c = decl->getDeclContext() != nullptr && decl->getDeclContext()->isExternCContext();
+        if (const auto *tag = dyn_cast<TagDecl>(decl)) {
+            rec.tag = tag->getKindName().str();
+        }
+        if (const auto *directive = dyn_cast<UsingDirectiveDecl>(decl)) {
+            if (const NamespaceDecl *nominated = directive->getNominatedNamespace()) {
+                rec.target = nominated->getQualifiedNameAsString();
+            }
+        }
+        if (const auto *record = dyn_cast<RecordDecl>(decl)) {
+            int count = 0;
+            for (auto it = record->field_begin(); it != record->field_end(); ++it) ++count;
+            rec.field_count = count;
+        }
+        if (const auto *klass = dyn_cast<CXXRecordDecl>(decl)) {
+            if (klass->hasDefinition() && klass->isThisDeclarationADefinition()) {
+                for (const CXXBaseSpecifier &base : klass->bases()) {
+                    if (base.isVirtual()) ++rec.virtual_bases;
+                }
+            }
+        }
+        if (const auto *enum_decl = dyn_cast<EnumDecl>(decl)) {
+            rec.is_scoped = enum_decl->isScoped();
+            rec.is_fixed = enum_decl->getIntegerTypeSourceInfo() != nullptr;   // written, not implied
+        }
+        if (const auto *constant = dyn_cast<EnumConstantDecl>(decl)) {
+            rec.has_init = constant->getInitExpr() != nullptr;
+        }
+        if (const auto *field = dyn_cast<FieldDecl>(decl)) {
+            rec.field_index = static_cast<int>(field->getFieldIndex());
+            rec.has_init = field->hasInClassInitializer();
+        }
+        if (const auto *declarator = dyn_cast<DeclaratorDecl>(decl)) {
+            rec.has_restrict = has_restrict(declarator->getType());
+        } else if (const auto *alias = dyn_cast<TypedefNameDecl>(decl)) {
+            rec.has_restrict = has_restrict(alias->getUnderlyingType());
+        }
+        if (const auto *declarator = dyn_cast<DeclaratorDecl>(decl)) {
+            rec.array_size_literal = literal_array_bound(declarator);
+        }
+        if (const auto *var = dyn_cast<VarDecl>(decl)) {
+            if (var->isStaticLocal() && !rec.in_instantiation) {
+                rec.is_mutated = mutated_in_function(var);
+            }
+            rec.storage = storage_name(var->getStorageClass());
+            rec.is_param = isa<ParmVarDecl>(var);
+            rec.has_init = var->hasInit();
+            if (var->isConstexpr()) {
+                rec.constant_init = true;
+            } else if (var->getType().isConstQualified() && var->hasInit() && !var->getType()->isDependentType()) {
+                const Expr *init = var->getInit();
+                rec.constant_init = var->isConstexpr() ||
+                    (!init->isValueDependent() && init->isConstantInitializer(context_, false));
+            }
+        }
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            rec.storage = storage_name(fn->getStorageClass());
+            rec.is_inline = fn->isInlineSpecified();
+            rec.param_count = static_cast<int>(fn->getNumParams());
+            rec.is_noreturn = fn->hasAttr<C11NoReturnAttr>() || fn->hasAttr<CXX11NoReturnAttr>() ||
+                              fn->hasAttr<NoReturnAttr>();
+            rec.returns_void = fn->getReturnType()->isVoidType();
+            rec.explicit_specialization = fn->getTemplateSpecializationKind() == TSK_ExplicitSpecialization;
+            rec.is_main = fn->isMain();
+        }
+        if (const auto *method = dyn_cast<CXXMethodDecl>(decl)) {
+            rec.overrides = static_cast<int>(method->size_overridden_methods());
+            rec.override_written = method->hasAttr<OverrideAttr>() || method->hasAttr<FinalAttr>();
+        }
+    }
+
+    // Is the declaration inside a template instantiation: an enclosing function
+    // or class that is an instantiation (not the template itself)?
+    static bool inside_instantiation(const Decl *decl) {
+        for (const DeclContext *ctx = decl->getDeclContext(); ctx != nullptr; ctx = ctx->getParent()) {
+            if (const auto *fn = dyn_cast<FunctionDecl>(ctx)) {
+                if (fn->isTemplateInstantiation()) return true;
+            } else if (const auto *record = dyn_cast<CXXRecordDecl>(ctx)) {
+                TemplateSpecializationKind kind = record->getTemplateSpecializationKind();
+                if (kind == TSK_ImplicitInstantiation || kind == TSK_ExplicitInstantiationDefinition ||
+                    kind == TSK_ExplicitInstantiationDeclaration) return true;
+            }
+        }
+        return false;
+    }
+
+    // Is the declared array bound written as a plain integer literal (not a
+    // macro, not an expression)?
+    static bool literal_array_bound(const DeclaratorDecl *decl) {
+        TypeSourceInfo *info = decl->getTypeSourceInfo();
+        if (info == nullptr) return false;
+        TypeLoc loc = info->getTypeLoc();
+        if (auto qualified = loc.getAs<QualifiedTypeLoc>()) loc = qualified.getUnqualifiedLoc();
+        auto array = loc.getAs<ConstantArrayTypeLoc>();
+        if (!array) return false;
+        const Expr *size = array.getSizeExpr();
+        if (size == nullptr) return false;
+        size = size->IgnoreParenImpCasts();
+        return isa<IntegerLiteral>(size) && !size->getBeginLoc().isMacroID();
+    }
+
+    // Does the function holding this static local modify it, or let its address
+    // escape (Clang's ExprMutationAnalyzer, conservative)?
+    bool mutated_in_function(const VarDecl *var) {
+        const auto *fn = dyn_cast_or_null<FunctionDecl>(var->getParentFunctionOrMethod());
+        if (fn == nullptr || fn->getBody() == nullptr) {
+            return true;
+        }
+        ExprMutationAnalyzer analyzer(*fn->getBody(), context_);
+        return analyzer.isMutated(var);
+    }
+
+    static std::string storage_name(StorageClass storage) {
+        switch (storage) {
+        case SC_Static: return "static";
+        case SC_Extern: return "extern";
+        case SC_Register: return "register";
+        case SC_Auto: return "auto";
+        default: return "";
+        }
+    }
+
+    // Is `restrict` written anywhere in this type: on it, a pointee, an array
+    // element, a parameter or the result of a function type?
+    static bool has_restrict(QualType type) {
+        for (int depth = 0; depth < 16 && !type.isNull(); ++depth) {
+            if (type.isRestrictQualified()) {
+                return true;
+            }
+            const Type *ptr = type.getTypePtr();
+            if (const auto *pointer = dyn_cast<PointerType>(ptr)) {
+                type = pointer->getPointeeType();
+            } else if (const auto *array = dyn_cast<ArrayType>(ptr)) {
+                type = array->getElementType();
+            } else if (const auto *proto = dyn_cast<FunctionProtoType>(ptr)) {
+                for (QualType param : proto->getParamTypes()) {
+                    if (has_restrict(param)) return true;
+                }
+                type = proto->getReturnType();
+            } else if (const auto *paren = dyn_cast<ParenType>(ptr)) {
+                type = paren->getInnerType();
+            } else {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // Interns one statement or expression (NodeCollector).
+    int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
+        NodeRec rec;
+        rec.uid = static_cast<int>(nodes.size());
+        rec.kind = stmt->getStmtClassName();
+        rec.pos = src_pos_of(stmt->getBeginLoc());
+        rec.from_macro = stmt->getBeginLoc().isMacroID();
+        SourceLocation spelled = sm_.getSpellingLoc(stmt->getBeginLoc());
+        rec.in_system_header = spelled.isValid() && sm_.isInSystemHeader(spelled);
+        rec.parent_uid = parent_uid;
+        rec.function_uid = function_uid;
+        for (const Stmt *child : stmt->children()) {
+            if (child != nullptr) ++rec.child_count;
+        }
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            rec.detail = binary->getOpcodeStr().str();
+        } else if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            rec.detail = UnaryOperator::getOpcodeStr(unary->getOpcode()).str();
+        } else if (const auto *named = dyn_cast<CXXNamedCastExpr>(stmt)) {
+            rec.detail = named->getCastName();
+        } else if (const auto *jump = dyn_cast<GotoStmt>(stmt)) {
+            rec.detail = jump->getLabel()->getName().str();
+            rec.ref_uid = decl_of(jump->getLabel());
+        } else if (const auto *label = dyn_cast<LabelStmt>(stmt)) {
+            rec.detail = label->getName();
+            rec.ref_uid = decl_of(label->getDecl());
+        } else if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) {
+            rec.ref_uid = decl_of(ref->getDecl());
+        } else if (const auto *member = dyn_cast<MemberExpr>(stmt)) {
+            rec.ref_uid = decl_of(member->getMemberDecl());
+            rec.detail = member->isArrow() ? "->" : ".";
+        } else if (const auto *literal = dyn_cast<IntegerLiteral>(stmt)) {
+            rec.detail = llvm::toString(literal->getValue(), 10, false);
+        } else if (const auto *op_call = dyn_cast<CXXOperatorCallExpr>(stmt)) {
+            rec.detail = getOperatorSpelling(op_call->getOperator());
+        } else if (const auto *branch = dyn_cast<IfStmt>(stmt)) {
+            rec.detail = branch->getElse() != nullptr ? "else" : "";
+        }
+        nodes.push_back(rec);
+        return rec.uid;
+    }
+
+    // A base specifier of a class definition, as a node of kind CXXBaseSpecifier
+    // (detail "virtual" for a virtual base), parented to nothing; ref_uid is the class.
+    void base_node(const CXXBaseSpecifier &base, int class_uid) {
+        NodeRec rec;
+        rec.uid = static_cast<int>(nodes.size());
+        rec.kind = "CXXBaseSpecifier";
+        rec.detail = base.isVirtual() ? "virtual" : "";
+        rec.pos = src_pos_of(base.getBeginLoc());
+        rec.from_macro = base.getBeginLoc().isMacroID();
+        SourceLocation spelled = sm_.getSpellingLoc(base.getBeginLoc());
+        rec.in_system_header = spelled.isValid() && sm_.isInSystemHeader(spelled);
+        rec.ref_uid = class_uid;
+        nodes.push_back(rec);
+    }
+
+    std::vector<NodeRec> nodes;
 
 private:
     // The type specifiers as written: is the declared type spelled as a builtin
@@ -354,6 +631,68 @@ public:
 private:
     Tables &tables_;
     SourceManager &sm_;
+};
+
+// Records the statements and expressions with their parents.  Template
+// instantiations and implicit code are not visited (the template is), declarations
+// of system headers are skipped as a whole, implicit casts are left out for now.
+class NodeCollector : public RecursiveASTVisitor<NodeCollector> {
+public:
+    explicit NodeCollector(Tables &tables, SourceManager &sm) : tables_(tables), sm_(sm) {}
+
+    bool TraverseDecl(Decl *decl) {
+        if (decl == nullptr) {
+            return true;
+        }
+        if (!isa<TranslationUnitDecl>(decl)) {
+            SourceLocation loc = decl->getLocation();
+            if (loc.isValid() && sm_.isInSystemHeader(sm_.getExpansionLoc(loc))) {
+                return true;
+            }
+        }
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || !fn->doesThisDeclarationHaveABody()) {
+            return RecursiveASTVisitor::TraverseDecl(decl);
+        }
+        int outer = function_;
+        std::vector<int> outer_stack;
+        outer_stack.swap(stack_);
+        function_ = tables_.decl_of(fn);
+        bool result = RecursiveASTVisitor::TraverseDecl(decl);
+        function_ = outer;
+        stack_.swap(outer_stack);
+        return result;
+    }
+
+    bool VisitCXXRecordDecl(CXXRecordDecl *record) {
+        if (record->isThisDeclarationADefinition() && record->hasDefinition()) {
+            int class_uid = tables_.decl_of(record);
+            for (const CXXBaseSpecifier &base : record->bases()) {
+                tables_.base_node(base, class_uid);
+            }
+        }
+        return true;
+    }
+
+    bool dataTraverseStmtPre(Stmt *stmt) {
+        int parent = stack_.empty() ? -1 : stack_.back();
+        SourceLocation loc = stmt->getBeginLoc();
+        bool skipped = isa<ImplicitCastExpr>(stmt) ||
+                       (loc.isValid() && sm_.isInSystemHeader(sm_.getExpansionLoc(loc)));
+        stack_.push_back(skipped ? parent : tables_.node_of(stmt, parent, function_));
+        return true;
+    }
+
+    bool dataTraverseStmtPost(Stmt *) {
+        if (!stack_.empty()) stack_.pop_back();
+        return true;
+    }
+
+private:
+    Tables &tables_;
+    SourceManager &sm_;
+    int function_ = -1;
+    std::vector<int> stack_;
 };
 
 // Counts the compile errors and keeps the first one; prints nothing.  Oculus
@@ -428,6 +767,7 @@ struct UnitResult {
     std::vector<FileRec> files;
     std::vector<TypeRec> types;
     std::vector<DeclRec> decls;
+    std::vector<NodeRec> nodes;
 };
 
 // The argv of a `command` string of compile_commands.json.
@@ -487,11 +827,14 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
     Tables tables(context);
     Collector collector(tables, context.getSourceManager());
     collector.TraverseDecl(context.getTranslationUnitDecl());
+    NodeCollector node_collector(tables, context.getSourceManager());
+    node_collector.TraverseDecl(context.getTranslationUnitDecl());
     result.compile_errors = quiet.errors;
     result.first_error = quiet.first;
     result.files = std::move(tables.files);
     result.types = std::move(tables.types);
     result.decls = std::move(tables.decls);
+    result.nodes = std::move(tables.nodes);
     return result;
 }
 

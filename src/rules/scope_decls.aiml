@@ -1,0 +1,126 @@
+# OC-0333 no_static_local, OC-0246 no_block_scope_function_decl and OC-0265
+# no_using_directive (catalogue in Pymann/coding-rules).  Read from RuleInformation:
+# `is_local`, the written `storage`, `constant_init`, and the nominated namespace of
+# a using directive (`target`).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: is_state_local
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [user_decl, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { eq: [rec.is_local, false] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^Var$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^static$", rec.storage] }, 0] }, then: [{ return: false }] }
+      # static const / constexpr with a constant initializer is a constant, not state
+      - if: { condition: rec.constant_init, then: [{ return: false }] }
+      # a static local its function never modifies (a lookup table) keeps no state
+      - return: rec.is_mutated
+
+- def:
+    name: is_block_function
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [user_decl, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { eq: [rec.is_local, false] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [regex.search, "^Function$", rec.kind] }, 0] }
+
+# `using namespace` of a literal namespace (std::literals and its parts, such as
+# std::chrono_literals) inside a function is allowed by default.
+- def:
+    name: is_banned_directive
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [user_decl, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^UsingDirective$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - decl: [literal, bool, { gte: [{ call: [regex.search, "^std(::[A-Za-z_]+)*::[A-Za-z_]*literals$", rec.target] }, 0] }]
+      - return: { eq: [{ "&&": [literal, rec.is_local] }, false] }
+
+- class:
+    name: NoStaticLocalRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 333, "style.c90-.6.4.no_static_local", "Local variables do not have static storage duration", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { call: [is_state_local, rec] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 333, "local variable '${rec.name}' is static; it keeps hidden state between calls"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoBlockScopeFunctionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 246, "style.cpp98-.6.4.no_block_scope_function_decl", "Functions are not declared inside a block", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { call: [is_block_function, rec] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 246, "function '${rec.name}' is declared inside a block; declare it at namespace scope"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoUsingDirectiveRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 265, "style.cpp98-.6.9.no_using_directive", "using namespace is not used", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { call: [is_banned_directive, rec] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 265, "using namespace ${rec.target}; name what is used instead (using std::name)"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

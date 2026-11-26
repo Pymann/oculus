@@ -36,6 +36,12 @@
       - [is_record, bool, false]
       - [is_dependent, bool, false]
       - [enum_underlying_uid, i32, -1]
+      # arrays: "" | constant | incomplete | variable | dependent; element_uid is
+      # also the pointee of a pointer
+      - [array_kind, string, ""]
+      - [array_size, i32, -1]
+      - [element_uid, i32, -1]
+      - [is_pointer, bool, false]
 
 # One declaration.  `pos` is the start of the declaration (its type specifiers),
 # `name_pos` the declared name, `instantiation_pos` the point of instantiation
@@ -58,3 +64,36 @@
       - [bit_width, i32, -1]
       - [written_builtin, bool, false]
       - [sign_written, string, ""]
+      # struct | union | class | enum, for tag declarations
+      - [tag, string, ""]
+      # the written storage class: "" | static | extern | register | auto
+      - [storage, string, ""]
+      - [is_inline, bool, false]
+      - [is_local, bool, false]
+      - [is_param, bool, false]
+      - [param_count, i32, -1]
+      - [virtual_bases, i32, 0]
+      - [is_scoped, bool, false]
+      # enum with a written underlying type
+      - [is_fixed, bool, false]
+      - [has_init, bool, false]
+      # a const variable whose initializer is a constant expression
+      - [constant_init, bool, false]
+      - [overrides, i32, 0]
+      - [override_written, bool, false]
+      - [is_noreturn, bool, false]
+      - [returns_void, bool, false]
+      - [explicit_specialization, bool, false]
+      - [has_restrict, bool, false]
+      - [in_extern_c, bool, false]
+      - [is_main, bool, false]
+      - [field_index, i32, -1]
+      - [field_count, i32, -1]
+      # using directive: the nominated namespace (qualified)
+      - [target, string, ""]
+      # inside a template instantiation (any enclosing function or class)
+      - [in_instantiation, bool, false]
+      # the array bound is written as a plain integer literal
+      - [array_size_literal, bool, false]
+      # static local: modified, or its address escapes, in its function
+      - [is_mutated, bool, false]
