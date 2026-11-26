@@ -39,22 +39,13 @@ jobs:
 
       # exodus comes from Kontor's generic store, where exodus's own CI puts the
       # wheel it built and tested: generic/exodus/<commit>/exodus.whl, and on main
-      # also generic/exodus/latest/.  Each value is read as a secret first, then as
-      # a repository variable, so either place works.
-      # Names only, never values: which secrets and variables this job sees.
-      - name: Visible secret and variable names
-        env:
-          SECRETS_JSON: ${{ toJSON(secrets) }}
-          VARS_JSON: ${{ toJSON(vars) }}
-        run: |
-          echo "secrets: $(printf '%s' "$SECRETS_JSON" | jq -r 'keys | join(" ")')"
-          echo "vars:    $(printf '%s' "$VARS_JSON" | jq -r 'keys | join(" ")')"
-
+      # also generic/exodus/latest/.  The repo holds the reader credentials as
+      # AIML_KONTOR_*; KONTOR_* (aiml's names) is the fallback.
       - name: Install exodus from Kontor
         env:
-          KONTOR_URL: ${{ secrets.KONTOR_URL || vars.KONTOR_URL }}
-          KONTOR_TOKEN: ${{ secrets.KONTOR_TOKEN || vars.KONTOR_TOKEN }}
-          KONTOR_CA: ${{ secrets.KONTOR_CA || vars.KONTOR_CA }}
+          KONTOR_URL: ${{ secrets.AIML_KONTOR_URL || secrets.KONTOR_URL }}
+          KONTOR_TOKEN: ${{ secrets.AIML_KONTOR_TOKEN || secrets.KONTOR_TOKEN }}
+          KONTOR_CA: ${{ secrets.AIML_KONTOR_CA || secrets.KONTOR_CA }}
           EXODUS_REF: ${{ inputs.exodus_ref || 'latest' }}
         run: |
           set -eu
@@ -63,7 +54,7 @@ jobs:
             [ -n "${!v:-}" ] || missing="$missing $v"
           done
           if [ -n "$missing" ]; then
-            echo "::error::Kontor not configured, missing:$missing (repo secrets or variables)"
+            echo "::error::Kontor not configured, missing:$missing (repo secrets AIML_KONTOR_URL/_TOKEN/_CA)"
             exit 1
           fi
           work="$RUNNER_TEMP/kontor"
