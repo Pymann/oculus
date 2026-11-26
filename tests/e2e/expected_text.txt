@@ -1,1 +1,1 @@
-tests/e2e/fixture/long.c:6:1: OC-0001: file has 7 lines, more than the limit of 5
+tests/e2e/fixture/long.c:6:1: OC-0380: file has 7 lines, more than the limit of 5

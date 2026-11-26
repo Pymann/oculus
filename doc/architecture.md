@@ -130,31 +130,22 @@ flowchart TD
 ## 5. Rule identity and catalogue
 
 - **The id is a number** and never changes, not even when a standard is updated
-  or a rule moves to another category. Shown as `OC-0042`.
-- The catalogue lives in `Pymann/coding-rules`. Each rule has the id plus
-  descriptive attributes:
-
-  ```json
-  {
-    "id": 42,
-    "key": "style.naming.no_builtin_shadowing",
-    "category": "style",
-    "subcategory": "naming",
-    "languages": ["c", "c++"],
-    "standards": { "c": "99..23", "c++": "17..23" },
-    "severity": "warn",
-    "on_by_default": true
-  }
-  ```
-
-- The dotted form (`style.java.18.to.19.1.1not_this_builtin` in the first draft)
-  is fine as a readable key, but it must not be the id: as soon as the language
-  or the standard range is part of the key, the key changes when the standard
-  changes. That is the MISRA renumbering problem again. Language and standard
-  range therefore sit in their own fields, and one rule can cover C and C++.
-- Mapping to MISRA C / CERT C by number only, kept internal in
-  `Pymann/coding-rules`. It is not shipped and not shown in the output. No MISRA
-  or CERT rule texts in this repository; every message is our own wording.
+  or a rule moves to another chapter. Shown as `OC-0042`. Configuration and
+  suppressions use the id.
+- Next to the id each rule has a readable **key** per language:
+  `<category>.<language><from>-<to>.<chapter>.<subchapter>.<shortname>`, for example
+  `style.c90-.4.2.no_goto` and `style.cpp98-.4.2.no_goto` (both OC-0104). Category is
+  `style`, `safety`, `security` or `metric`; chapters are our own structure. The key
+  may change when a version range changes; the id does not. A rule for C and C++ has
+  one id and one key per language.
+- The catalogue lives in `Pymann/coding-rules/catalog` (private). The format is
+  defined in `catalog/FORMAT.md` there; `catalog/catalog.json` is the generated
+  file Oculus will build in; `catalog/REQUIREMENTS.md` lists what the rules need
+  from the frontend and the IR (types and implicit conversions for 144 of 353 rules,
+  which decides the binding in section 2).
+- Mapping to MISRA C / C++ by number only, kept internal in `Pymann/coding-rules`.
+  It is not shipped and not shown in the output. No MISRA or CERT rule texts in
+  this repository; every message is our own wording.
 
 ## 6. CLI and configuration
 
@@ -190,8 +181,7 @@ oculus [-p BUILD_DIR] [PATHS ...]
 
 Done: CLI (`sys.arg_dump`), `oculus.json`, `compile_commands.json`, the
 `ScanRuntime` group, `Rule` and `MetricProvider` interfaces, the registry, one
-example rule (OC-0001, file length, its id a placeholder until the catalogue
-assigns ids), the line metric, text/JSON/CSV output, exit codes, unit and
+example rule (OC-0380 file_length from the catalogue), the line metric, text/JSON/CSV output, exit codes, unit and
 end-to-end tests in CI.
 
 Not yet: the Clang frontend, the IR beyond file and function, worker processes

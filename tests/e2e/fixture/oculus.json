@@ -1,5 +1,5 @@
 {
   "format": "text",
   "threshold": "info",
-  "rules": [ { "rule": 1, "limit": 5 } ]
+  "rules": [ { "rule": 380, "limit": 5 } ]
 }

@@ -1,5 +1,5 @@
-# Example threshold rule on a metric, so the pipeline has one rule end to end.
-# Its id is a placeholder until the catalogue in Pymann/coding-rules assigns ids.
+# Threshold rule on a metric: OC-0380 file_length of the catalogue in Pymann/coding-rules.
+# Until the catalogue is loaded, its attributes are repeated here.
 
 - import: "src/ir/ir.aiml"
 - import: "src/report/finding.aiml"
@@ -15,11 +15,11 @@
           return: RuleSpec
           body:
             - decl: [info, RuleSpec]
-            - set: [info.rule_id, 1]
-            - set: [info.rule_key, "size.file.max_lines"]
-            - set: [info.title, "A source file is longer than the limit"]
-            - set: [info.category, "size"]
-            - set: [info.subcategory, "file"]
+            - set: [info.rule_id, 380]
+            - set: [info.rule_key, "metric.c90-.19.1.file_length"]
+            - set: [info.title, "A source file does not exceed the configured number of lines"]
+            - set: [info.category, "metric"]
+            - set: [info.subcategory, "19.1"]
             - set: [info.severity, "warn"]
             - call: [info.languages.push, "c"]
             - call: [info.languages.push, "c++"]
@@ -39,6 +39,6 @@
                   - set: [hit.file_name, unit.file_name]
                   - set: [hit.line, { "+": [limit, 1] }]
                   - set: [hit.column, 1]
-                  - set: [hit.rule_id, 1]
+                  - set: [hit.rule_id, 380]
                   - set: [hit.message, "file has ${total} lines, more than the limit of ${limit}"]
                   - call: [out.push, hit]
