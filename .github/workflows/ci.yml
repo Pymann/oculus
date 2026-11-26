@@ -41,6 +41,15 @@ jobs:
       # wheel it built and tested: generic/exodus/<commit>/exodus.whl, and on main
       # also generic/exodus/latest/.  Each value is read as a secret first, then as
       # a repository variable, so either place works.
+      # Names only, never values: which secrets and variables this job sees.
+      - name: Visible secret and variable names
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          VARS_JSON: ${{ toJSON(vars) }}
+        run: |
+          echo "secrets: $(printf '%s' "$SECRETS_JSON" | jq -r 'keys | join(" ")')"
+          echo "vars:    $(printf '%s' "$VARS_JSON" | jq -r 'keys | join(" ")')"
+
       - name: Install exodus from Kontor
         env:
           KONTOR_URL: ${{ secrets.KONTOR_URL || vars.KONTOR_URL }}
