@@ -18,6 +18,10 @@
 - import: "src/rules/overrides.aiml"
 - import: "src/rules/c_functions.aiml"
 - import: "src/rules/decl_shapes.aiml"
+- import: "src/rules/library_calls.aiml"
+- import: "src/rules/library_time.aiml"
+- import: "src/rules/goto_targets.aiml"
+- import: "src/rules/linkage.aiml"
 
 - class:
     name: RuleRegistry
@@ -109,6 +113,24 @@
             - call: [<.rules.push, enum_init]
             - decl: [parameter_count, ptr<Rule>, { new: ParameterCountRule }]
             - call: [<.rules.push, parameter_count]
+            - decl: [no_heap, ptr<Rule>, { new: NoHeapRule }]
+            - call: [<.rules.push, no_heap]
+            - decl: [no_ato, ptr<Rule>, { new: NoAtoConversionsRule }]
+            - call: [<.rules.push, no_ato]
+            - decl: [no_abort_exit, ptr<Rule>, { new: NoAbortExitGetenvSystemRule }]
+            - call: [<.rules.push, no_abort_exit]
+            - decl: [no_bsearch_qsort, ptr<Rule>, { new: NoBsearchQsortRule }]
+            - call: [<.rules.push, no_bsearch_qsort]
+            - decl: [no_time, ptr<Rule>, { new: NoTimeFunctionsRule }]
+            - call: [<.rules.push, no_time]
+            - decl: [goto_forward, ptr<Rule>, { new: GotoForwardOnlyRule }]
+            - call: [<.rules.push, goto_forward]
+            - decl: [goto_enclosing, ptr<Rule>, { new: GotoIntoEnclosingBlockRule }]
+            - call: [<.rules.push, goto_enclosing]
+            - decl: [case_placement, ptr<Rule>, { new: CaseLabelPlacementRule }]
+            - call: [<.rules.push, case_placement]
+            - decl: [static_internal, ptr<Rule>, { new: StaticOnInternalDeclsRule }]
+            - call: [<.rules.push, static_internal]
       - def:
           name: rule_count
           args: []

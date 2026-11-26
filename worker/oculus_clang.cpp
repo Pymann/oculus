@@ -139,6 +139,8 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("virtual_written", decl.virtual_written);
                     out.attribute("template_specialization", decl.template_specialization);
                     out.attribute("external_linkage", decl.external_linkage);
+                    out.attribute("internal_linkage", decl.internal_linkage);
+                    out.attribute("first_decl_static", decl.first_decl_static);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                 });

@@ -1,0 +1,37 @@
+# OC-0053 static_on_internal_decls (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation.decls: functions and variables with internal linkage whose
+# first declaration says static but this one does not.  (Entities of an unnamed
+# namespace and const variables of C++ have internal linkage without static on
+# any declaration; they are not meant.)
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: StaticOnInternalDeclsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 53, "safety.c90-.6.3.static_on_internal_decls", "Every declaration of an internal-linkage entity says static", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Function|Var)$", rec.kind] }, 0] }, rec.internal_linkage, rec.first_decl_static, { neq: [{ call: [regex.search, "^static$", rec.storage] }, 0] }, { eq: [rec.is_local, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 53, "'${rec.name}' has internal linkage; write static on this declaration too"] }]
+                  - set: [idx, { "+": [idx, 1] }]

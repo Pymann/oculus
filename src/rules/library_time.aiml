@@ -1,0 +1,62 @@
+# OC-0170 no_bsearch_qsort and OC-0171 no_time_functions (catalogue in
+# Pymann/coding-rules); the library check is the one of library_calls.aiml.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/library_calls.aiml"
+
+- class:
+    name: NoBsearchQsortRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 170, "safety.c90-.13.3.no_bsearch_qsort", "bsearch and qsort are not used", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(bsearch|qsort)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 170, { call: [library_message, info, rec, "its behaviour with an inconsistent comparison is undefined"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoTimeFunctionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 171, "safety.c90-.13.3.no_time_functions", "The time and date functions are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(time|clock|difftime|mktime|asctime|ctime|gmtime|localtime|strftime|timespec_get|timespec_getres|asctime_r|ctime_r|gmtime_r|localtime_r|timegm)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 171, { call: [library_message, info, rec, "the time functions depend on the environment, several are not thread-safe"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]

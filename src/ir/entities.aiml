@@ -116,6 +116,10 @@
       - [template_specialization, bool, false]
       # functions and variables with external linkage
       - [external_linkage, bool, false]
+      # functions and variables with internal linkage; the entity's first
+      # declaration says static
+      - [internal_linkage, bool, false]
+      - [first_decl_static, bool, false]
       # where the written type starts (functions: the return type)
       - [type_pos, IrPos]
       # the first restrict keyword of the declarator (has_restrict)

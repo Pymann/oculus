@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 5
+      - version: 6
 
 - enum:
     name: ClangUnitText
@@ -144,6 +144,8 @@
       - virtual_written
       - template_specialization
       - external_linkage
+      - internal_linkage
+      - first_decl_static
 
 - enum:
     name: ClangNodeText

@@ -1,0 +1,123 @@
+# OC-0162 no_heap, OC-0168 no_ato_conversions and OC-0169
+# no_abort_exit_getenv_system (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation: DeclRefExpr nodes and the function they name, which must be the
+# standard library's (declared in a system header, global or in namespace std).
+# Every use counts: a call, the address taken, a macro of the user that expands to
+# it (reported once, at the #define).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Does the node name a function of the standard library: declared in a system
+# header, at global scope or in namespace std, with a name matching `names`?
+# `std_names` match only in namespace std (std::terminate).
+- def:
+    name: library_function
+    args: [[info, RuleInformation], [rec, ref<IrNode>], [names, string], [std_names, string]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^DeclRefExpr$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [info_has_decl, info, rec.ref_uid] }, false] }, then: [{ return: false }] }
+      - decl: [callee, ref<IrDecl>, { at: [info.decls, rec.ref_uid] }]
+      - if: { condition: { neq: [{ call: [regex.search, "^Function$", callee.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [callee.origin.in_system_header, false] }, then: [{ return: false }] }
+      - decl: [in_std, bool, false]
+      - if:
+          condition: { call: [info_has_decl, info, callee.parent_uid] }
+          then:
+            - decl: [scope, ref<IrDecl>, { at: [info.decls, callee.parent_uid] }]
+            - if: { condition: { neq: [{ call: [regex.search, "^std$", scope.name] }, 0] }, then: [{ return: false }] }
+            - set: [in_std, true]
+      - if: { condition: { eq: [{ call: [regex.search, names, callee.name] }, 0] }, then: [{ return: true }] }
+      - return: { "&&": [in_std, { eq: [{ call: [regex.search, std_names, callee.name] }, 0] }] }
+
+- def:
+    name: library_message
+    args: [[info, RuleInformation], [rec, ref<IrNode>], [why, string]]
+    return: string
+    body:
+      - decl: [callee, ref<IrDecl>, { at: [info.decls, rec.ref_uid] }]
+      - return: "${callee.name} is used; ${why}"
+
+- class:
+    name: NoHeapRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 162, "safety.c90-.14.1.no_heap", "The allocation functions of stdlib.h are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(malloc|calloc|realloc|aligned_alloc|free)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 162, { call: [library_message, info, rec, "dynamic memory can run out, fragment and leak"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoAtoConversionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 168, "security.c90-.13.3.no_ato_conversions", "atof, atoi, atol and atoll are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(atof|atoi|atol|atoll)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 168, { call: [library_message, info, rec, "it cannot report errors and is undefined when the value does not fit; use strtol and its relatives"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoAbortExitGetenvSystemRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 169, "security.c90-.13.3.no_abort_exit_getenv_system", "abort, exit, getenv and system are not called", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(abort|exit|quick_exit|_Exit|getenv|system)$", "^terminate$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 169, { call: [library_message, info, rec, "it ends the program past its own shutdown or depends on the environment"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]

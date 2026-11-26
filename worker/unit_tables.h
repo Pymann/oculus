@@ -172,6 +172,8 @@ struct DeclRec {
     bool virtual_written = false;   // methods: `virtual` written on this declaration
     bool template_specialization = false;  // an explicit specialisation of a function template
     bool external_linkage = false;  // functions and variables
+    bool internal_linkage = false;  // functions and variables
+    bool first_decl_static = false; // the first declaration of the entity says static
     Pos type_pos;                   // where the written type starts (functions: the return type)
     Pos restrict_pos;               // the first restrict keyword of the declarator
     int field_index = -1;       // position in its list: field in the record,
@@ -453,8 +455,19 @@ public:
         }
         rec.is_first_decl = decl->isFirstDecl();
         if (const auto *value = dyn_cast<ValueDecl>(decl)) {
-            rec.external_linkage = (isa<FunctionDecl>(value) || isa<VarDecl>(value)) &&
-                                   value->hasExternalFormalLinkage();
+            bool linked = isa<FunctionDecl>(value) || isa<VarDecl>(value);
+            rec.external_linkage = linked && value->hasExternalFormalLinkage();
+            rec.internal_linkage = linked && value->getFormalLinkage() == Linkage::Internal;
+            // static at namespace scope; a static class member is something else
+            if (const auto *fn = dyn_cast<FunctionDecl>(value)) {
+                const FunctionDecl *first = fn->getFirstDecl();
+                rec.first_decl_static = first->getStorageClass() == SC_Static && !first->isCXXClassMember() &&
+                                        first->getDeclContext()->isFileContext();
+            } else if (const auto *var = dyn_cast<VarDecl>(value)) {
+                const VarDecl *first = var->getFirstDecl();
+                rec.first_decl_static = first->getStorageClass() == SC_Static && !first->isStaticDataMember() &&
+                                        first->getDeclContext()->isFileContext();
+            }
         }
         if (const auto *constant = dyn_cast<EnumConstantDecl>(decl)) {
             const auto *owner = dyn_cast<EnumDecl>(constant->getDeclContext());
