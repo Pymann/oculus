@@ -19,6 +19,7 @@
       - [include_dirs, list<string>, null, { alias: "I" }]
       - [defines, list<string>, null, { alias: "D" }]
       - [standard, string, "", { alias: "std" }]
+      - [frontend, string, ""]
       - [version, bool, false]
       - [help, bool, false]
       - [positional, list<string>]
@@ -46,4 +47,6 @@
       - [single_rule, i32, 0]
       - [rules, list<RuleSetting>]
       - [fallback, FallbackFlags]
+      # inproc (Clang inside this process) or json (one worker process per unit)
+      - [frontend, string, "inproc"]
       - [problem, string, ""]

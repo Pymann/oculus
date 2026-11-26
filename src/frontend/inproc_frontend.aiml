@@ -1,0 +1,186 @@
+# The in-process path of the Clang frontend: liboculus_clang.so parses the unit
+# inside this process and this file copies its records into RuleInformation, one
+# accessor call per field (src/frontend/clang_shim.aiml, doc/inprocess_frontend.md).
+# No JSON, no second process.  The result is the same RuleInformation the JSON
+# worker delivers; tests/run_tests.sh checks both paths against the same expectations.
+
+- import: "src/ir/ir.aiml"
+- import: "src/scan/compile_db.aiml"
+- import: "src/frontend/clang_shim.aiml"
+
+# The functions of liboculus_clang.so (field ids: the enums of clang_shim.aiml).
+# argv: the compiler argv of the compile command, one argument per line ("" = none);
+# command: the `command` string of the compile command, used when argv is "".
+- extern: "C"
+  defs:
+    - def: { name: oc_shim_abi, args: [], return: i32 }
+    - def: { name: oc_parse, args: [[directory, string], [file, string], [argv, string], [command, string]], return: ptr }
+    - def: { name: oc_unit_free, args: [[unit, ptr]], return: void }
+    - def: { name: oc_unit_text, args: [[unit, ptr], [field, i32]], return: string }
+    - def: { name: oc_unit_num, args: [[unit, ptr], [field, i32]], return: i32 }
+    - def: { name: oc_dropped_flag, args: [[unit, ptr], [index, i32]], return: string }
+    - def: { name: oc_file_text, args: [[unit, ptr], [index, i32], [field, i32]], return: string }
+    - def: { name: oc_file_num, args: [[unit, ptr], [index, i32], [field, i32]], return: i32 }
+    - def: { name: oc_type_text, args: [[unit, ptr], [index, i32], [field, i32]], return: string }
+    - def: { name: oc_type_num, args: [[unit, ptr], [index, i32], [field, i32]], return: i32 }
+    - def: { name: oc_decl_text, args: [[unit, ptr], [index, i32], [field, i32]], return: string }
+    - def: { name: oc_decl_num, args: [[unit, ptr], [index, i32], [field, i32]], return: i32 }
+    - def: { name: oc_decl_pos, args: [[unit, ptr], [index, i32], [which, i32], [part, i32]], return: i32 }
+
+- def:
+    name: shim_pos
+    args: [[unit, ptr], [index, i32], [which, i32]]
+    return: IrPos
+    body:
+      - decl: [pos, IrPos]
+      - set: [pos.file_uid, { call: [oc_decl_pos, unit, index, which, ClangPosPart.file_uid] }]
+      - set: [pos.line, { call: [oc_decl_pos, unit, index, which, ClangPosPart.line] }]
+      - set: [pos.column, { call: [oc_decl_pos, unit, index, which, ClangPosPart.column] }]
+      - return: pos
+
+- def:
+    name: type_flag
+    args: [[unit, ptr], [index, i32], [field, i32]]
+    return: bool
+    body:
+      - return: { eq: [{ call: [oc_type_num, unit, index, field] }, 1] }
+
+- def:
+    name: decl_flag
+    args: [[unit, ptr], [index, i32], [field, i32]]
+    return: bool
+    body:
+      - return: { eq: [{ call: [oc_decl_num, unit, index, field] }, 1] }
+
+- def:
+    name: shim_file
+    args: [[unit, ptr], [index, i32]]
+    return: IrFile
+    body:
+      - decl: [file, IrFile]
+      - set: [file.uid, index]
+      - set: [file.path, { call: [oc_file_text, unit, index, ClangFileText.path] }]
+      - set: [file.kind, { call: [oc_file_text, unit, index, ClangFileText.kind] }]
+      - set: [file.is_main, { eq: [{ call: [oc_file_num, unit, index, ClangFileNum.is_main] }, 1] }]
+      - return: file
+
+- def:
+    name: shim_type
+    args: [[unit, ptr], [index, i32]]
+    return: IrType
+    body:
+      - decl: [rec, IrType]
+      - set: [rec.uid, index]
+      - set: [rec.kind, { call: [oc_type_text, unit, index, ClangTypeText.kind] }]
+      - set: [rec.name, { call: [oc_type_text, unit, index, ClangTypeText.name] }]
+      - set: [rec.canonical_uid, { call: [oc_type_num, unit, index, ClangTypeNum.canonical_uid] }]
+      - set: [rec.sugar_uid, { call: [oc_type_num, unit, index, ClangTypeNum.sugar_uid] }]
+      - set: [rec.decl_uid, { call: [oc_type_num, unit, index, ClangTypeNum.decl_uid] }]
+      - set: [rec.is_typedef, { call: [type_flag, unit, index, ClangTypeNum.is_typedef] }]
+      - set: [rec.is_builtin, { call: [type_flag, unit, index, ClangTypeNum.is_builtin] }]
+      - set: [rec.is_bool, { call: [type_flag, unit, index, ClangTypeNum.is_bool] }]
+      - set: [rec.is_integer, { call: [type_flag, unit, index, ClangTypeNum.is_integer] }]
+      - set: [rec.int_signed, { call: [type_flag, unit, index, ClangTypeNum.int_signed] }]
+      - set: [rec.int_width, { call: [oc_type_num, unit, index, ClangTypeNum.int_width] }]
+      - set: [rec.plain_char, { call: [type_flag, unit, index, ClangTypeNum.plain_char] }]
+      - set: [rec.is_enum, { call: [type_flag, unit, index, ClangTypeNum.is_enum] }]
+      - set: [rec.is_record, { call: [type_flag, unit, index, ClangTypeNum.is_record] }]
+      - set: [rec.is_dependent, { call: [type_flag, unit, index, ClangTypeNum.is_dependent] }]
+      - set: [rec.enum_underlying_uid, { call: [oc_type_num, unit, index, ClangTypeNum.enum_underlying_uid] }]
+      - return: rec
+
+- def:
+    name: shim_decl
+    args: [[unit, ptr], [index, i32]]
+    return: IrDecl
+    body:
+      - decl: [rec, IrDecl]
+      - set: [rec.uid, index]
+      - set: [rec.kind, { call: [oc_decl_text, unit, index, ClangDeclText.kind] }]
+      - set: [rec.name, { call: [oc_decl_text, unit, index, ClangDeclText.name] }]
+      - set: [rec.pos.spelling, { call: [shim_pos, unit, index, ClangPosWhich.spelling] }]
+      - set: [rec.pos.expansion, { call: [shim_pos, unit, index, ClangPosWhich.expansion] }]
+      - set: [rec.pos.from_macro, { call: [decl_flag, unit, index, ClangDeclNum.pos_from_macro] }]
+      - set: [rec.name_pos, { call: [shim_pos, unit, index, ClangPosWhich.name_pos] }]
+      - set: [rec.origin.in_system_header, { call: [decl_flag, unit, index, ClangDeclNum.in_system_header] }]
+      - set: [rec.origin.from_macro, { call: [decl_flag, unit, index, ClangDeclNum.from_macro] }]
+      - set: [rec.origin.from_macro_arg, { call: [decl_flag, unit, index, ClangDeclNum.from_macro_arg] }]
+      - set: [rec.origin.implicit, { call: [decl_flag, unit, index, ClangDeclNum.implicit] }]
+      - set: [rec.origin.instantiated, { call: [decl_flag, unit, index, ClangDeclNum.instantiated] }]
+      - set: [rec.instantiation_pos, { call: [shim_pos, unit, index, ClangPosWhich.instantiation_pos] }]
+      - set: [rec.type_uid, { call: [oc_decl_num, unit, index, ClangDeclNum.type_uid] }]
+      - set: [rec.parent_uid, { call: [oc_decl_num, unit, index, ClangDeclNum.parent_uid] }]
+      - set: [rec.is_definition, { call: [decl_flag, unit, index, ClangDeclNum.is_definition] }]
+      - set: [rec.is_bit_field, { call: [decl_flag, unit, index, ClangDeclNum.is_bit_field] }]
+      - set: [rec.bit_width, { call: [oc_decl_num, unit, index, ClangDeclNum.bit_width] }]
+      - set: [rec.written_builtin, { call: [decl_flag, unit, index, ClangDeclNum.written_builtin] }]
+      - set: [rec.sign_written, { call: [oc_decl_text, unit, index, ClangDeclText.sign_written] }]
+      - return: rec
+
+# Everything of one parsed unit, copied out of the shim.
+- def:
+    name: shim_info
+    args: [[unit, ptr]]
+    return: RuleInformation
+    body:
+      - decl: [info, RuleInformation]
+      - set: [info.frontend, { call: [oc_unit_text, unit, ClangUnitText.frontend] }]
+      - set: [info.language, { call: [oc_unit_text, unit, ClangUnitText.language] }]
+      - set: [info.standard, { call: [oc_unit_text, unit, ClangUnitText.standard] }]
+      - set: [info.problem, { call: [oc_unit_text, unit, ClangUnitText.problem] }]
+      - set: [info.compile_errors, { call: [oc_unit_num, unit, ClangUnitNum.compile_errors] }]
+      - set: [info.first_error, { call: [oc_unit_text, unit, ClangUnitText.first_error] }]
+      - decl: [idx, i32, 0]
+      - decl: [total, i32, { call: [oc_unit_num, unit, ClangUnitNum.dropped_count] }]
+      - while:
+          condition: { lt: [idx, total] }
+          body:
+            - call: [info.dropped_flags.push, { call: [oc_dropped_flag, unit, idx] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - set: [idx, 0]
+      - set: [total, { call: [oc_unit_num, unit, ClangUnitNum.file_count] }]
+      - while:
+          condition: { lt: [idx, total] }
+          body:
+            - call: [info.files.push, { call: [shim_file, unit, idx] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - set: [idx, 0]
+      - set: [total, { call: [oc_unit_num, unit, ClangUnitNum.type_count] }]
+      - while:
+          condition: { lt: [idx, total] }
+          body:
+            - call: [info.types.push, { call: [shim_type, unit, idx] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - set: [idx, 0]
+      - set: [total, { call: [oc_unit_num, unit, ClangUnitNum.decl_count] }]
+      - while:
+          condition: { lt: [idx, total] }
+          body:
+            - call: [info.decls.push, { call: [shim_decl, unit, idx] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: info
+
+# Parses one compile command in this process.
+- def:
+    name: run_shim
+    args: [[cmd, CompileCommand]]
+    return: RuleInformation
+    body:
+      - decl: [info, RuleInformation]
+      - decl: [abi, i32, { call: [oc_shim_abi] }]
+      - if:
+          condition: { neq: [abi, ClangShimAbi.version] }
+          then:
+            - set: [info.problem, "liboculus_clang.so speaks interface ${abi}, oculus expects ${ClangShimAbi.version}: rebuild with worker/build.sh"]
+            - return: info
+      - decl: [args, list<string>, cmd.arguments]
+      - decl: [argv_text, string, { call: [args.join, "\n"] }]
+      - decl: [unit, ptr, { call: [oc_parse, cmd.directory, cmd.file, argv_text, cmd.command] }]
+      - if:
+          condition: { eq: [unit, null] }
+          then:
+            - set: [info.problem, "the Clang shim could not parse ${cmd.file}"]
+            - return: info
+      - set: [info, { call: [shim_info, unit] }]
+      - call: [oc_unit_free, unit]
+      - return: info

@@ -2,7 +2,7 @@
 #
 #   oculus [-p BUILD_DIR] [PATHS ...] [--config FILE] [--format text|json|csv]
 #          [--threshold info|warn|error] [--jobs N] [--single-rule ID]
-#          [-I DIR] [-D NAME[=VALUE]] [--std STD]
+#          [-I DIR] [-D NAME[=VALUE]] [--std STD] [--frontend inproc|json]
 #
 # Exit code: 0 no findings, 1 findings, 2 error.
 
@@ -16,7 +16,7 @@
     args: []
     return: string
     body:
-      - return: "usage: oculus [-p BUILD_DIR] [PATHS ...] [--config FILE] [--format text|json|csv]\n              [--threshold info|warn|error] [--jobs N] [--single-rule ID]\n              [-I DIR] [-D NAME[=VALUE]] [--std STD]   (only for PATHS without -p)\nFindings: file:line:col: RULE-ID: message\nExit code: 0 no findings, 1 findings, 2 error\n"
+      - return: "usage: oculus [-p BUILD_DIR] [PATHS ...] [--config FILE] [--format text|json|csv]\n              [--threshold info|warn|error] [--jobs N] [--single-rule ID]\n              [-I DIR] [-D NAME[=VALUE]] [--std STD]   (only for PATHS without -p)\n              [--frontend inproc|json]   (Clang in this process, or one worker process per unit)\nFindings: file:line:col: RULE-ID: message\nExit code: 0 no findings, 1 findings, 2 error\n"
 
 # The translation units of this scan: the compilation database, else the paths.
 - def:
@@ -64,6 +64,7 @@
           then:
             - call: [io.write, io.stderr, "oculus: ${opts.problem}\n"]
             - return: 2
+      - set: [runtime.frontend.use_json, { eq: [{ call: [regex.search, "^json$", opts.frontend] }, 0] }]
       - decl: [problem, list<string>]
       - decl: [units, list<CompileCommand>, { call: [collect_units, opts, problem] }]
       - if:

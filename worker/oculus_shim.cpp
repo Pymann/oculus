@@ -1,0 +1,241 @@
+// liboculus_clang.so: Clang inside the Oculus process (doc/inprocess_frontend.md).
+//
+// The C interface is specified in src/frontend/clang_shim.aiml; the header
+// oculus_shim.h is generated from it (tools/gen_shim_header.py), so every
+// definition below is checked against the specification by the compiler.
+//
+// A unit handle owns a UnitResult (unit_tables.h): the records of one parsed
+// translation unit, the AST is already gone.  Accessors are null-safe and
+// range-checked, strings are returned as fresh AIML strings (aiml_str_dup of
+// libaiml.so, which the Oculus process has loaded).
+//
+// Symbol hiding: the shim is linked with LLVM and Clang statically, every symbol
+// hidden except oc_* (oculus_shim.map), because the Oculus process also carries
+// the LLVM that libaiml.so links (see the doc).
+
+#include "unit_tables.h"
+
+#include "oculus_shim.h"
+
+#include <new>
+
+extern "C" char *aiml_str_dup(const char *text);
+
+using namespace oculus;
+
+#define OC_EXPORT __attribute__((visibility("default")))
+
+namespace {
+
+constexpr int32_t OC_SHIM_ABI = 1;
+static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
+
+char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
+
+int32_t flag(bool value) { return value ? 1 : 0; }
+
+const UnitResult *unit_of(void *unit) { return static_cast<const UnitResult *>(unit); }
+
+template <typename T>
+const T *record_at(const std::vector<T> &records, int32_t index) {
+    if (index < 0 || static_cast<size_t>(index) >= records.size()) {
+        return nullptr;
+    }
+    return &records[static_cast<size_t>(index)];
+}
+
+std::vector<std::string> split_lines(const char *text) {
+    std::vector<std::string> lines;
+    if (text == nullptr || *text == '\0') {
+        return lines;
+    }
+    std::string current;
+    for (const char *at = text; *at != '\0'; ++at) {
+        if (*at == '\n') {
+            lines.push_back(current);
+            current.clear();
+        } else {
+            current += *at;
+        }
+    }
+    lines.push_back(current);
+    return lines;
+}
+
+const Pos *pos_at(const DeclRec &decl, int32_t which) {
+    switch (which) {
+    case ClangPosWhich_spelling: return &decl.pos.spelling;
+    case ClangPosWhich_expansion: return &decl.pos.expansion;
+    case ClangPosWhich_name_pos: return &decl.name_pos;
+    case ClangPosWhich_instantiation_pos: return &decl.instantiation_pos;
+    default: return nullptr;
+    }
+}
+
+}  // namespace
+
+extern "C" {
+
+OC_EXPORT int32_t oc_shim_abi(void) { return OC_SHIM_ABI; }
+
+OC_EXPORT void *oc_parse(const char *directory, const char *file, const char *argv, const char *command) {
+    std::string dir = directory != nullptr && *directory != '\0' ? directory : ".";
+    std::string name = file != nullptr ? file : "";
+    std::vector<std::string> command_argv = split_lines(argv);
+    if (command_argv.empty() && command != nullptr && *command != '\0') {
+        command_argv = tokenize_command(command);
+    }
+    return new (std::nothrow) UnitResult(parse_unit(dir, name, command_argv));
+}
+
+OC_EXPORT void oc_unit_free(void *unit) { delete static_cast<UnitResult *>(unit); }
+
+OC_EXPORT char *oc_unit_text(void *unit, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    if (res == nullptr) {
+        return fresh("");
+    }
+    switch (field) {
+    case ClangUnitText_frontend: return fresh("clang " CLANG_VERSION_STRING " (in-process)");
+    case ClangUnitText_language: return fresh(res->language);
+    case ClangUnitText_standard: return fresh(res->standard);
+    case ClangUnitText_problem: return fresh(res->problem);
+    case ClangUnitText_first_error: return fresh(res->first_error);
+    default: return fresh("");
+    }
+}
+
+OC_EXPORT int32_t oc_unit_num(void *unit, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    if (res == nullptr) {
+        return -1;
+    }
+    switch (field) {
+    case ClangUnitNum_compile_errors: return res->compile_errors;
+    case ClangUnitNum_file_count: return static_cast<int32_t>(res->files.size());
+    case ClangUnitNum_type_count: return static_cast<int32_t>(res->types.size());
+    case ClangUnitNum_decl_count: return static_cast<int32_t>(res->decls.size());
+    case ClangUnitNum_dropped_count: return static_cast<int32_t>(res->dropped.size());
+    default: return -1;
+    }
+}
+
+OC_EXPORT char *oc_dropped_flag(void *unit, int32_t index) {
+    const UnitResult *res = unit_of(unit);
+    const std::string *flag_text = res != nullptr ? record_at(res->dropped, index) : nullptr;
+    return fresh(flag_text != nullptr ? *flag_text : "");
+}
+
+OC_EXPORT char *oc_file_text(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const FileRec *file = res != nullptr ? record_at(res->files, index) : nullptr;
+    if (file == nullptr) {
+        return fresh("");
+    }
+    switch (field) {
+    case ClangFileText_path: return fresh(file->path);
+    case ClangFileText_kind: return fresh(file->kind);
+    default: return fresh("");
+    }
+}
+
+OC_EXPORT int32_t oc_file_num(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const FileRec *file = res != nullptr ? record_at(res->files, index) : nullptr;
+    if (file == nullptr || field != ClangFileNum_is_main) {
+        return -1;
+    }
+    return flag(file->is_main);
+}
+
+OC_EXPORT char *oc_type_text(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const TypeRec *type = res != nullptr ? record_at(res->types, index) : nullptr;
+    if (type == nullptr) {
+        return fresh("");
+    }
+    switch (field) {
+    case ClangTypeText_kind: return fresh(type->kind);
+    case ClangTypeText_name: return fresh(type->name);
+    default: return fresh("");
+    }
+}
+
+OC_EXPORT int32_t oc_type_num(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const TypeRec *type = res != nullptr ? record_at(res->types, index) : nullptr;
+    if (type == nullptr) {
+        return -1;
+    }
+    switch (field) {
+    case ClangTypeNum_canonical_uid: return type->canonical_uid;
+    case ClangTypeNum_sugar_uid: return type->sugar_uid;
+    case ClangTypeNum_decl_uid: return type->decl_uid;
+    case ClangTypeNum_is_typedef: return flag(type->is_typedef);
+    case ClangTypeNum_is_builtin: return flag(type->is_builtin);
+    case ClangTypeNum_is_bool: return flag(type->is_bool);
+    case ClangTypeNum_is_integer: return flag(type->is_integer);
+    case ClangTypeNum_int_signed: return flag(type->int_signed);
+    case ClangTypeNum_int_width: return type->int_width;
+    case ClangTypeNum_plain_char: return flag(type->plain_char);
+    case ClangTypeNum_is_enum: return flag(type->is_enum);
+    case ClangTypeNum_is_record: return flag(type->is_record);
+    case ClangTypeNum_is_dependent: return flag(type->is_dependent);
+    case ClangTypeNum_enum_underlying_uid: return type->enum_underlying_uid;
+    default: return -1;
+    }
+}
+
+OC_EXPORT char *oc_decl_text(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const DeclRec *decl = res != nullptr ? record_at(res->decls, index) : nullptr;
+    if (decl == nullptr) {
+        return fresh("");
+    }
+    switch (field) {
+    case ClangDeclText_kind: return fresh(decl->kind);
+    case ClangDeclText_name: return fresh(decl->name);
+    case ClangDeclText_sign_written: return fresh(decl->sign_written);
+    default: return fresh("");
+    }
+}
+
+OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
+    const UnitResult *res = unit_of(unit);
+    const DeclRec *decl = res != nullptr ? record_at(res->decls, index) : nullptr;
+    if (decl == nullptr) {
+        return -1;
+    }
+    switch (field) {
+    case ClangDeclNum_type_uid: return decl->type_uid;
+    case ClangDeclNum_parent_uid: return decl->parent_uid;
+    case ClangDeclNum_is_definition: return flag(decl->is_definition);
+    case ClangDeclNum_is_bit_field: return flag(decl->is_bit_field);
+    case ClangDeclNum_bit_width: return decl->bit_width;
+    case ClangDeclNum_written_builtin: return flag(decl->written_builtin);
+    case ClangDeclNum_pos_from_macro: return flag(decl->pos.from_macro);
+    case ClangDeclNum_in_system_header: return flag(decl->origin.in_system_header);
+    case ClangDeclNum_from_macro: return flag(decl->origin.from_macro);
+    case ClangDeclNum_from_macro_arg: return flag(decl->origin.from_macro_arg);
+    case ClangDeclNum_implicit: return flag(decl->origin.implicit);
+    case ClangDeclNum_instantiated: return flag(decl->origin.instantiated);
+    default: return -1;
+    }
+}
+
+OC_EXPORT int32_t oc_decl_pos(void *unit, int32_t index, int32_t which, int32_t part) {
+    const UnitResult *res = unit_of(unit);
+    const DeclRec *decl = res != nullptr ? record_at(res->decls, index) : nullptr;
+    const Pos *pos = decl != nullptr ? pos_at(*decl, which) : nullptr;
+    if (pos == nullptr) {
+        return -1;
+    }
+    switch (part) {
+    case ClangPosPart_file_uid: return pos->file;
+    case ClangPosPart_line: return static_cast<int32_t>(pos->line);
+    case ClangPosPart_column: return static_cast<int32_t>(pos->column);
+    default: return -1;
+    }
+}
+
+}  // extern "C"

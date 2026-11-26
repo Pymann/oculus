@@ -1,14 +1,19 @@
-# The Clang frontend: one worker process (`oculus-clang`, worker/oculus_clang.cpp)
-# per translation unit.  The worker parses the unit with Clang and prints its
-# RuleInformation as JSON; this side reads it back with sys.deserialize.  Nothing of
-# Clang reaches the rest of Oculus.  A missing or failing worker is a problem of
-# that unit only (`unit.info.problem`), the other units go on.
+# The Clang frontend.  Two paths deliver the same RuleInformation:
+#   - in-process (default): liboculus_clang.so parses the unit inside this process
+#     (src/frontend/inproc_frontend.aiml, doc/inprocess_frontend.md);
+#   - JSON worker (`--frontend json`): one worker process (`oculus-clang`,
+#     worker/oculus_clang.cpp) per translation unit prints the RuleInformation as
+#     JSON, read back with sys.deserialize.
+# Nothing of Clang reaches the rest of Oculus.  A unit the frontend cannot deliver is
+# a problem of that unit only (`unit.info.problem`), the other units go on.
 
 - import: "src/ir/ir.aiml"
 - import: "src/scan/compile_db.aiml"
 - import: "src/frontend/frontend.aiml"
+- import: "src/frontend/inproc_frontend.aiml"
 
-# The worker binary: next to the oculus executable.
+# The worker binary: next to the oculus executable, else in ../lib (the build
+# layout: out/oculus/oculus, out/lib/oculus-clang).
 - def:
     name: worker_path
     args: []
@@ -17,7 +22,11 @@
       - decl: [exe, path, { call: [path.from_string, { call: [sys.exe_path] }] }]
       - decl: [dir, path, { call: [exe.parent] }]
       - decl: [worker, path, { call: [dir.join, "oculus-clang"] }]
-      - return: { call: [worker.to_string] }
+      - if: { condition: { call: [io.is_file, worker] }, then: [{ return: { call: [worker.to_string] } }] }
+      - decl: [top, path, { call: [dir.parent] }]
+      - decl: [lib, path, { call: [top.join, "lib"] }]
+      - decl: [installed, path, { call: [lib.join, "oculus-clang"] }]
+      - return: { call: [installed.to_string] }
 
 # The worker's command line for one compile command.
 - def:
@@ -76,6 +85,9 @@
 - class:
     name: ClangFrontend
     implements: [Frontend]
+    members:
+      # true: the JSON worker process, false: in-process (the default)
+      - [use_json, bool, false, { access: public }]
     methods:
       - def: { name: frontend_name, args: [], return: string, body: [{ return: "clang" }] }
       - def:
@@ -84,5 +96,8 @@
           return: IrUnit
           body:
             - decl: [unit, IrUnit, { call: [read_unit_text, cmd] }]
-            - set: [unit.info, { call: [run_worker, cmd] }]
+            - if:
+                condition: <.use_json
+                then: [{ set: [unit.info, { call: [run_worker, cmd] }] }]
+                else: [{ set: [unit.info, { call: [run_shim, cmd] }] }]
             - return: unit

@@ -10,6 +10,8 @@
 # Usage: tests/run_catalog.sh [path/to/oculus]
 set -u
 OCULUS="$(realpath "${1:-out/oculus/oculus}")"
+# Which Clang path to test: inproc (default) or json.
+FRONTEND="${2:-inproc}"
 fails=0
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -43,7 +45,7 @@ for case_dir in tests/catalog/*/*/; do
         write_db "$case_dir" "$prefix" "$std" > "$db/compile_commands.json"
         config=()
         [ -f "$case_dir/oculus.json" ] && config=(--config "$case_dir/oculus.json")
-        out="$("$OCULUS" -p "$db" --single-rule "$rule" "${config[@]}" 2>&1)"
+        out="$("$OCULUS" -p "$db" --frontend "$FRONTEND" --single-rule "$rule" "${config[@]}" 2>&1)"
         rc=$?
         if [ $rc -eq 2 ]; then
             echo "FAIL $id/$lang $prefix: oculus error"; echo "$out"; fails=$((fails + 1)); continue

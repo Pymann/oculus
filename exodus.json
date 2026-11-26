@@ -8,8 +8,8 @@
   "compiler": { "name": "$AIML" },
   "linker": {
     "name": "g++",
-    "flags": [],
-    "libraries": ["aiml", "pthread", "dl", "m"],
+    "flags": ["-Lout/lib", "-Wl,-rpath,$ORIGIN/../lib"],
+    "libraries": ["aiml", "oculus_clang", "pthread", "dl", "m"],
     "library_paths": ["$AIML_VENV/lib"]
   }
 }

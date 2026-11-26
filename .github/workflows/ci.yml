@@ -74,7 +74,8 @@ jobs:
           echo "$venv/bin" >> "$GITHUB_PATH"
           echo "installed aiml ${ref} into $venv"
 
-      # The newest stable LLVM from apt.llvm.org; the Clang worker is built against it.
+      # The newest stable LLVM from apt.llvm.org; the Clang shim and worker are built
+      # against it (the shim links its static libraries, doc/inprocess_frontend.md).
       - name: Install LLVM
         run: |
           set -eu
@@ -82,15 +83,25 @@ jobs:
           ver="$(sed -n 's/^CURRENT_LLVM_STABLE=\([0-9][0-9]*\).*/\1/p' "$RUNNER_TEMP/llvm.sh")"
           [ -n "$ver" ] || { echo "::error::no CURRENT_LLVM_STABLE in llvm.sh"; exit 1; }
           sudo bash "$RUNNER_TEMP/llvm.sh" "$ver"
-          sudo apt-get install -y "libclang-$ver-dev" "libclang-cpp$ver-dev" "llvm-$ver-dev"
+          sudo apt-get install -y "libclang-$ver-dev" "libclang-cpp$ver-dev" "llvm-$ver-dev" \
+              zlib1g-dev libzstd-dev libxml2-dev libtinfo-dev
           echo "LLVM_CONFIG=/usr/lib/llvm-$ver/bin/llvm-config" >> "$GITHUB_ENV"
           echo "installed LLVM $ver"
 
+      # First: the oculus binary links out/lib/liboculus_clang.so.
+      - name: Build the Clang shim and worker
+        run: worker/build.sh
+
+      # The shim must export its C interface and nothing of LLVM.
+      - name: Check the shim exports
+        run: |
+          set -eu
+          extra="$(nm -D --defined-only out/lib/liboculus_clang.so | awk '{print $3}' | grep -v '^oc_' || true)"
+          if [ -n "$extra" ]; then echo "::error::liboculus_clang.so exports more than oc_*:"; echo "$extra" | head; exit 1; fi
+          ldd out/lib/liboculus_clang.so
+
       - name: Build
         run: aiml build
-
-      - name: Build the Clang worker
-        run: worker/build.sh
 
       - name: Test
         run: tests/run_tests.sh out/oculus/oculus

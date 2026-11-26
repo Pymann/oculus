@@ -1,0 +1,8 @@
+/* liboculus_clang.so exports its C interface and nothing else: the LLVM and
+   Clang linked into it stay invisible to the LLVM of libaiml.so. */
+{
+  global:
+    oc_*;
+  local:
+    *;
+};

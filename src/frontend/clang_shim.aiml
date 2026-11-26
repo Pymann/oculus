@@ -1,0 +1,125 @@
+# The C interface of liboculus_clang.so, the in-process Clang shim
+# (worker/oculus_shim.cpp, doc/inprocess_frontend.md).
+#
+# This file and the `extern: "C"` block of src/frontend/inproc_frontend.aiml are
+# the specification: tools/gen_shim_header.py generates the C header the shim is
+# compiled against (out/gen/oculus_shim.h) from the enums here and that block, so
+# the two sides cannot drift apart.  (The block lives there because an `extern`
+# declaration is visible only in its own file.)  Keep one enum value per line and
+# one `def` per line, the generator reads that layout.
+#
+# A unit is an opaque handle (`ptr`): oc_parse parses one translation unit and
+# copies everything Oculus reads out of the AST, the AST is gone when it
+# returns.  Every accessor is null-safe and range-checked: a null unit, a wrong
+# index or a wrong field gives "" or -1.  Strings come back as fresh AIML
+# strings (the shim allocates them with aiml_str_dup).  oc_unit_free releases
+# the unit; it is safe on null.
+
+# Bump together with OC_SHIM_ABI in the shim when a signature or a value changes.
+- enum:
+    name: ClangShimAbi
+    wire: true
+    values:
+      - version: 1
+
+- enum:
+    name: ClangUnitText
+    wire: true
+    values:
+      - frontend
+      - language
+      - standard
+      - problem
+      - first_error
+
+- enum:
+    name: ClangUnitNum
+    wire: true
+    values:
+      - compile_errors
+      - file_count
+      - type_count
+      - decl_count
+      - dropped_count
+
+- enum:
+    name: ClangFileText
+    wire: true
+    values:
+      - path
+      - kind
+
+- enum:
+    name: ClangFileNum
+    wire: true
+    values:
+      - is_main
+
+- enum:
+    name: ClangTypeText
+    wire: true
+    values:
+      - kind
+      - name
+
+- enum:
+    name: ClangTypeNum
+    wire: true
+    values:
+      - canonical_uid
+      - sugar_uid
+      - decl_uid
+      - is_typedef
+      - is_builtin
+      - is_bool
+      - is_integer
+      - int_signed
+      - int_width
+      - plain_char
+      - is_enum
+      - is_record
+      - is_dependent
+      - enum_underlying_uid
+
+- enum:
+    name: ClangDeclText
+    wire: true
+    values:
+      - kind
+      - name
+      - sign_written
+
+- enum:
+    name: ClangDeclNum
+    wire: true
+    values:
+      - type_uid
+      - parent_uid
+      - is_definition
+      - is_bit_field
+      - bit_width
+      - written_builtin
+      - pos_from_macro
+      - in_system_header
+      - from_macro
+      - from_macro_arg
+      - implicit
+      - instantiated
+
+# Which position of a declaration, and which part of it.
+- enum:
+    name: ClangPosWhich
+    wire: true
+    values:
+      - spelling
+      - expansion
+      - name_pos
+      - instantiation_pos
+
+- enum:
+    name: ClangPosPart
+    wire: true
+    values:
+      - file_uid
+      - line
+      - column

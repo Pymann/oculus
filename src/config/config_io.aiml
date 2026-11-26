@@ -47,6 +47,11 @@
             - if: { condition: { call: [cli.given.contains, "format"] }, then: [{ set: [opts.format, cli.format] }] }
             - if: { condition: { call: [cli.given.contains, "threshold"] }, then: [{ set: [opts.threshold, cli.threshold] }] }
             - if: { condition: { call: [cli.given.contains, "jobs"] }, then: [{ set: [opts.jobs, cli.jobs] }] }
+            - if: { condition: { gt: [cli.frontend.len, 0] }, then: [{ set: [opts.frontend, cli.frontend] }] }
+            - if:
+                condition: { lt: [{ call: [regex.search, "^(inproc|json)$", opts.frontend] }, 0] }
+                then:
+                  - call: [problems.push, "unknown frontend '${opts.frontend}' (inproc or json)"]
             - set: [opts.build_dir, cli.build_dir]
             - set: [opts.single_rule, cli.single_rule]
             - set: [opts.paths, cli.positional]
