@@ -6,6 +6,8 @@ to be defined; do not treat anything below as a spec.
 
 ## Decided so far
 
+- Everything in this repository is in English: docs, comments, messages, CLI options,
+  config keys and program symbols (classes, functions, variables, files).
 - Frontend: Clang. How Oculus binds to it is open (see `doc/architecture.md`).
 - Scope: C and C++ only.
 - Name: Oculus only (binary `oculus`, config `oculus.json`). Config format: JSON only.

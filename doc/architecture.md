@@ -45,7 +45,7 @@ constructs (`classgroup`, `model`, `interface`, `cascade_class`), see
 
 ```mermaid
 flowchart TD
-    cli(["oculus -p build/ [PFADE ...]"])
+    cli(["oculus -p build/ [PATHS ...]"])
     cfg[("oculus.json")]
     cdb[("compile_commands.json")]
     opts{{"ScanOptions (model)<br/>serialisable"}}
@@ -157,10 +157,10 @@ flowchart TD
 ## 6. CLI and configuration
 
 ```
-oculus [-p BUILD_DIR] [PFADE ...]
+oculus [-p BUILD_DIR] [PATHS ...]
     --config FILE        default: oculus.json in the project root
     --format text|json|csv
-    --schwelle info|warn|error
+    --threshold info|warn|error
     --jobs N             upper limit, see section 3
     --single-rule ID
 ```
