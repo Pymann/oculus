@@ -96,6 +96,7 @@
       - [has_restrict, bool, false]
       - [in_extern_c, bool, false]
       - [is_main, bool, false]
+      # position in its list: field, enumerator or parameter
       - [field_index, i32, -1]
       - [field_count, i32, -1]
       # using directive: the nominated namespace (qualified)
@@ -106,3 +107,16 @@
       - [array_size_literal, bool, false]
       # static local: modified, or its address escapes, in its function
       - [is_mutated, bool, false]
+      # the first declaration of the entity in the unit
+      - [is_first_decl, bool, true]
+      # methods: `virtual` written on this declaration
+      - [virtual_written, bool, false]
+      # an explicit specialisation of a function template (not of a member of a
+      # class template)
+      - [template_specialization, bool, false]
+      # functions and variables with external linkage
+      - [external_linkage, bool, false]
+      # where the written type starts (functions: the return type)
+      - [type_pos, IrPos]
+      # the first restrict keyword of the declarator (has_restrict)
+      - [restrict_pos, IrPos]

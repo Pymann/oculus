@@ -1,0 +1,1 @@
+int area(int left, int top, int right, int bottom);

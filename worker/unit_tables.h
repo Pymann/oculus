@@ -168,7 +168,14 @@ struct DeclRec {
     bool has_restrict = false;  // restrict anywhere in the declared type
     bool in_extern_c = false;
     bool is_main = false;
-    int field_index = -1;       // fields: position in the record
+    bool is_first_decl = true;      // the first declaration of the entity in the TU
+    bool virtual_written = false;   // methods: `virtual` written on this declaration
+    bool template_specialization = false;  // an explicit specialisation of a function template
+    bool external_linkage = false;  // functions and variables
+    Pos type_pos;                   // where the written type starts (functions: the return type)
+    Pos restrict_pos;               // the first restrict keyword of the declarator
+    int field_index = -1;       // position in its list: field in the record,
+                                // enumerator in the enum, parameter in the function
     int field_count = -1;       // records: number of fields
     std::string target;         // using directive: the nominated namespace
     bool in_instantiation = false;  // inside a template instantiation (any enclosing context)
@@ -444,12 +451,44 @@ public:
         if (const auto *constant = dyn_cast<EnumConstantDecl>(decl)) {
             rec.has_init = constant->getInitExpr() != nullptr;
         }
+        rec.is_first_decl = decl->isFirstDecl();
+        if (const auto *value = dyn_cast<ValueDecl>(decl)) {
+            rec.external_linkage = (isa<FunctionDecl>(value) || isa<VarDecl>(value)) &&
+                                   value->hasExternalFormalLinkage();
+        }
+        if (const auto *constant = dyn_cast<EnumConstantDecl>(decl)) {
+            const auto *owner = dyn_cast<EnumDecl>(constant->getDeclContext());
+            if (owner != nullptr) {
+                int index = 0;
+                for (const EnumConstantDecl *item : owner->enumerators()) {
+                    if (item == constant) {
+                        rec.field_index = index;
+                        break;
+                    }
+                    ++index;
+                }
+            }
+        }
+        if (const auto *param = dyn_cast<ParmVarDecl>(decl)) {
+            // parameters of a function type inside a declarator (a callback) are
+            // not the function's own
+            if (param->getFunctionScopeDepth() == 0) {
+                rec.field_index = static_cast<int>(param->getFunctionScopeIndex());
+            }
+        }
         if (const auto *field = dyn_cast<FieldDecl>(decl)) {
             rec.field_index = static_cast<int>(field->getFieldIndex());
             rec.has_init = field->hasInClassInitializer();
         }
         if (const auto *declarator = dyn_cast<DeclaratorDecl>(decl)) {
             rec.has_restrict = has_restrict(declarator->getType());
+            // `int *restrict p` as a parameter: the function type drops the
+            // top-level qualifier of a parameter, its declaration keeps it
+            if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+                for (const ParmVarDecl *param : fn->parameters()) {
+                    if (param != nullptr && has_restrict(param->getType())) rec.has_restrict = true;
+                }
+            }
         } else if (const auto *alias = dyn_cast<TypedefNameDecl>(decl)) {
             rec.has_restrict = has_restrict(alias->getUnderlyingType());
         }
@@ -479,12 +518,51 @@ public:
                               fn->hasAttr<NoReturnAttr>();
             rec.returns_void = fn->getReturnType()->isVoidType();
             rec.explicit_specialization = fn->getTemplateSpecializationKind() == TSK_ExplicitSpecialization;
+            rec.template_specialization = rec.explicit_specialization && fn->getPrimaryTemplate() != nullptr;
             rec.is_main = fn->isMain();
+            SourceRange returned = fn->getReturnTypeSourceRange();
+            if (returned.isValid()) rec.type_pos = pos_of(sm_.getExpansionLoc(returned.getBegin()));
         }
         if (const auto *method = dyn_cast<CXXMethodDecl>(decl)) {
             rec.overrides = static_cast<int>(method->size_overridden_methods());
             rec.override_written = method->hasAttr<OverrideAttr>() || method->hasAttr<FinalAttr>();
+            rec.virtual_written = method->isVirtualAsWritten();
         }
+        if (rec.has_restrict) {
+            rec.restrict_pos = restrict_token(decl);
+        }
+    }
+
+    // The first `restrict` (or __restrict, __restrict__) written in the declaration,
+    // up to a function body or an initializer.  Spelled through a macro: the place
+    // of the macro; not found: the name.
+    Pos restrict_token(const NamedDecl *decl) {
+        SourceLocation first = sm_.getExpansionLoc(decl->getBeginLoc());
+        SourceLocation last = sm_.getExpansionLoc(decl->getEndLoc());
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            if (const Stmt *body = fn->getBody()) last = sm_.getExpansionLoc(body->getBeginLoc());
+        } else if (const auto *var = dyn_cast<VarDecl>(decl)) {
+            if (const Expr *init = var->getInit()) last = sm_.getExpansionLoc(init->getBeginLoc());
+        }
+        Pos fallback = pos_of(sm_.getExpansionLoc(decl->getLocation()));
+        if (first.isInvalid() || last.isInvalid() || sm_.getFileID(first) != sm_.getFileID(last)) return fallback;
+        FileID file = sm_.getFileID(first);
+        unsigned upto = sm_.getFileOffset(last);
+        llvm::StringRef buffer = sm_.getBufferData(file);
+        Lexer lexer(sm_.getLocForStartOfFile(file), context_.getLangOpts(), buffer.begin(),
+                    sm_.getCharacterData(first), buffer.end());
+        Token tok;
+        for (;;) {
+            lexer.LexFromRawLexer(tok);
+            if (tok.is(tok::eof) || sm_.getFileOffset(tok.getLocation()) > upto) break;
+            if (tok.is(tok::raw_identifier)) {
+                llvm::StringRef word = tok.getRawIdentifier();
+                if (word == "restrict" || word == "__restrict" || word == "__restrict__") {
+                    return pos_of(tok.getLocation());
+                }
+            }
+        }
+        return fallback;
     }
 
     // Is the declaration inside a template instantiation: an enclosing function

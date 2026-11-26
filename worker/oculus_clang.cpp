@@ -135,6 +135,12 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("in_instantiation", decl.in_instantiation);
                     out.attribute("array_size_literal", decl.array_size_literal);
                     out.attribute("is_mutated", decl.is_mutated);
+                    out.attribute("is_first_decl", decl.is_first_decl);
+                    out.attribute("virtual_written", decl.virtual_written);
+                    out.attribute("template_specialization", decl.template_specialization);
+                    out.attribute("external_linkage", decl.external_linkage);
+                    write_pos(out, "type_pos", decl.type_pos);
+                    write_pos(out, "restrict_pos", decl.restrict_pos);
                 });
             }
         });

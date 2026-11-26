@@ -1,0 +1,90 @@
+# OC-0193 noreturn_is_void, OC-0055 inline_is_static and OC-0059 no_restrict
+# (catalogue in Pymann/coding-rules), C.  Read from RuleInformation.decls:
+# noreturn and inline functions with their return type, linkage and written
+# position, and declarations whose type has a restrict qualifier.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: NoreturnIsVoidRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 193, "safety.c11-.11.3.noreturn_is_void", "A _Noreturn function has return type void", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^Function$", rec.kind] }, 0] }, rec.is_noreturn, { eq: [rec.returns_void, false] }, { gt: [rec.type_pos.line, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.type_pos, 193, "'${rec.name}' never returns but declares a return type; make it void"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: InlineIsStaticRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 55, "safety.c99-.6.3.inline_is_static", "Inline functions have internal linkage", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^Function$", rec.kind] }, 0] }, rec.is_inline, rec.external_linkage, rec.is_definition] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 55, "inline function '${rec.name}' has external linkage; declare it static"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoRestrictRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 59, "safety.c99-.6.6.no_restrict", "The restrict qualifier is not used", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.has_restrict, { eq: [rec.is_param, false] }, { gt: [rec.restrict_pos.line, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.restrict_pos, 59, "restrict is used; a wrong no-alias promise is undefined behaviour"] }]
+                  - set: [idx, { "+": [idx, 1] }]

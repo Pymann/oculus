@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 4;
+constexpr int32_t OC_SHIM_ABI = 5;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -68,6 +68,8 @@ const Pos *pos_at(const DeclRec &decl, int32_t which) {
     case ClangPosWhich_expansion: return &decl.pos.expansion;
     case ClangPosWhich_name_pos: return &decl.name_pos;
     case ClangPosWhich_instantiation_pos: return &decl.instantiation_pos;
+    case ClangPosWhich_type_pos: return &decl.type_pos;
+    case ClangPosWhich_restrict_pos: return &decl.restrict_pos;
     default: return nullptr;
     }
 }
@@ -257,6 +259,10 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_in_instantiation: return flag(decl->in_instantiation);
     case ClangDeclNum_array_size_literal: return flag(decl->array_size_literal);
     case ClangDeclNum_is_mutated: return flag(decl->is_mutated);
+    case ClangDeclNum_is_first_decl: return flag(decl->is_first_decl);
+    case ClangDeclNum_virtual_written: return flag(decl->virtual_written);
+    case ClangDeclNum_template_specialization: return flag(decl->template_specialization);
+    case ClangDeclNum_external_linkage: return flag(decl->external_linkage);
     default: return -1;
     }
 }

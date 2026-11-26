@@ -15,6 +15,9 @@
 - import: "src/rules/macro_operators.aiml"
 - import: "src/rules/macro_names.aiml"
 - import: "src/rules/directives.aiml"
+- import: "src/rules/overrides.aiml"
+- import: "src/rules/c_functions.aiml"
+- import: "src/rules/decl_shapes.aiml"
 
 - class:
     name: RuleRegistry
@@ -88,6 +91,24 @@
             - call: [<.rules.push, no_pragma]
             - decl: [include_guards, ptr<Rule>, { new: IncludeGuardsRule }]
             - call: [<.rules.push, include_guards]
+            - decl: [marked_override, ptr<Rule>, { new: MarkedOverrideRule }]
+            - call: [<.rules.push, marked_override]
+            - decl: [no_template_spec, ptr<Rule>, { new: NoFunctionTemplateSpecializationRule }]
+            - call: [<.rules.push, no_template_spec]
+            - decl: [main_only, ptr<Rule>, { new: MainOnlyGlobalRule }]
+            - call: [<.rules.push, main_only]
+            - decl: [noreturn_void, ptr<Rule>, { new: NoreturnIsVoidRule }]
+            - call: [<.rules.push, noreturn_void]
+            - decl: [inline_static, ptr<Rule>, { new: InlineIsStaticRule }]
+            - call: [<.rules.push, inline_static]
+            - decl: [no_restrict, ptr<Rule>, { new: NoRestrictRule }]
+            - call: [<.rules.push, no_restrict]
+            - decl: [external_array, ptr<Rule>, { new: ExternalArraySizeRule }]
+            - call: [<.rules.push, external_array]
+            - decl: [enum_init, ptr<Rule>, { new: EnumInitializeFirstOrAllRule }]
+            - call: [<.rules.push, enum_init]
+            - decl: [parameter_count, ptr<Rule>, { new: ParameterCountRule }]
+            - call: [<.rules.push, parameter_count]
       - def:
           name: rule_count
           args: []

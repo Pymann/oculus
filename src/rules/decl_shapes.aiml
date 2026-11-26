@@ -1,0 +1,157 @@
+# OC-0056 external_array_size, OC-0272 enum_initialize_first_or_all and OC-0384
+# parameter_count (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation.decls: arrays with external linkage and their type, enumerators
+# (position, initializer) and their enum, parameters (position) and their function.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: incomplete_array
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_type, info, type_uid] }, false] }, then: [{ return: false }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, type_uid] }]
+      - decl: [canon_uid, i32, declared.canonical_uid]
+      - if: { condition: { eq: [{ call: [info_has_type, info, canon_uid] }, false] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: { eq: [{ call: [regex.search, "^incomplete$", canon.array_kind] }, 0] }
+
+# Per enum: how many enumerators, and how many have an initializer ("n<uid>",
+# "i<uid>").
+- def:
+    name: enum_counts
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [counts, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.decls.len] }
+          body:
+            - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+            - if:
+                condition: { eq: [{ call: [regex.search, "^EnumConstant$", rec.kind] }, 0] }
+                then:
+                  - call: [counts.set, "n${rec.parent_uid}", { "+": [{ call: [counts.get, "n${rec.parent_uid}", 0] }, 1] }]
+                  - if:
+                      condition: rec.has_init
+                      then: [{ call: [counts.set, "i${rec.parent_uid}", { "+": [{ call: [counts.get, "i${rec.parent_uid}", 0] }, 1] }] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: counts
+
+# An initialized enumerator after the first in an enum where not all are.
+- def:
+    name: mixed_init
+    args: [[counts, map<string:i32>], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { lte: [rec.field_index, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [rec.has_init, false] }, then: [{ return: false }] }
+      - return: { lt: [{ call: [counts.get, "i${rec.parent_uid}", 0] }, { call: [counts.get, "n${rec.parent_uid}", 0] }] }
+
+- def:
+    name: parameter_message
+    args: [[info, RuleInformation], [rec, ref<IrDecl>], [limit, i32]]
+    return: string
+    body:
+      - decl: [owner, ref<IrDecl>, { at: [info.decls, rec.parent_uid] }]
+      - return: "'${owner.name}' takes ${owner.param_count} parameters, more than ${limit}"
+
+# The parameter right after the limit, of a function's first declaration.
+- def:
+    name: first_beyond_limit
+    args: [[info, RuleInformation], [rec, ref<IrDecl>], [limit, i32]]
+    return: bool
+    body:
+      - if: { condition: { neq: [rec.field_index, limit] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [info_has_decl, info, rec.parent_uid] }, false] }, then: [{ return: false }] }
+      - decl: [owner, ref<IrDecl>, { at: [info.decls, rec.parent_uid] }]
+      - return: { "&&": [owner.is_first_decl, { gt: [owner.param_count, limit] }, { call: [user_decl, owner] }] }
+
+- class:
+    name: ExternalArraySizeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 56, "safety.c90-.6.4.external_array_size", "An external array declaration states its size", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^Var$", rec.kind] }, 0] }, rec.external_linkage, { call: [incomplete_array, info, rec.type_uid] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 56, "array '${rec.name}' has external linkage but no size"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: EnumInitializeFirstOrAllRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 272, "style.cpp98-.6.5.enum_initialize_first_or_all", "Enumerators are explicitly initialised either only the first or all", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [counts, map<string:i32>, { call: [enum_counts, info] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^EnumConstant$", rec.kind] }, 0] }, { call: [mixed_init, counts, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 272, "enumerator '${rec.name}' has an initializer, but not all enumerators have one; initialize only the first or all"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: ParameterCountRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 384, "metric.c90-.19.3.parameter_count", "A function does not take more than the configured number of parameters", "info", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [limit, i32, setting.limit]
+            - if: { condition: { lte: [limit, 0] }, then: [{ set: [limit, 6] }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^ParmVar$", rec.kind] }, 0] }, { call: [first_beyond_limit, info, rec, limit] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 384, { call: [parameter_message, info, rec, limit] }] }]
+                  - set: [idx, { "+": [idx, 1] }]

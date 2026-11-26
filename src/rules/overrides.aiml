@@ -1,0 +1,110 @@
+# OC-0282 marked_override, OC-0298 no_function_template_specialization and
+# OC-0263 main_only_global (catalogue in Pymann/coding-rules), C++.  Read from
+# RuleInformation.decls: overridden methods and the markers written on the
+# declaration, explicit specialisations of function templates, the name main.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Is the overriding method missing its marker: `override` or `final` from C++11 on,
+# `virtual` before?
+- def:
+    name: marker_missing
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - decl: [year, i32, { call: [standard_year, info.standard] }]
+      - if: { condition: { "&&": [{ gt: [year, 0] }, { lt: [year, 2011] }] }, then: [{ return: { eq: [rec.virtual_written, false] } }] }
+      - return: { eq: [rec.override_written, false] }
+
+- def:
+    name: override_message
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: string
+    body:
+      - decl: [year, i32, { call: [standard_year, info.standard] }]
+      - if: { condition: { "&&": [{ gt: [year, 0] }, { lt: [year, 2011] }] }, then: [{ return: "'${rec.name}' overrides a virtual function; write virtual on it" }] }
+      - return: "'${rec.name}' overrides a virtual function; mark it override (or final)"
+
+- class:
+    name: MarkedOverrideRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 282, "style.cpp98-.15.2.marked_override", "An overriding function is marked as such in its declaration", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(CXXMethod|CXXConversion)$", rec.kind] }, 0] }, { gt: [rec.overrides, 0] }, rec.is_first_decl, { call: [marker_missing, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 282, { call: [override_message, info, rec] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoFunctionTemplateSpecializationRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 298, "safety.cpp98-.16.2.no_function_template_specialization", "Function templates are not explicitly specialised", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.template_specialization] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 298, "explicit specialisation of the function template '${rec.name}'; write an overload instead"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: MainOnlyGlobalRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 263, "style.cpp98-.6.9.main_only_global", "The name main is used only for the global main function", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^main$", rec.name] }, 0] }, { eq: [rec.is_main, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 263, "the name main is reserved for the global function main"] }]
+                  - set: [idx, { "+": [idx, 1] }]

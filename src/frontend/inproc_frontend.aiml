@@ -154,6 +154,12 @@
       - set: [rec.in_instantiation, { call: [decl_flag, unit, index, ClangDeclNum.in_instantiation] }]
       - set: [rec.array_size_literal, { call: [decl_flag, unit, index, ClangDeclNum.array_size_literal] }]
       - set: [rec.is_mutated, { call: [decl_flag, unit, index, ClangDeclNum.is_mutated] }]
+      - set: [rec.is_first_decl, { call: [decl_flag, unit, index, ClangDeclNum.is_first_decl] }]
+      - set: [rec.virtual_written, { call: [decl_flag, unit, index, ClangDeclNum.virtual_written] }]
+      - set: [rec.template_specialization, { call: [decl_flag, unit, index, ClangDeclNum.template_specialization] }]
+      - set: [rec.external_linkage, { call: [decl_flag, unit, index, ClangDeclNum.external_linkage] }]
+      - set: [rec.type_pos, { call: [shim_pos, unit, index, ClangPosWhich.type_pos] }]
+      - set: [rec.restrict_pos, { call: [shim_pos, unit, index, ClangPosWhich.restrict_pos] }]
       - return: rec
 
 - def:
