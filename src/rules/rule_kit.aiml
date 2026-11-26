@@ -121,3 +121,14 @@
     return: bool
     body:
       - return: { "&&": [{ gte: [node_uid, 0] }, { lt: [node_uid, info.nodes.len] }] }
+
+# Where a node is written: inside a macro body that is the `#define`, so one
+# finding per macro instead of one per use.  A token made by `##` has no file of
+# its own; it falls back to the call site.
+- def:
+    name: written_pos
+    args: [[pos, IrSrcPos]]
+    return: IrPos
+    body:
+      - if: { condition: { "&&": [pos.from_macro, { gte: [pos.spelling.file_uid, 0] }] }, then: [{ return: pos.spelling }] }
+      - return: pos.expansion

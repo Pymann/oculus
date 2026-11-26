@@ -20,6 +20,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
 #include "clang/Frontend/ASTUnit.h"
+#include "clang/Lex/PreprocessingRecord.h"
 #include "clang/Tooling/ArgumentsAdjusters.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
@@ -151,6 +152,13 @@ struct NodeRec {
     int function_uid = -1;          // the function whose body holds it
     int ref_uid = -1;               // the declaration it names (DeclRefExpr, label ...)
     int child_count = 0;
+    int type_uid = -1;              // expressions: their type
+    bool is_dependent = false;      // expressions: type- or value-dependent (in a template)
+    int label_count = -1;           // switch: case and default labels
+    int clause_count = -1;          // switch: label groups that start a clause
+    // switch, if and function bodies: the preprocessor skipped code inside it
+    // (#if 0, an #ifdef that is not taken).  Another configuration may compile more.
+    bool has_skipped_code = false;
 };
 
 // The tables of one TU, filled while the AST is alive.
@@ -159,7 +167,8 @@ public:
     explicit Tables(ASTContext &context) : context_(context), sm_(context.getSourceManager()) {}
 
     int file_of(SourceLocation loc) {
-        if (loc.isInvalid()) {
+        // A token made by ## lives in the scratch buffer, not in a file.
+        if (loc.isInvalid() || sm_.isWrittenInScratchSpace(loc)) {
             return -1;
         }
         FileID fid = sm_.getFileID(loc);
@@ -513,6 +522,33 @@ public:
         return false;
     }
 
+    // The ranges the preprocessor skipped (#if not taken), by file: sorted
+    // start offsets.  Read before the collectors run.
+    void note_skipped(PreprocessingRecord *record) {
+        if (record == nullptr) return;
+        for (SourceRange range : record->getSkippedRanges()) {
+            SourceLocation start = range.getBegin();
+            if (start.isInvalid() || !start.isFileID()) continue;
+            std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(start);
+            skipped_[at.first].push_back(at.second);
+        }
+        for (auto &entry : skipped_) std::sort(entry.second.begin(), entry.second.end());
+    }
+
+    // Does the preprocessor skip any code between the two ends of `range`?
+    bool skips_inside(SourceRange range) const {
+        SourceLocation first = sm_.getExpansionLoc(range.getBegin());
+        SourceLocation last = sm_.getExpansionLoc(range.getEnd());
+        if (first.isInvalid() || last.isInvalid()) return false;
+        std::pair<FileID, unsigned> from = sm_.getDecomposedLoc(first);
+        std::pair<FileID, unsigned> upto = sm_.getDecomposedLoc(last);
+        if (from.first != upto.first) return false;
+        auto known = skipped_.find(from.first);
+        if (known == skipped_.end()) return false;
+        auto next = std::lower_bound(known->second.begin(), known->second.end(), from.second);
+        return next != known->second.end() && *next <= upto.second;
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -527,8 +563,19 @@ public:
         for (const Stmt *child : stmt->children()) {
             if (child != nullptr) ++rec.child_count;
         }
+        if (isa<SwitchStmt>(stmt) || isa<IfStmt>(stmt) || parent_uid < 0) {
+            rec.has_skipped_code = skips_inside(stmt->getSourceRange());
+        }
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
             rec.detail = binary->getOpcodeStr().str();
+            // The operator written in a macro body, its operands passed as macro
+            // arguments: the operator belongs to the macro, the node is placed there.
+            SourceLocation op_loc = binary->getOperatorLoc();
+            if (op_loc.isMacroID() && !sm_.isMacroArgExpansion(op_loc)) {
+                rec.pos = src_pos_of(op_loc);
+                rec.from_macro = true;
+                rec.in_system_header = sm_.isInSystemHeader(sm_.getSpellingLoc(op_loc));
+            }
         } else if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
             rec.detail = UnaryOperator::getOpcodeStr(unary->getOpcode()).str();
         } else if (const auto *named = dyn_cast<CXXNamedCastExpr>(stmt)) {
@@ -550,9 +597,73 @@ public:
             rec.detail = getOperatorSpelling(op_call->getOperator());
         } else if (const auto *branch = dyn_cast<IfStmt>(stmt)) {
             rec.detail = branch->getElse() != nullptr ? "else" : "";
+        } else if (const auto *address = dyn_cast<AddrLabelExpr>(stmt)) {
+            rec.ref_uid = decl_of(address->getLabel());
+        } else if (const auto *handler = dyn_cast<CXXCatchStmt>(stmt)) {
+            rec.detail = handler->getExceptionDecl() == nullptr ? "..." : "";
+        } else if (const auto *choice = dyn_cast<SwitchStmt>(stmt)) {
+            note_switch(choice, rec);
+        } else if (isa<DefaultStmt>(stmt)) {
+            auto known = default_order_.find(stmt);
+            rec.detail = known != default_order_.end() ? known->second : "";
+        }
+        if (const auto *expr = dyn_cast<Expr>(stmt)) {
+            rec.type_uid = type_of(expr->getType());
+            rec.is_dependent = expr->isTypeDependent() || expr->isValueDependent();
         }
         nodes.push_back(rec);
+        // An `else if` whose `if` has no `else`: the chain is open.  A marker node at
+        // the `else` keyword of the outer if (OC-0110 final_else).
+        if (const auto *branch = dyn_cast<IfStmt>(stmt)) {
+            const auto *inner = dyn_cast_or_null<IfStmt>(branch->getElse());
+            if (inner != nullptr && inner->getElse() == nullptr) {
+                NodeRec open;
+                open.uid = static_cast<int>(nodes.size());
+                open.kind = "OpenElseIfChain";
+                open.pos = src_pos_of(branch->getElseLoc());
+                open.from_macro = branch->getElseLoc().isMacroID();
+                open.in_system_header = rec.in_system_header;
+                open.parent_uid = rec.uid;
+                open.function_uid = function_uid;
+                open.has_skipped_code = rec.has_skipped_code;
+                nodes.push_back(open);
+                return rec.uid;
+            }
+        }
         return rec.uid;
+    }
+
+    // The labels of a switch: how many, how many clauses (a top-level label of the
+    // body starts a clause; `case 1: case 2:` nests and is one clause), and where
+    // its default label sits in source order (first, last, middle, only).
+    void note_switch(const SwitchStmt *choice, NodeRec &rec) {
+        std::vector<const SwitchCase *> labels;
+        for (const SwitchCase *label = choice->getSwitchCaseList(); label != nullptr;
+             label = label->getNextSwitchCase()) {
+            labels.push_back(label);
+        }
+        std::sort(labels.begin(), labels.end(), [this](const SwitchCase *left, const SwitchCase *right) {
+            return sm_.isBeforeInTranslationUnit(left->getBeginLoc(), right->getBeginLoc());
+        });
+        rec.label_count = static_cast<int>(labels.size());
+        for (size_t at = 0; at < labels.size(); ++at) {
+            if (!isa<DefaultStmt>(labels[at])) continue;
+            const char *where = labels.size() == 1 ? "only"
+                              : at == 0 ? "first"
+                              : at + 1 == labels.size() ? "last" : "middle";
+            default_order_[labels[at]] = where;
+            rec.detail = "default";
+        }
+        int clauses = 0;
+        const Stmt *body = choice->getBody();
+        if (const auto *block = dyn_cast_or_null<CompoundStmt>(body)) {
+            for (const Stmt *item : block->body()) {
+                if (isa<SwitchCase>(item)) ++clauses;
+            }
+        } else if (body != nullptr && isa<SwitchCase>(body)) {
+            clauses = 1;
+        }
+        rec.clause_count = clauses;
     }
 
     // A base specifier of a class definition, as a node of kind CXXBaseSpecifier
@@ -606,6 +717,8 @@ private:
     std::map<FileID, int> file_ids_;
     std::map<const Type *, int> type_ids_;
     std::map<const NamedDecl *, int> decl_ids_;
+    std::map<const Stmt *, std::string> default_order_;
+    std::map<FileID, std::vector<unsigned>> skipped_;
 };
 
 class Collector : public RecursiveASTVisitor<Collector> {
@@ -803,6 +916,9 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
         tooling::ClangTool tool(database, {file});
         tool.appendArgumentsAdjuster(tooling::getClangStripOutputAdjuster());
         tool.appendArgumentsAdjuster(tooling::getClangStripDependencyFileAdjuster());
+        // Keeps the skipped #if ranges (and later the macro records) for the rules.
+        tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
+            {"-Xclang", "-detailed-preprocessing-record"}, tooling::ArgumentInsertPosition::END));
         tool.setDiagnosticConsumer(&quiet);
         tool.buildASTs(units);
         if (quiet.unknown_args.empty()) {
@@ -825,6 +941,7 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
     result.language = lang.CPlusPlus ? "c++" : "c";
     result.standard = LangStandard::getLangStandardForKind(lang.LangStd).getName();
     Tables tables(context);
+    tables.note_skipped(units.front()->getPreprocessor().getPreprocessingRecord());
     Collector collector(tables, context.getSourceManager());
     collector.TraverseDecl(context.getTranslationUnitDecl());
     NodeCollector node_collector(tables, context.getSourceManager());

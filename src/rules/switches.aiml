@@ -1,0 +1,139 @@
+# OC-0114 switch_has_default, OC-0116 two_or_more_clauses and OC-0115
+# default_first_or_last (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation: SwitchStmt nodes (detail "default", label_count, clause_count)
+# and DefaultStmt nodes (detail: first, last, middle or only, in source order).
+# A switch with code skipped by #if is not judged: the labels seen are those of
+# one configuration only.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: too_few_clauses
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { lt: [rec.clause_count, 0] }, then: [{ return: false }] }
+      - if: { condition: rec.has_skipped_code, then: [{ return: false }] }
+      - decl: [cases, i32, rec.label_count]
+      - if: { condition: { eq: [{ call: [regex.search, "^default$", rec.detail] }, 0] }, then: [{ set: [cases, { "-": [cases, 1] }] }] }
+      - return: { "||": [{ lt: [rec.clause_count, 2] }, { lt: [cases, 1] }] }
+
+# Did #if skip code inside the switch around this label?  Another configuration
+# may have more labels, so the order seen here proves nothing.
+- def:
+    name: switch_skips_code
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - decl: [cursor, i32, rec.parent_uid]
+      - while:
+          condition: { call: [info_has_node, info, cursor] }
+          body:
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, cursor] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^SwitchStmt$", upper.kind] }, 0] }, then: [{ return: upper.has_skipped_code }] }
+            - set: [cursor, upper.parent_uid]
+      - return: false
+
+# C: default first or last; C++: last.
+- def:
+    name: default_misplaced
+    args: [[info, RuleInformation], [rec, ref<IrNode>], [language, string]]
+    return: bool
+    body:
+      - if: { condition: { call: [switch_skips_code, info, rec] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^middle$", rec.detail] }, 0] }, then: [{ return: true }] }
+      - decl: [cxx, bool, { eq: [{ call: [regex.search, "^c\\+\\+$", language] }, 0] }]
+      - return: { "&&": [cxx, { eq: [{ call: [regex.search, "^first$", rec.detail] }, 0] }] }
+
+- def:
+    name: default_message
+    args: [[language, string]]
+    return: string
+    body:
+      - if: { condition: { eq: [{ call: [regex.search, "^c\\+\\+$", language] }, 0] }, then: [{ return: "default is not the last label of its switch" }] }
+      - return: "default is neither the first nor the last label of its switch"
+
+- class:
+    name: SwitchHasDefaultRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 114, "safety.c90-.4.5.switch_has_default", "Every switch has a default label", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(SwitchStmt)$", rec.kind] }, 0] }, { neq: [{ call: [regex.search, "^default$", rec.detail] }, 0] }, { eq: [rec.has_skipped_code, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 114, "switch has no default label"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: TwoOrMoreClausesRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 116, "style.c90-.4.5.two_or_more_clauses", "A switch has at least two clauses", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(SwitchStmt)$", rec.kind] }, 0] }, { call: [too_few_clauses, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 116, "switch has fewer than two clauses or no case label; use if"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: DefaultFirstOrLastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 115, "style.c90-.4.5.default_first_or_last", "The default label is the first or the last label of its switch", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(DefaultStmt)$", rec.kind] }, 0] }, { call: [default_misplaced, info, rec, info.language] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 115, { call: [default_message, info.language] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

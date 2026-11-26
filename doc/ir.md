@@ -233,6 +233,17 @@ Statements carry their structure in named children (`if.cond`, `if.then`,
 `try.handlers`, `handler.type`, `goto.label`, `return.value` ...). An `else if` is an
 `if` whose `else` child is an `if` and is flagged `else_if: true`.
 
+Two facts every structural rule needs (built: `src/ir/nodes.aiml`):
+
+- `has_skipped_code` on a `switch`, an `if` and a function body: the preprocessor
+  skipped an `#if` branch inside it. The node shows one configuration of the build;
+  another one may have more `case` labels, a `default`, an `else` or the `goto` of
+  a label. Rules about the shape of such a statement do not judge it.
+- A node written in a macro body is reported at its spelling (the `#define`), once,
+  not at every expansion (`written_pos` in `src/rules/rule_kit.aiml`). A binary
+  operator whose operator token is in the macro body and whose operands are macro
+  arguments sits at the operator.
+
 Expressions add:
 
 ```

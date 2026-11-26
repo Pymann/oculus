@@ -1,0 +1,54 @@
+# OC-0305 rethrow_in_handler_only (catalogue in Pymann/coding-rules), C++ only.
+# Read from RuleInformation: CXXThrowExpr nodes without operand (child_count 0) and
+# their ancestors through parent_uid.  (OC-0386 catch_all_handler_last needs no rule:
+# Clang rejects such code, and a unit that does not compile is reported as such.)
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Is the node lexically inside a catch handler, without a lambda in between?
+- def:
+    name: inside_handler
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: bool
+    body:
+      - decl: [cur, i32, node_uid]
+      - decl: [steps, i32, 0]
+      - while:
+          condition: { "&&": [{ call: [info_has_node, info, cur] }, { lt: [steps, 10000] }] }
+          body:
+            - decl: [rec, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^CXXCatchStmt$", rec.kind] }, 0] }, then: [{ return: true }] }
+            - if: { condition: { eq: [{ call: [regex.search, "^LambdaExpr$", rec.kind] }, 0] }, then: [{ return: false }] }
+            - set: [cur, rec.parent_uid]
+            - set: [steps, { "+": [steps, 1] }]
+      - return: false
+
+- class:
+    name: RethrowInHandlerRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 305, "safety.cpp98-.17.1.rethrow_in_handler_only", "A bare throw appears only inside a handler", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(CXXThrowExpr)$", rec.kind] }, 0] }, { eq: [rec.child_count, 0] }, { eq: [{ call: [inside_handler, info, rec.uid] }, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 305, "throw; outside a catch handler calls std::terminate when no exception is being handled"] }]
+                  - set: [idx, { "+": [idx, 1] }]

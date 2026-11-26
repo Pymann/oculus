@@ -5,6 +5,15 @@
 # (GotoStmt, BinaryOperator, CXXReinterpretCastExpr ...), `detail` the operator,
 # cast or label spelling.  `in_system_header` means the node is spelled in a
 # system header, i.e. it comes from a system macro.
+#
+# Details by kind: BinaryOperator/UnaryOperator the operator, CXX*CastExpr the cast
+# name, GotoStmt/LabelStmt the label (ref_uid the label declaration, also for
+# AddrLabelExpr), MemberExpr "." or "->" (ref_uid the member), IntegerLiteral its
+# value, CXXCatchStmt "..." for catch (...), SwitchStmt "default" when it has one,
+# DefaultStmt first/last/middle/only among its switch's labels in source order.
+# Two kinds are markers, not Clang nodes: CXXBaseSpecifier (a base of a class
+# definition, detail "virtual"; ref_uid the class) and OpenElseIfChain (at the
+# `else` of an if whose `else if` has no `else`).
 
 - import: "src/ir/position.aiml"
 
@@ -21,3 +30,12 @@
       - [function_uid, i32, -1]
       - [ref_uid, i32, -1]
       - [child_count, i32, 0]
+      # expressions: their type, and whether it depends on a template parameter
+      - [type_uid, i32, -1]
+      - [is_dependent, bool, false]
+      # switch: number of case/default labels, and of clauses (label groups)
+      - [label_count, i32, -1]
+      - [clause_count, i32, -1]
+      # switch, if and function bodies: code inside was skipped by #if; another
+      # configuration of the build may compile more of it
+      - [has_skipped_code, bool, false]

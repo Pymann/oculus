@@ -1,0 +1,139 @@
+# OC-0092 no_comma_operator, OC-0340 no_reinterpret_cast and OC-0343 no_unary_plus
+# (catalogue in Pymann/coding-rules).  Read from RuleInformation: BinaryOperator and
+# UnaryOperator nodes (detail: the operator; overloaded operators are
+# CXXOperatorCallExpr and not counted), CXXReinterpretCastExpr nodes with their
+# type.  Operators in templates whose operand types are not known yet are skipped:
+# an instantiation may pick an overloaded operator.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The canonical type behind a type uid (-1 if unknown).
+- def:
+    name: canonical_of
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: i32
+    body:
+      - if: { condition: { eq: [{ call: [info_has_type, info, type_uid] }, false] }, then: [{ return: -1 }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, type_uid] }]
+      - return: declared.canonical_uid
+
+# A pointer to char, unsigned char or std::byte: the byte view of an object.
+- def:
+    name: is_byte_pointer
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - decl: [canon_uid, i32, { call: [canonical_of, info, type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, canon_uid] }, false] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - if: { condition: { eq: [canon.is_pointer, false] }, then: [{ return: false }] }
+      - decl: [pointee_uid, i32, { call: [canonical_of, info, canon.element_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, pointee_uid] }, false] }, then: [{ return: false }] }
+      - decl: [pointee, ref<IrType>, { at: [info.types, pointee_uid] }]
+      - return: { eq: [{ call: [regex.search, "^(char|unsigned char|std::byte)$", pointee.name] }, 0] }
+
+# A comma operator directly inside another one (`a, b, c` is `(a, b), c`): the
+# chain is reported once, at the outer one.
+- def:
+    name: inner_comma
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_node, info, rec.parent_uid] }, false] }, then: [{ return: false }] }
+      - decl: [outer, ref<IrNode>, { at: [info.nodes, rec.parent_uid] }]
+      - return: { "&&": [{ eq: [{ call: [regex.search, "^BinaryOperator$", outer.kind] }, 0] }, { eq: [{ call: [regex.search, "^,$", outer.detail] }, 0] }] }
+
+- def:
+    name: is_pointer_type
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - decl: [canon_uid, i32, { call: [canonical_of, info, type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, canon_uid] }, false] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: canon.is_pointer
+
+- class:
+    name: NoCommaOperatorRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 92, "style.c90-.9.1.no_comma_operator", "The comma operator is not used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(BinaryOperator)$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(,)$", rec.detail] }, 0] }, { eq: [{ call: [inner_comma, info, rec] }, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 92, "the comma operator is used; write the expressions as separate statements"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoReinterpretCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 340, "safety.cpp98-.8.2.no_reinterpret_cast", "reinterpret_cast is not used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(CXXReinterpretCastExpr)$", rec.kind] }, 0] }, { eq: [rec.is_dependent, false] }, { eq: [{ call: [is_byte_pointer, info, rec.type_uid] }, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 340, "reinterpret_cast is used; it reinterprets bits without any check"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoUnaryPlusRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 343, "style.cpp98-.9.1.no_unary_plus", "The built-in unary + is not used", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(UnaryOperator)$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(\\+)$", rec.detail] }, 0] }, { eq: [rec.is_dependent, false] }, { eq: [{ call: [is_pointer_type, info, rec.type_uid] }, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 343, "the built-in unary + is used; it only promotes its operand (a typo for += or ++?)"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

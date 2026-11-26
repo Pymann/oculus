@@ -151,6 +151,11 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("function_uid", node.function_uid);
                     out.attribute("ref_uid", node.ref_uid);
                     out.attribute("child_count", node.child_count);
+                    out.attribute("type_uid", node.type_uid);
+                    out.attribute("is_dependent", node.is_dependent);
+                    out.attribute("label_count", node.label_count);
+                    out.attribute("clause_count", node.clause_count);
+                    out.attribute("has_skipped_code", node.has_skipped_code);
                 });
             }
         });

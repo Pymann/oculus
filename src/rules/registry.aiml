@@ -8,6 +8,10 @@
 - import: "src/rules/enums.aiml"
 - import: "src/rules/scope_decls.aiml"
 - import: "src/rules/inheritance.aiml"
+- import: "src/rules/jumps.aiml"
+- import: "src/rules/switches.aiml"
+- import: "src/rules/operators.aiml"
+- import: "src/rules/handlers.aiml"
 
 - class:
     name: RuleRegistry
@@ -45,6 +49,26 @@
             - call: [<.rules.push, no_using_directive]
             - decl: [no_virtual_base, ptr<Rule>, { new: NoVirtualBaseRule }]
             - call: [<.rules.push, no_virtual_base]
+            - decl: [no_goto, ptr<Rule>, { new: NoGotoRule }]
+            - call: [<.rules.push, no_goto]
+            - decl: [no_unused_label, ptr<Rule>, { new: NoUnusedLabelRule }]
+            - call: [<.rules.push, no_unused_label]
+            - decl: [final_else, ptr<Rule>, { new: FinalElseRule }]
+            - call: [<.rules.push, final_else]
+            - decl: [switch_default, ptr<Rule>, { new: SwitchHasDefaultRule }]
+            - call: [<.rules.push, switch_default]
+            - decl: [two_clauses, ptr<Rule>, { new: TwoOrMoreClausesRule }]
+            - call: [<.rules.push, two_clauses]
+            - decl: [default_place, ptr<Rule>, { new: DefaultFirstOrLastRule }]
+            - call: [<.rules.push, default_place]
+            - decl: [no_comma, ptr<Rule>, { new: NoCommaOperatorRule }]
+            - call: [<.rules.push, no_comma]
+            - decl: [no_reinterpret, ptr<Rule>, { new: NoReinterpretCastRule }]
+            - call: [<.rules.push, no_reinterpret]
+            - decl: [no_unary_plus, ptr<Rule>, { new: NoUnaryPlusRule }]
+            - call: [<.rules.push, no_unary_plus]
+            - decl: [rethrow_handler, ptr<Rule>, { new: RethrowInHandlerRule }]
+            - call: [<.rules.push, rethrow_handler]
       - def:
           name: rule_count
           args: []

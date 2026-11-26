@@ -1,0 +1,116 @@
+# OC-0104 no_goto, OC-0015 no_unused_label and OC-0110 final_else (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: the statement nodes GotoStmt,
+# IndirectGotoStmt, LabelStmt and AddrLabelExpr (ref_uid: the label declaration),
+# and the OpenElseIfChain marker the frontend puts at the `else` of an if whose
+# `else if` ends without `else`.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Is the label declaration the target of a goto, or is its address taken (&&label,
+# asm goto)?  The uids of all such labels, as keys; and "f<uid>" for each function
+# whose body has code skipped by #if, where a goto may be hidden.
+- def:
+    name: used_labels
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [used, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.nodes.len] }
+          body:
+            - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+            - if:
+                condition: { eq: [{ call: [regex.search, "^(GotoStmt|AddrLabelExpr)$", rec.kind] }, 0] }
+                then: [{ call: [used.set, "${rec.ref_uid}", 1] }]
+            - if:
+                condition: { "&&": [{ lt: [rec.parent_uid, 0] }, rec.has_skipped_code] }
+                then: [{ call: [used.set, "f${rec.function_uid}", 1] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: used
+
+- class:
+    name: NoGotoRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 104, "style.c90-.4.2.no_goto", "goto is not used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(GotoStmt|IndirectGotoStmt)$", rec.kind] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 104, "goto is used; use structured control flow"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoUnusedLabelRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 15, "style.c90-.2.3.no_unused_label", "Every label in a function is the target of a jump", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [used, map<string:i32>, { call: [used_labels, info] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(LabelStmt)$", rec.kind] }, 0] }, { eq: [{ call: [used.has, "${rec.ref_uid}"] }, 0] }, { eq: [{ call: [used.has, "f${rec.function_uid}"] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 15, "label '${rec.detail}' is not the target of any goto"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: FinalElseRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 110, "safety.c90-.4.4.final_else", "An if ... else if chain ends with else", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(OpenElseIfChain)$", rec.kind] }, 0] }, { eq: [rec.has_skipped_code, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 110, "this if ... else if chain has no final else"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+

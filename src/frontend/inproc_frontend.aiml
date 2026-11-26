@@ -178,6 +178,11 @@
       - set: [rec.function_uid, { call: [oc_node_num, unit, index, ClangNodeNum.function_uid] }]
       - set: [rec.ref_uid, { call: [oc_node_num, unit, index, ClangNodeNum.ref_uid] }]
       - set: [rec.child_count, { call: [oc_node_num, unit, index, ClangNodeNum.child_count] }]
+      - set: [rec.type_uid, { call: [oc_node_num, unit, index, ClangNodeNum.type_uid] }]
+      - set: [rec.is_dependent, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.is_dependent] }, 1] }]
+      - set: [rec.label_count, { call: [oc_node_num, unit, index, ClangNodeNum.label_count] }]
+      - set: [rec.clause_count, { call: [oc_node_num, unit, index, ClangNodeNum.clause_count] }]
+      - set: [rec.has_skipped_code, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.has_skipped_code] }, 1] }]
       - return: rec
 
 # Everything of one parsed unit, copied out of the shim.
