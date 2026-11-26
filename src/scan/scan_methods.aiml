@@ -81,6 +81,11 @@
                                       body:
                                         - decl: [hit, Finding, { at: [hits, hix] }]
                                         - set: [hit.severity, sev]
-                                        - call: [found.push, hit]
+                                        - decl: [where, string, "${hit.file_name}:${hit.line}:${hit.column}:${hit.rule_id}"]
+                                        - if:
+                                            condition: { eq: [{ call: [<.reported.has, where] }, 0] }
+                                            then:
+                                              - call: [<.reported.set, where, 1]
+                                              - call: [found.push, hit]
                                         - set: [hix, { "+": [hix, 1] }]
                       - set: [rix, { "+": [rix, 1] }]
