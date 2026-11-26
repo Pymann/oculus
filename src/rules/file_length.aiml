@@ -1,0 +1,44 @@
+# Example threshold rule on a metric, so the pipeline has one rule end to end.
+# Its id is a placeholder until the catalogue in Pymann/coding-rules assigns ids.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+
+- class:
+    name: FileLengthRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - decl: [info, RuleSpec]
+            - set: [info.rule_id, 1]
+            - set: [info.rule_key, "size.file.max_lines"]
+            - set: [info.title, "A source file is longer than the limit"]
+            - set: [info.category, "size"]
+            - set: [info.subcategory, "file"]
+            - set: [info.severity, "warn"]
+            - call: [info.languages.push, "c"]
+            - call: [info.languages.push, "c++"]
+            - return: info
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [limit, i32, setting.limit]
+            - if: { condition: { lte: [limit, 0] }, then: [{ set: [limit, 1000] }] }
+            - decl: [total, i32, { call: [metrics.get, "lines.total", 0] }]
+            - if:
+                condition: { gt: [total, limit] }
+                then:
+                  - decl: [hit, Finding]
+                  - set: [hit.file_name, unit.file_name]
+                  - set: [hit.line, { "+": [limit, 1] }]
+                  - set: [hit.column, 1]
+                  - set: [hit.rule_id, 1]
+                  - set: [hit.message, "file has ${total} lines, more than the limit of ${limit}"]
+                  - call: [out.push, hit]

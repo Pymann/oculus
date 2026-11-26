@@ -6,47 +6,39 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      exodus_ref:
-        description: "Which exodus build to take from Kontor (a commit sha of Pymann/exodus, or latest)"
+      aiml_ref:
+        description: "Which aiml build to take from Kontor (a commit sha of Pymann/aiml); empty = the pinned one"
         required: false
-        default: "latest"
+        default: ""
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The aiml v2 line (Pymann/aiml masterv2) that Oculus is built with.  Its CI puts
+  # every build into Kontor as generic/aiml/<commit>/aiml-x86_64-linux.tar.gz.
+  AIML_PINNED_REF: 9658e822278e32cb407029729907f24ff4b758db
+
 jobs:
   build:
-    name: Build (Ubuntu 24.04)
+    name: Build and test (Ubuntu 24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
-    env:
-      EXODUS_CACHE: ${{ github.workspace }}/__exodus_cache
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"   # exodus: requires-python >= 3.12
-
-      - name: Toolchain
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang
-          clang++ --version
-
-      # exodus comes from Kontor's generic store, where exodus's own CI puts the
-      # wheel it built and tested: generic/exodus/<commit>/exodus.whl, and on main
-      # also generic/exodus/latest/.  The repo holds the reader credentials as
-      # AIML_KONTOR_*; KONTOR_* (aiml's names) is the fallback.
-      - name: Install exodus from Kontor
+      # The venv layout (bin/aiml, lib/libaiml.so, lib/<bundled libraries>, env) of
+      # aiml spec/68.  The repo holds the reader credentials as AIML_KONTOR_*;
+      # KONTOR_* is the fallback.
+      - name: Install aiml from Kontor
         env:
           KONTOR_URL: ${{ secrets.AIML_KONTOR_URL || secrets.KONTOR_URL }}
           KONTOR_TOKEN: ${{ secrets.AIML_KONTOR_TOKEN || secrets.KONTOR_TOKEN }}
           KONTOR_CA: ${{ secrets.AIML_KONTOR_CA || secrets.KONTOR_CA }}
-          EXODUS_REF: ${{ inputs.exodus_ref || 'latest' }}
+          AIML_REF: ${{ inputs.aiml_ref }}
         run: |
           set -eu
           missing=""
@@ -57,32 +49,28 @@ jobs:
             echo "::error::Kontor not configured, missing:$missing (repo secrets AIML_KONTOR_URL/_TOKEN/_CA)"
             exit 1
           fi
+          ref="${AIML_REF:-$AIML_PINNED_REF}"
           work="$RUNNER_TEMP/kontor"
-          mkdir -p "$work"
+          venv="$RUNNER_TEMP/aiml-venv"
+          mkdir -p "$work" "$venv"
           printf '%s\n' "$KONTOR_CA" > "$work/ca.crt"
-          src="${KONTOR_URL%/}/generic/exodus/${EXODUS_REF}/exodus.whl"
           # No `curl -k`: the token must not go to a server we did not verify.
-          curl --silent --show-error --fail-with-body --max-time 300 \
+          curl --silent --show-error --fail-with-body --max-time 600 \
                --cacert "$work/ca.crt" \
                -H "Authorization: Bearer $KONTOR_TOKEN" \
-               -o "$work/exodus.whl" "$src"
-          # pip only takes a wheel under its proper name, which the dist-info inside says.
-          name=$(python3 - "$work/exodus.whl" <<'PY'
-          import sys, zipfile
-          names = zipfile.ZipFile(sys.argv[1]).namelist()
-          info = next(n.split("/")[0] for n in names if n.split("/")[0].endswith(".dist-info"))
-          print(info[: -len(".dist-info")] + "-py3-none-any.whl")
-          PY
-          )
-          mv "$work/exodus.whl" "$work/$name"
-          python3 -m pip install -q "$work/$name"
-          rm -f "$work/ca.crt"
-          echo "installed $name from generic/exodus/${EXODUS_REF}"
-          exodus --help > /dev/null
+               -o "$work/aiml.tar.gz" "${KONTOR_URL%/}/generic/aiml/${ref}/aiml-x86_64-linux.tar.gz"
+          tar -xzf "$work/aiml.tar.gz" -C "$venv"
+          rm -rf "$work"
+          test -x "$venv/bin/aiml"
+          test -f "$venv/lib/libaiml.so"
+          # What `. <venv>/env` sets (aiml spec/68 section 3).
+          echo "AIML_VENV=$venv" >> "$GITHUB_ENV"
+          echo "AIML=$venv/bin/aiml" >> "$GITHUB_ENV"
+          echo "$venv/bin" >> "$GITHUB_PATH"
+          echo "installed aiml ${ref} into $venv"
 
       - name: Build
-        run: exodus build -j "$(nproc)"
+        run: aiml build
 
-      - name: Smoke test
-        run: |
-          ./out/oculus/oculus --version
+      - name: Test
+        run: tests/run_tests.sh out/oculus/oculus

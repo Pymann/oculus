@@ -1,11 +1,15 @@
 {
+  "$schema": "exodus.project.config-1.0",
   "name": "oculus",
   "version": "0.0.1",
-  "sources": ["src/**/*.cpp"],
-  "search_paths": ["src"],
-  "compiler": {
-    "name": "clang++",
-    "lang_standard": "20"
-  },
-  "werror": true
+  "license": [],
+  "output_type": "executable",
+  "sources": ["src/main.aiml"],
+  "compiler": { "name": "$AIML" },
+  "linker": {
+    "name": "g++",
+    "flags": [],
+    "libraries": ["aiml", "pthread", "dl", "m"],
+    "library_paths": ["$AIML_VENV/lib"]
+  }
 }

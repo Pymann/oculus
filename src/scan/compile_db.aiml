@@ -1,0 +1,81 @@
+# compile_commands.json: the list of translation units and their flags.
+
+- model:
+    name: CompileCommand
+    fields:
+      - [directory, string, "."]
+      - [file, string, ""]
+      - [command, string, ""]
+      - [arguments, list<string>]
+      - [output, string, ""]
+
+- model:
+    name: CompileDb
+    fields:
+      - [commands, list<CompileCommand>]
+      - [problem, string, ""]
+
+# Reads `<build_dir>/compile_commands.json`.  A problem is reported in `problem`;
+# the caller decides what to do with it.
+- def:
+    name: load_compile_db
+    args: [[build_dir, string]]
+    return: CompileDb
+    body:
+      - decl: [result, CompileDb]
+      - decl: [db_file, path, { call: [path.from_string, "${build_dir}/compile_commands.json"] }]
+      - if:
+          condition: { eq: [{ call: [io.is_file, db_file] }, false] }
+          then:
+            - set: [result.problem, "${build_dir}/compile_commands.json: no such file"]
+            - return: result
+      - decl: [text, string, { call: [io.read_file, db_file] }]
+      - decl: [cmds, list<CompileCommand>, { call: [sys.deserialize, text, "list<CompileCommand>"] }]
+      - decl: [problem, string, { call: [sys.json_error] }]
+      - if:
+          condition: { gt: [problem.len, 0] }
+          then:
+            - set: [result.problem, "${build_dir}/compile_commands.json: ${problem}"]
+            - return: result
+      - set: [result.commands, cmds]
+      - return: result
+
+# A translation unit given as a plain path, without a compilation database.
+- def:
+    name: command_for_path
+    args: [[source_path, string]]
+    return: CompileCommand
+    body:
+      - decl: [cmd, CompileCommand]
+      - set: [cmd.file, source_path]
+      - return: cmd
+
+# The file of a command as a path the process can open.
+- def:
+    name: command_source_path
+    args: [[cmd, CompileCommand]]
+    return: string
+    body:
+      - if: { condition: { call: [cmd.file.starts_with, "/"] }, then: [{ return: cmd.file }] }
+      - decl: [here, bool, { "&&": [{ eq: [cmd.directory.len, 1] }, { call: [cmd.directory.starts_with, "."] }] }]
+      - if: { condition: { "||": [here, { eq: [cmd.directory.len, 0] }] }, then: [{ return: cmd.file }] }
+      - return: "${cmd.directory}/${cmd.file}"
+
+# "c" or "c++".  The flags decide first (-x, the driver), the suffix only after that.
+- def:
+    name: command_language
+    args: [[cmd, CompileCommand]]
+    return: string
+    body:
+      - decl: [line, string, { call: [cmd.arguments.join, " "] }]
+      - if: { condition: { eq: [line.len, 0] }, then: [{ set: [line, cmd.command] }] }
+      - if: { condition: { call: [line.contains, "-x c++"] }, then: [{ return: "c++" }] }
+      - if: { condition: { call: [line.contains, "-x c "] }, then: [{ return: "c" }] }
+      - if: { condition: { call: [line.starts_with, "clang++"] }, then: [{ return: "c++" }] }
+      - if: { condition: { call: [line.starts_with, "g++"] }, then: [{ return: "c++" }] }
+      - if: { condition: { call: [line.contains, "/clang++ "] }, then: [{ return: "c++" }] }
+      - if: { condition: { call: [line.contains, "/g++ "] }, then: [{ return: "c++" }] }
+      - if: { condition: { call: [cmd.file.ends_with, ".cc"] }, then: [{ return: "c++" }] }
+      - if: { condition: { call: [cmd.file.ends_with, ".cpp"] }, then: [{ return: "c++" }] }
+      - if: { condition: { call: [cmd.file.ends_with, ".cxx"] }, then: [{ return: "c++" }] }
+      - return: "c"

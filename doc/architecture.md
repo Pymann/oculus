@@ -37,9 +37,11 @@ any language. The LLVM version dependency is then confined to the worker.
 If the rest is written in AIML, this also avoids the problem that AIML's FFI
 only speaks the C ABI and cannot call the C++ LibTooling API directly.
 
-Implementation language of the rest: open. The rough diagrams use AIML
-constructs (`classgroup`, `model`, `interface`, `cascade_class`), see
-`Pymann/aiml/spec/57_function_cascades.md` and `58_classgroups.md`.
+Implementation language: AIML v2 (the `masterv2` line of `Pymann/aiml`), built
+with `aiml build`. The parts are wired by one class group, `ScanRuntime`
+(`src/runtime.aiml`, aiml spec/58). The frontend sits behind the `Frontend`
+interface; until the binding is decided, `StubFrontend` reads only the source
+text, so rules that need no AST (line counts) already run end to end.
 
 ## 3. Pipeline
 
@@ -171,10 +173,10 @@ oculus [-p BUILD_DIR] [PATHS ...]
   - **catalogue** (which rules exist, their attributes): `Pymann/coding-rules`,
     built into Oculus;
   - **project configuration** (which rules are on, which severity, thresholds):
-    the `rules` section of `oculus.json`, keyed by id:
+    the `rules` list of `oculus.json`, one entry per rule id:
 
     ```json
-    { "rules": { "42": { "enabled": false }, "7": { "severity": "error" } } }
+    { "rules": [ { "rule": 42, "enabled": false }, { "rule": 7, "severity": "error" } ] }
     ```
 
 - Language per TU: from the compilation database (`-x`, `-std`, `clang` versus
@@ -184,7 +186,21 @@ oculus [-p BUILD_DIR] [PATHS ...]
   `standards`. The `PickPool` cascade from the first draft can implement this
   selection (AIML spec 57); shebang and Python are dropped.
 
-## 7. Open
+## 7. State of the skeleton
+
+Done: CLI (`sys.arg_dump`), `oculus.json`, `compile_commands.json`, the
+`ScanRuntime` group, `Rule` and `MetricProvider` interfaces, the registry, one
+example rule (OC-0001, file length, its id a placeholder until the catalogue
+assigns ids), the line metric, text/JSON/CSV output, exit codes, unit and
+end-to-end tests in CI.
+
+Not yet: the Clang frontend, the IR beyond file and function, worker processes
+(the planner computes the count, the scanner still runs the units one after
+another in one process), the thread pool, phase 2, loading the catalogue from
+`Pymann/coding-rules`. An unknown or malformed flag exits with 1 instead of 2,
+because `sys.arg_dump` ends the process itself.
+
+## 8. Open
 
 - Clang binding (section 2) and implementation language.
 - Target standard.

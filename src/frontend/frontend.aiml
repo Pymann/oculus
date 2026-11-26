@@ -1,0 +1,35 @@
+# The frontend turns one translation unit into Oculus' IR.  Everything behind this
+# interface is replaceable: how Oculus binds to Clang is still open
+# (doc/architecture.md, section 2).
+
+- import: "src/ir/ir.aiml"
+- import: "src/scan/compile_db.aiml"
+
+- interface:
+    name: Frontend
+    methods:
+      - [frontend_name, string, []]
+      - [parse_unit, IrUnit, [[cmd, CompileCommand]]]
+
+# Placeholder until the Clang binding is decided: reads the source text and the
+# language, finds no functions.  Rules that only need the text (line counts) work.
+- class:
+    name: StubFrontend
+    implements: [Frontend]
+    methods:
+      - def: { name: frontend_name, args: [], return: string, body: [{ return: "stub" }] }
+      - def:
+          name: parse_unit
+          args: [[cmd, CompileCommand]]
+          return: IrUnit
+          body:
+            - decl: [unit, IrUnit]
+            - decl: [src_name, string, { call: [command_source_path, cmd] }]
+            - set: [unit.file_name, src_name]
+            - set: [unit.language, { call: [command_language, cmd] }]
+            - decl: [src_path, path, { call: [path.from_string, src_name] }]
+            - if:
+                condition: { call: [io.is_file, src_path] }
+                then:
+                  - set: [unit.source_text, { call: [io.read_file, src_path] }]
+            - return: unit

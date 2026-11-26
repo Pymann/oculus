@@ -1,0 +1,26 @@
+# Line counting: total, blank, non-blank; a final newline does not add a line.
+
+- import: "src/ir/ir.aiml"
+- import: "src/metrics/metric.aiml"
+
+- def:
+    name: main
+    args: []
+    return: i32
+    body:
+      - decl: [unit, IrUnit]
+      - set: [unit.source_text, "int a;\n\n  \nint b;\n"]
+      - decl: [values, map<string:i32>]
+      - decl: [metric, ptr<LineMetric>, { new: LineMetric }]
+      - call: [metric.measure, unit, values]
+      - decl: [total, i32, { call: [values.get, "lines.total", -1] }]
+      - decl: [blank, i32, { call: [values.get, "lines.blank", -1] }]
+      - decl: [code, i32, { call: [values.get, "lines.nonblank", -1] }]
+      - free: [metric]
+      - if:
+          condition: { "||": [{ neq: [total, 4] }, { "||": [{ neq: [blank, 2] }, { neq: [code, 2] }] }] }
+          then:
+            - call: [io.write, io.stderr, "FAIL lines: total=${total} blank=${blank} nonblank=${code}, want 4 2 2\n"]
+            - return: 1
+      - call: [io.write, io.stdout, "PASS test_line_metric\n"]
+      - return: 0

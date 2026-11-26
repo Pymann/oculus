@@ -1,0 +1,29 @@
+# ScanRuntime wires the parts of one scan together (aiml spec/58, class groups).
+# The frontend and the metric are wired through their interfaces, so replacing the
+# stub frontend is a change of this file only.
+
+- import: "src/config/config_io.aiml"
+- import: "src/rules/registry.aiml"
+- import: "src/frontend/frontend.aiml"
+- import: "src/metrics/metric.aiml"
+- import: "src/report/reporter.aiml"
+- import: "src/scan/scanner.aiml"
+- import: "src/scan/scan_methods.aiml"
+
+- classgroup:
+    name: ScanRuntime
+    instances:
+      - class: ConfigIO
+        instance: config_io
+      - class: RuleRegistry
+        instance: registry
+        constructor: [register_builtin]
+      - class: StubFrontend
+        instance: frontend
+      - class: LineMetric
+        instance: line_metric
+      - class: Reporter
+        instance: reporter
+      - class: Scanner
+        instance: scanner
+        sees: [registry, frontend:Frontend, line_metric:MetricProvider]

@@ -1,0 +1,16 @@
+# The scanner instance of ScanRuntime.  Its scan method lives in
+# src/scan/scan_methods.aiml because it needs the group's wiring (registry,
+# frontend, metrics); this base class only keeps the counters.
+
+- class:
+    name: Scanner
+    members:
+      - [scanned_units, i32, 0, { access: public }]
+      - [planned_workers, i32, 0, { access: public }]
+    methods:
+      - def:
+          name: count_unit
+          args: []
+          return: void
+          body:
+            - set: [<.scanned_units, { "+": [<.scanned_units, 1] }]

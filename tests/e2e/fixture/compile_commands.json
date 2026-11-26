@@ -1,0 +1,4 @@
+[
+  { "directory": "tests/e2e/fixture", "file": "long.c", "arguments": ["clang", "-std=c11", "-c", "long.c"] },
+  { "directory": "tests/e2e/fixture", "file": "short.cpp", "command": "clang++ -std=c++17 -c short.cpp" }
+]

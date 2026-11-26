@@ -1,0 +1,48 @@
+# Rule ids, severities and the three report formats.
+
+- import: "src/report/finding.aiml"
+- import: "src/report/reporter.aiml"
+
+- def:
+    name: expect_text
+    args: [[what, string], [got, string], [want, string]]
+    return: i32
+    body:
+      - if: { condition: { eq: [got, want] }, then: [{ return: 0 }] }
+      - call: [io.write, io.stderr, "FAIL ${what}: got [${got}] want [${want}]\n"]
+      - return: 1
+
+- def:
+    name: main
+    args: []
+    return: i32
+    body:
+      - decl: [fails, i32, 0]
+      - set: [fails, { "+": [fails, { call: [expect_text, "id 7", { call: [format_rule_id, 7] }, "OC-0007"] }] }]
+      - set: [fails, { "+": [fails, { call: [expect_text, "id 42", { call: [format_rule_id, 42] }, "OC-0042"] }] }]
+      - set: [fails, { "+": [fails, { call: [expect_text, "id 1234", { call: [format_rule_id, 1234] }, "OC-1234"] }] }]
+      - decl: [rank_warn, i32, { call: [severity_rank, "warn"] }]
+      - decl: [rank_bogus, i32, { call: [severity_rank, "bogus"] }]
+      - set: [fails, { "+": [fails, { call: [expect_text, "rank warn", "${rank_warn}", "1"] }] }]
+      - set: [fails, { "+": [fails, { call: [expect_text, "rank bogus", "${rank_bogus}", "-1"] }] }]
+      - decl: [hit, Finding]
+      - set: [hit.file_name, "a.c"]
+      - set: [hit.line, 3]
+      - set: [hit.column, 5]
+      - set: [hit.rule_id, 12]
+      - set: [hit.message, "say \"hi\""]
+      - decl: [found, list<Finding>]
+      - call: [found.push, hit]
+      - decl: [rep, ptr<Reporter>, { new: Reporter }]
+      - set: [fails, { "+": [fails, { call: [expect_text, "text", { call: [rep.render, found, "text"] }, "a.c:3:5: OC-0012: say \"hi\"\n"] }] }]
+      - set: [fails, { "+": [fails, { call: [expect_text, "csv", { call: [rep.render, found, "csv"] }, "file,line,column,rule,severity,message\n\"a.c\",3,5,OC-0012,warn,\"say \"\"hi\"\"\"\n"] }] }]
+      - decl: [json, string, { call: [rep.render, found, "json"] }]
+      - if:
+          condition: { lt: [{ call: [json.index_of, "\"rule\": \"OC-0012\""] }, 0] }
+          then:
+            - call: [io.write, io.stderr, "FAIL json: ${json}\n"]
+            - set: [fails, { "+": [fails, 1] }]
+      - free: [rep]
+      - if: { condition: { gt: [fails, 0] }, then: [{ return: 1 }] }
+      - call: [io.write, io.stdout, "PASS test_report\n"]
+      - return: 0

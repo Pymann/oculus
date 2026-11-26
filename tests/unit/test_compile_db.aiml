@@ -1,0 +1,31 @@
+# compile_commands.json: reading it, the source path of a command, its language.
+
+- import: "src/scan/compile_db.aiml"
+- import: "src/frontend/frontend.aiml"
+
+- def:
+    name: main
+    args: []
+    return: i32
+    body:
+      - decl: [fails, i32, 0]
+      - decl: [cdb, CompileDb, { call: [load_compile_db, "tests/e2e/fixture"] }]
+      - if: { condition: { gt: [cdb.problem.len, 0] }, then: [{ call: [io.write, io.stderr, "FAIL load: ${cdb.problem}\n"] }, { return: 1 }] }
+      - if: { condition: { neq: [cdb.commands.len, 2] }, then: [{ call: [io.write, io.stderr, "FAIL ${cdb.commands.len} commands, want 2\n"] }, { return: 1 }] }
+      - decl: [first, CompileCommand, { at: [cdb.commands, 0] }]
+      - decl: [src_name, string, { call: [command_source_path, first] }]
+      - if: { condition: { neq: [src_name, "tests/e2e/fixture/long.c"] }, then: [{ call: [io.write, io.stderr, "FAIL path ${src_name}\n"] }, { set: [fails, 1] }] }
+      - decl: [lang_c, string, { call: [command_language, first] }]
+      - if: { condition: { neq: [lang_c, "c"] }, then: [{ call: [io.write, io.stderr, "FAIL language ${lang_c}, want c\n"] }, { set: [fails, 1] }] }
+      - decl: [second, CompileCommand, { at: [cdb.commands, 1] }]
+      - decl: [lang_cpp, string, { call: [command_language, second] }]
+      - if: { condition: { neq: [lang_cpp, "c++"] }, then: [{ call: [io.write, io.stderr, "FAIL language ${lang_cpp}, want c++\n"] }, { set: [fails, 1] }] }
+      - decl: [missing, CompileDb, { call: [load_compile_db, "tests/no_such_dir"] }]
+      - if: { condition: { eq: [missing.problem.len, 0] }, then: [{ call: [io.write, io.stderr, "FAIL a missing database is no problem\n"] }, { set: [fails, 1] }] }
+      - decl: [front, ptr<StubFrontend>, { new: StubFrontend }]
+      - decl: [unit, IrUnit, { call: [front.parse_unit, first] }]
+      - if: { condition: { eq: [unit.source_text.len, 0] }, then: [{ call: [io.write, io.stderr, "FAIL the stub frontend read no text\n"] }, { set: [fails, 1] }] }
+      - free: [front]
+      - if: { condition: { gt: [fails, 0] }, then: [{ return: 1 }] }
+      - call: [io.write, io.stdout, "PASS test_compile_db\n"]
+      - return: 0

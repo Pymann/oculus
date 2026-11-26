@@ -1,0 +1,40 @@
+# One finding.  The text report prints it as `file:line:col: RULE-ID: message`.
+
+- model:
+    name: Finding
+    fields:
+      - [file_name, string, ""]
+      - [line, i32, 0]
+      - [column, i32, 0]
+      - [rule_id, i32, 0]
+      - [severity, string, "warn"]
+      - [message, string, ""]
+
+# The displayed form of a rule id: 7 -> "OC-0007".  The id itself is the number.
+- def:
+    name: format_rule_id
+    args: [[rule_id, i32]]
+    return: string
+    body:
+      - if: { condition: { lt: [rule_id, 10] }, then: [{ return: "OC-000${rule_id}" }] }
+      - if: { condition: { lt: [rule_id, 100] }, then: [{ return: "OC-00${rule_id}" }] }
+      - if: { condition: { lt: [rule_id, 1000] }, then: [{ return: "OC-0${rule_id}" }] }
+      - return: "OC-${rule_id}"
+
+# info < warn < error; anything else is -1.
+- def:
+    name: severity_rank
+    args: [[severity, string]]
+    return: i32
+    body:
+      - decl: [ranks, map<string:i32>, { info: 0, warn: 1, error: 2 }]
+      - return: { call: [ranks.get, severity, -1] }
+
+# text 0, json 1, csv 2; anything else is -1.
+- def:
+    name: report_format_code
+    args: [[format, string]]
+    return: i32
+    body:
+      - decl: [codes, map<string:i32>, { text: 0, json: 1, csv: 2 }]
+      - return: { call: [codes.get, format, -1] }

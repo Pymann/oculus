@@ -1,0 +1,26 @@
+# Oculus' own immutable IR.  A frontend builds it from one translation unit; after
+# that nothing in Oculus touches the frontend's AST again.  This is the minimal start:
+# it grows with the rules that need more (see doc/architecture.md, "RuleInformation").
+
+- model:
+    name: SourceLoc
+    fields:
+      - [file_name, string, ""]
+      - [line, i32, 0]
+      - [column, i32, 0]
+
+- model:
+    name: IrFunction
+    fields:
+      - [name, string, ""]
+      - [loc, SourceLoc]
+      - [max_nesting, i32, 0]
+      - [decisions, i32, 0]
+
+- model:
+    name: IrUnit
+    fields:
+      - [file_name, string, ""]
+      - [language, string, "c"]
+      - [source_text, string, ""]
+      - [functions, list<IrFunction>]

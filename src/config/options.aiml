@@ -1,0 +1,42 @@
+# The models of the command line, of oculus.json and of the merged ScanOptions.
+# Precedence: command line over oculus.json over the defaults below.
+
+- import: "src/rules/rule.aiml"
+- import: "src/report/finding.aiml"
+
+# Read by sys.arg_dump: `--single-rule 7` sets single_rule, `-p dir` sets build_dir.
+- model:
+    name: CliArgs
+    fields:
+      - [build_dir, string, "", { alias: "p" }]
+      - [config, string, ""]
+      - [format, string, ""]
+      - [threshold, string, ""]
+      - [jobs, i32, 0]
+      - [single_rule, i32, 0]
+      - [version, bool, false]
+      - [help, bool, false]
+      - [positional, list<string>]
+      - [given, list<string>]
+
+# oculus.json.  `rules` holds one entry per configured rule:
+#   { "rules": [ { "rule": 7, "enabled": false }, { "rule": 1, "limit": 500 } ] }
+- model:
+    name: ProjectConfig
+    fields:
+      - [format, string, "text"]
+      - [threshold, string, "info"]
+      - [jobs, i32, 0]
+      - [rules, list<RuleSetting>]
+
+- model:
+    name: ScanOptions
+    fields:
+      - [build_dir, string, ""]
+      - [paths, list<string>]
+      - [format, string, "text"]
+      - [threshold, string, "info"]
+      - [jobs, i32, 0]
+      - [single_rule, i32, 0]
+      - [rules, list<RuleSetting>]
+      - [problem, string, ""]

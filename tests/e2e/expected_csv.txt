@@ -1,0 +1,2 @@
+file,line,column,rule,severity,message
+"tests/e2e/fixture/long.c",6,1,OC-0001,warn,"file has 7 lines, more than the limit of 5"

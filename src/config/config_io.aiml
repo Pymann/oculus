@@ -1,0 +1,66 @@
+# Reads oculus.json and merges it with the command line into one ScanOptions.
+
+- import: "src/config/options.aiml"
+- import: "src/report/finding.aiml"
+
+- class:
+    name: ConfigIO
+    methods:
+      # The file named by --config, else oculus.json in the working directory if it exists.
+      - def:
+          name: load_project
+          args: [[cli, CliArgs], [problem, list<string>]]
+          return: ProjectConfig
+          body:
+            - decl: [project, ProjectConfig]
+            - decl: [cfg_name, string, cli.config]
+            - decl: [must_exist, bool, true]
+            - if:
+                condition: { eq: [cfg_name.len, 0] }
+                then:
+                  - set: [cfg_name, "oculus.json"]
+                  - set: [must_exist, false]
+            - decl: [cfg_path, path, { call: [path.from_string, cfg_name] }]
+            - if:
+                condition: { eq: [{ call: [io.is_file, cfg_path] }, false] }
+                then:
+                  - if: { condition: must_exist, then: [{ call: [problem.push, "${cfg_name}: no such file"] }] }
+                  - return: project
+            - decl: [text, string, { call: [io.read_file, cfg_path] }]
+            - set: [project, { call: [sys.deserialize, text, "ProjectConfig"] }]
+            - decl: [json_problem, string, { call: [sys.json_error] }]
+            - if: { condition: { gt: [json_problem.len, 0] }, then: [{ call: [problem.push, "${cfg_name}: ${json_problem}"] }] }
+            - return: project
+
+      - def:
+          name: resolve
+          args: [[cli, CliArgs]]
+          return: ScanOptions
+          body:
+            - decl: [opts, ScanOptions]
+            - decl: [problems, list<string>]
+            - decl: [project, ProjectConfig, { call: [<.load_project, cli, problems] }]
+            - set: [opts.format, project.format]
+            - set: [opts.threshold, project.threshold]
+            - set: [opts.jobs, project.jobs]
+            - set: [opts.rules, project.rules]
+            - if: { condition: { call: [cli.given.contains, "format"] }, then: [{ set: [opts.format, cli.format] }] }
+            - if: { condition: { call: [cli.given.contains, "threshold"] }, then: [{ set: [opts.threshold, cli.threshold] }] }
+            - if: { condition: { call: [cli.given.contains, "jobs"] }, then: [{ set: [opts.jobs, cli.jobs] }] }
+            - set: [opts.build_dir, cli.build_dir]
+            - set: [opts.single_rule, cli.single_rule]
+            - set: [opts.paths, cli.positional]
+            - if:
+                condition: { lt: [{ call: [report_format_code, opts.format] }, 0] }
+                then:
+                  - call: [problems.push, "unknown format '${opts.format}' (text, json or csv)"]
+            - if:
+                condition: { lt: [{ call: [severity_rank, opts.threshold] }, 0] }
+                then:
+                  - call: [problems.push, "unknown threshold '${opts.threshold}' (info, warn or error)"]
+            - if:
+                condition: { "&&": [{ eq: [opts.build_dir.len, 0] }, { eq: [opts.paths.len, 0] }] }
+                then:
+                  - call: [problems.push, "nothing to scan: give -p BUILD_DIR or source paths"]
+            - set: [opts.problem, { call: [problems.join, "\n"] }]
+            - return: opts

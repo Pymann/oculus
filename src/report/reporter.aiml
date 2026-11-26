@@ -1,0 +1,102 @@
+# Writes the findings as text (one per line), JSON or CSV.
+
+- import: "src/report/finding.aiml"
+
+# The JSON shape of one finding: the rule as "OC-0001", not as a number.
+- model:
+    name: JsonFinding
+    fields:
+      - [file, string, ""]
+      - [line, i32, 0]
+      - [column, i32, 0]
+      - [rule, string, ""]
+      - [severity, string, ""]
+      - [message, string, ""]
+
+- model:
+    name: JsonReport
+    fields:
+      - [findings, list<JsonFinding>]
+
+- class:
+    name: Reporter
+    methods:
+      - def:
+          name: render
+          args: [[findings, list<Finding>], [format, string]]
+          return: string
+          body:
+            - decl: [code, i32, { call: [report_format_code, format] }]
+            - if: { condition: { eq: [code, 1] }, then: [{ return: { call: [<.render_json, findings] } }] }
+            - if: { condition: { eq: [code, 2] }, then: [{ return: { call: [<.render_csv, findings] } }] }
+            - return: { call: [<.render_text, findings] }
+
+      - def:
+          name: render_text
+          args: [[findings, list<Finding>]]
+          return: string
+          body:
+            - decl: [out, list<string>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, findings.len] }
+                body:
+                  - decl: [hit, Finding, { at: [findings, idx] }]
+                  - decl: [rid, string, { call: [format_rule_id, hit.rule_id] }]
+                  - call: [out.push, "${hit.file_name}:${hit.line}:${hit.column}: ${rid}: ${hit.message}\n"]
+                  - set: [idx, { "+": [idx, 1] }]
+            - return: { call: [out.join, ""] }
+
+      - def:
+          name: render_csv
+          args: [[findings, list<Finding>]]
+          return: string
+          body:
+            - decl: [out, list<string>]
+            - call: [out.push, "file,line,column,rule,severity,message\n"]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, findings.len] }
+                body:
+                  - decl: [hit, Finding, { at: [findings, idx] }]
+                  - decl: [rid, string, { call: [format_rule_id, hit.rule_id] }]
+                  - decl: [fname, string, { call: [<.csv_field, hit.file_name] }]
+                  - decl: [msg, string, { call: [<.csv_field, hit.message] }]
+                  - call: [out.push, "${fname},${hit.line},${hit.column},${rid},${hit.severity},${msg}\n"]
+                  - set: [idx, { "+": [idx, 1] }]
+            - return: { call: [out.join, ""] }
+
+      # RFC 4180: quoted, inner quotes doubled.
+      - def:
+          name: csv_field
+          args: [[raw, string]]
+          return: string
+          body:
+            - decl: [doubled, string, { call: [raw.replace, "\"", "\"\""] }]
+            - return: "\"${doubled}\""
+
+      - def:
+          name: render_json
+          args: [[findings, list<Finding>]]
+          return: string
+          body:
+            - decl: [report, JsonReport]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, findings.len] }
+                body:
+                  - decl: [hit, Finding, { at: [findings, idx] }]
+                  - decl: [row, JsonFinding]
+                  - set: [row.file, hit.file_name]
+                  - set: [row.line, hit.line]
+                  - set: [row.column, hit.column]
+                  - set: [row.rule, { call: [format_rule_id, hit.rule_id] }]
+                  - set: [row.severity, hit.severity]
+                  - set: [row.message, hit.message]
+                  - call: [report.findings.push, row]
+                  - set: [idx, { "+": [idx, 1] }]
+            - decl: [style, JsonStyle]
+            - set: [style.bare, 1]
+            - set: [style.pretty, 1]
+            - decl: [text, string, { call: [sys.serialize, report, style] }]
+            - return: "${text}\n"

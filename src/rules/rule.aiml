@@ -1,0 +1,36 @@
+# A rule.  There is only this one kind: no class is named after MISRA or CERT, and
+# the mapping to their numbers lives in Pymann/coding-rules, not here.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+
+# What a rule is.  `rule_id` is the stable number (shown as OC-0042); the key,
+# category and languages are descriptive and may change, the id never does.
+- model:
+    name: RuleSpec
+    fields:
+      - [rule_id, i32, 0]
+      - [rule_key, string, ""]
+      - [title, string, ""]
+      - [category, string, ""]
+      - [subcategory, string, ""]
+      - [severity, string, "warn"]
+      - [on_by_default, bool, true]
+      - [languages, list<string>]
+
+# How a project configures one rule: one entry of the `rules` list of oculus.json,
+# `rule` being the rule id.  An empty severity and a limit of 0 mean "the rule's
+# own default".
+- model:
+    name: RuleSetting
+    fields:
+      - [rule, i32, 0]
+      - [enabled, bool, true]
+      - [severity, string, ""]
+      - [limit, i32, 0]
+
+- interface:
+    name: Rule
+    methods:
+      - [spec, RuleSpec, []]
+      - [check_unit, void, [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]]

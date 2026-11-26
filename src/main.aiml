@@ -1,0 +1,76 @@
+# oculus: static analysis for C and C++.
+#
+#   oculus [-p BUILD_DIR] [PATHS ...] [--config FILE] [--format text|json|csv]
+#          [--threshold info|warn|error] [--jobs N] [--single-rule ID]
+#
+# Exit code: 0 no findings, 1 findings, 2 error.
+
+- import: "src/config/options.aiml"
+- import: "src/scan/compile_db.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/runtime.aiml"
+
+- def:
+    name: usage_text
+    args: []
+    return: string
+    body:
+      - return: "usage: oculus [-p BUILD_DIR] [PATHS ...] [--config FILE] [--format text|json|csv]\n              [--threshold info|warn|error] [--jobs N] [--single-rule ID]\nFindings: file:line:col: RULE-ID: message\nExit code: 0 no findings, 1 findings, 2 error\n"
+
+# The translation units of this scan: the compilation database, else the paths.
+- def:
+    name: collect_units
+    args: [[opts, ScanOptions], [problem, list<string>]]
+    return: list<CompileCommand>
+    body:
+      - decl: [units, list<CompileCommand>]
+      - if:
+          condition: { gt: [opts.build_dir.len, 0] }
+          then:
+            - decl: [cdb, CompileDb, { call: [load_compile_db, opts.build_dir] }]
+            - if: { condition: { gt: [cdb.problem.len, 0] }, then: [{ call: [problem.push, cdb.problem] }] }
+            - return: cdb.commands
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, opts.paths.len] }
+          body:
+            - call: [units.push, { call: [command_for_path, { at: [opts.paths, idx] }] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: units
+
+- def:
+    name: main
+    args: []
+    return: i32
+    body:
+      - decl: [cli, CliArgs]
+      - call: [sys.arg_dump, cli]
+      - if:
+          condition: cli.version
+          then:
+            - call: [io.write, io.stdout, "oculus 0.0.1\n"]
+            - return: 0
+      - if:
+          condition: cli.help
+          then:
+            - call: [io.write, io.stdout, { call: [usage_text] }]
+            - return: 0
+      - decl: [runtime, ptr<ScanRuntime>, { new: ScanRuntime }]
+      - decl: [opts, ScanOptions, { call: [runtime.config_io.resolve, cli] }]
+      - if:
+          condition: { gt: [opts.problem.len, 0] }
+          then:
+            - call: [io.write, io.stderr, "oculus: ${opts.problem}\n"]
+            - return: 2
+      - decl: [problem, list<string>]
+      - decl: [units, list<CompileCommand>, { call: [collect_units, opts, problem] }]
+      - if:
+          condition: { gt: [problem.len, 0] }
+          then:
+            - decl: [why, string, { call: [problem.join, "\n"] }]
+            - call: [io.write, io.stderr, "oculus: ${why}\n"]
+            - return: 2
+      - decl: [found, list<Finding>, { call: [runtime.scanner.scan_units, units, opts] }]
+      - call: [io.write, io.stdout, { call: [runtime.reporter.render, found, opts.format] }]
+      - if: { condition: { gt: [found.len, 0] }, then: [{ return: 1 }] }
+      - return: 0

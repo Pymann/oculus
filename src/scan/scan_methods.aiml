@@ -1,0 +1,83 @@
+# The scan itself, as a method of the `scanner` instance of ScanRuntime.
+#
+# Per translation unit: frontend -> IR -> metrics -> every enabled rule.  The
+# units run one after another in this process for now; the worker processes of
+# doc/architecture.md section 3 replace this loop, the per-unit step stays.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/config/options.aiml"
+- import: "src/scan/compile_db.aiml"
+- import: "src/scan/planner.aiml"
+
+- groupmethods:
+    group: ScanRuntime
+    instances:
+      - instance: scanner
+        methods:
+          - def:
+              name: scan_units
+              args: [[commands, list<CompileCommand>], [opts, ScanOptions]]
+              return: list<Finding>
+              body:
+                - decl: [found, list<Finding>]
+                - set: [<.planned_workers, { call: [worker_count, opts.jobs, commands.len, 1500] }]
+                - decl: [idx, i32, 0]
+                - while:
+                    condition: { lt: [idx, commands.len] }
+                    body:
+                      - decl: [cmd, CompileCommand, { at: [commands, idx] }]
+                      - decl: [unit, IrUnit, { call: [<.frontend.parse_unit, cmd] }]
+                      - decl: [metrics, map<string:i32>]
+                      - call: [<.line_metric.measure, unit, metrics]
+                      - call: [<.check_rules, unit, metrics, opts, found]
+                      - call: [<.count_unit]
+                      - set: [idx, { "+": [idx, 1] }]
+                - return: found
+
+          - def:
+              name: check_rules
+              args: [[unit, IrUnit], [metrics, map<string:i32>], [opts, ScanOptions], [found, list<Finding>]]
+              return: void
+              body:
+                - decl: [floor, i32, { call: [severity_rank, opts.threshold] }]
+                - decl: [rix, i32, 0]
+                - while:
+                    condition: { lt: [rix, <.registry.rules.len] }
+                    body:
+                      - decl: [rule, ref<Rule>, { at: [<.registry.rules, rix] }]
+                      - decl: [info, RuleSpec, { call: [rule.spec] }]
+                      - decl: [setting, RuleSetting]
+                      - set: [setting.enabled, info.on_by_default]
+                      - decl: [six, i32, 0]
+                      - while:
+                          condition: { lt: [six, opts.rules.len] }
+                          body:
+                            - decl: [entry, RuleSetting, { at: [opts.rules, six] }]
+                            - if: { condition: { eq: [entry.rule, info.rule_id] }, then: [{ set: [setting, entry] }] }
+                            - set: [six, { "+": [six, 1] }]
+                      - decl: [wanted, bool, setting.enabled]
+                      - if:
+                          condition: { gt: [opts.single_rule, 0] }
+                          then:
+                            - set: [wanted, { eq: [info.rule_id, opts.single_rule] }]
+                      - if:
+                          condition: wanted
+                          then:
+                            - decl: [sev, string, setting.severity]
+                            - if: { condition: { eq: [sev.len, 0] }, then: [{ set: [sev, info.severity] }] }
+                            - decl: [hits, list<Finding>]
+                            - call: [rule.check_unit, unit, metrics, setting, hits]
+                            - if:
+                                condition: { gte: [{ call: [severity_rank, sev] }, floor] }
+                                then:
+                                  - decl: [hix, i32, 0]
+                                  - while:
+                                      condition: { lt: [hix, hits.len] }
+                                      body:
+                                        - decl: [hit, Finding, { at: [hits, hix] }]
+                                        - set: [hit.severity, sev]
+                                        - call: [found.push, hit]
+                                        - set: [hix, { "+": [hix, 1] }]
+                      - set: [rix, { "+": [rix, 1] }]

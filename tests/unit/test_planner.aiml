@@ -1,0 +1,26 @@
+# Worker count: bounded by --jobs, by the units, by RAM, and at least one.
+
+- import: "src/scan/planner.aiml"
+- import: "src/scan/scanner.aiml"
+
+- def:
+    name: main
+    args: []
+    return: i32
+    body:
+      - decl: [fails, i32, 0]
+      - decl: [one_unit, i32, { call: [worker_count, 8, 1, 0] }]
+      - if: { condition: { neq: [one_unit, 1] }, then: [{ call: [io.write, io.stderr, "FAIL 1 unit gave ${one_unit} workers\n"] }, { set: [fails, 1] }] }
+      - decl: [by_jobs, i32, { call: [worker_count, 2, 50, 0] }]
+      - if: { condition: { neq: [by_jobs, 2] }, then: [{ call: [io.write, io.stderr, "FAIL --jobs 2 gave ${by_jobs} workers\n"] }, { set: [fails, 1] }] }
+      - decl: [no_units, i32, { call: [worker_count, 4, 0, 0] }]
+      - if: { condition: { neq: [no_units, 1] }, then: [{ call: [io.write, io.stderr, "FAIL 0 units gave ${no_units} workers\n"] }, { set: [fails, 1] }] }
+      - decl: [huge_peak, i32, { call: [worker_count, 4, 50, 2000000000] }]
+      - if: { condition: { neq: [huge_peak, 1] }, then: [{ call: [io.write, io.stderr, "FAIL a huge peak gave ${huge_peak} workers\n"] }, { set: [fails, 1] }] }
+      - decl: [scan, ptr<Scanner>, { new: Scanner }]
+      - call: [scan.count_unit]
+      - if: { condition: { neq: [scan.scanned_units, 1] }, then: [{ call: [io.write, io.stderr, "FAIL scanner counter\n"] }, { set: [fails, 1] }] }
+      - free: [scan]
+      - if: { condition: { gt: [fails, 0] }, then: [{ return: 1 }] }
+      - call: [io.write, io.stdout, "PASS test_planner\n"]
+      - return: 0

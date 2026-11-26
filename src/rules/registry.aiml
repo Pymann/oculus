@@ -1,0 +1,23 @@
+# All rules Oculus knows, and which of them a scan runs.
+
+- import: "src/rules/rule.aiml"
+- import: "src/rules/file_length.aiml"
+
+- class:
+    name: RuleRegistry
+    members:
+      - [rules, list<ptr<Rule>>, null, { access: public }]
+    methods:
+      - def:
+          name: register_builtin
+          args: []
+          return: void
+          body:
+            - decl: [file_length, ptr<Rule>, { new: FileLengthRule }]
+            - call: [<.rules.push, file_length]
+      - def:
+          name: rule_count
+          args: []
+          return: i32
+          body:
+            - return: <.rules.len

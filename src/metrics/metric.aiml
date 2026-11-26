@@ -1,0 +1,46 @@
+# Metrics produce values, not findings.  A threshold rule turns a value above its
+# limit into a finding (src/rules/file_length.aiml).
+#
+# Values are named "<provider>.<value>", e.g. "lines.total".
+
+- import: "src/ir/ir.aiml"
+
+- interface:
+    name: MetricProvider
+    methods:
+      - [provider_name, string, []]
+      - [measure, void, [[unit, IrUnit], [values, map<string:i32>]]]
+
+# Our own line counting (no cloc).  Comment lines need the lexer and come with the
+# frontend; until then a line is blank or not.
+- class:
+    name: LineMetric
+    implements: [MetricProvider]
+    methods:
+      - def: { name: provider_name, args: [], return: string, body: [{ return: "lines" }] }
+      - def:
+          name: measure
+          args: [[unit, IrUnit], [values, map<string:i32>]]
+          return: void
+          body:
+            - decl: [text, string, unit.source_text]
+            - decl: [total, i32, 0]
+            - decl: [blank, i32, 0]
+            - if:
+                condition: { gt: [text.len, 0] }
+                then:
+                  - decl: [rows, list<string>, { call: [text.split, "\n"] }]
+                  - set: [total, rows.len]
+                  # A final newline ends the last line; it does not start a new one.
+                  - if: { condition: { call: [text.ends_with, "\n"] }, then: [{ set: [total, { "-": [total, 1] }] }] }
+                  - decl: [idx, i32, 0]
+                  - while:
+                      condition: { lt: [idx, total] }
+                      body:
+                        - decl: [row, string, { at: [rows, idx] }]
+                        - decl: [bare, string, { call: [row.trim] }]
+                        - if: { condition: { eq: [bare.len, 0] }, then: [{ set: [blank, { "+": [blank, 1] }] }] }
+                        - set: [idx, { "+": [idx, 1] }]
+            - call: [values.set, "lines.total", total]
+            - call: [values.set, "lines.blank", blank]
+            - call: [values.set, "lines.nonblank", { "-": [total, blank] }]
