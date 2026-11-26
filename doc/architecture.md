@@ -141,7 +141,7 @@ flowchart TD
 - The catalogue lives in `Pymann/coding-rules/catalog` (private). The format is
   defined in `catalog/FORMAT.md` there; `catalog/catalog.json` is the generated
   file Oculus will build in; `catalog/REQUIREMENTS.md` lists what the rules need
-  from the frontend and the IR (types and implicit conversions for 144 of 353 rules,
+  from the frontend and the IR (types and implicit conversions for 174 of 435 rules,
   which decides the binding in section 2).
 - Mapping to MISRA C / C++ by number only, kept internal in `Pymann/coding-rules`.
   It is not shipped and not shown in the output. No MISRA or CERT rule texts in
@@ -194,7 +194,8 @@ because `sys.arg_dump` ends the process itself.
 
 - Clang binding (section 2) and implementation language.
 - Target standard.
-- IR design, including what rules need from it (RuleInformation).
+- IR design, including what rules need from it (RuleInformation): draft in
+  `doc/ir.md`.
 - Rule interface details: per TU versus per file, how matcher rules and IR rules
   share one interface.
 - Format of the phase 2 facts.
