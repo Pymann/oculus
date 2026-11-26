@@ -75,6 +75,16 @@
       - decl: [found, list<Finding>, { call: [runtime.scanner.scan_units, units, opts] }]
       - call: [io.write, io.stdout, { call: [runtime.reporter.render, found, opts.format] }]
       - if:
+          condition: { gt: [runtime.scanner.dropped_flags.len, 0] }
+          then:
+            - decl: [dropped, string, { call: [runtime.scanner.dropped_flags.join, " "] }]
+            - call: [io.write, io.stderr, "oculus: note: compiler flags unknown to Clang were ignored: ${dropped}\n"]
+      - if:
+          condition: { gt: [runtime.scanner.unclean_units.len, 0] }
+          then:
+            - decl: [unclean, string, { call: [runtime.scanner.unclean_units.join, "\noculus: warning: "] }]
+            - call: [io.write, io.stderr, "oculus: warning: ${runtime.scanner.unclean_units.len} unit(s) did not compile cleanly; rules saw only what Clang recovered\noculus: warning: ${unclean}\n"]
+      - if:
           condition: { gt: [runtime.scanner.unit_problems.len, 0] }
           then:
             - decl: [failed, string, { call: [runtime.scanner.unit_problems.join, "\n"] }]

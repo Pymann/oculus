@@ -10,6 +10,11 @@ on:
         description: "Which aiml build to take from Kontor (a commit sha of Pymann/aiml); empty = the pinned one"
         required: false
         default: ""
+      real_projects:
+        description: "Also run oculus on the pinned real projects (tools/run_real_projects.sh)"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -89,3 +94,9 @@ jobs:
 
       - name: Test
         run: tests/run_tests.sh out/oculus/oculus
+
+      - name: Real projects
+        if: ${{ inputs.real_projects }}
+        run: |
+          sudo apt-get install -y ninja-build
+          tools/run_real_projects.sh "$RUNNER_TEMP/real"

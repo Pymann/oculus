@@ -32,6 +32,16 @@
                       - if:
                           condition: { gt: [unit.info.problem.len, 0] }
                           then: [{ call: [<.unit_problems.push, unit.info.problem] }]
+                      - decl: [fix, i32, 0]
+                      - while:
+                          condition: { lt: [fix, unit.info.dropped_flags.len] }
+                          body:
+                            - decl: [flag, string, { at: [unit.info.dropped_flags, fix] }]
+                            - if: { condition: { eq: [{ call: [<.dropped_flags.contains, flag] }, false] }, then: [{ call: [<.dropped_flags.push, flag] }] }
+                            - set: [fix, { "+": [fix, 1] }]
+                      - if:
+                          condition: { gt: [unit.info.compile_errors, 0] }
+                          then: [{ call: [<.unclean_units.push, "${unit.file_name}: ${unit.info.compile_errors} compile error(s), first: ${unit.info.first_error}"] }]
                       - decl: [metrics, map<string:i32>]
                       - call: [<.line_metric.measure, unit, metrics]
                       - call: [<.check_rules, unit, metrics, opts, found]

@@ -29,9 +29,11 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/Regex.h"
 #include "llvm/Support/StringSaver.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -368,13 +370,20 @@ void write_pos(llvm::json::OStream &out, const char *key, const Pos &pos) {
 }
 
 void write_document(llvm::raw_ostream &stream, const Tables *tables, const std::string &language,
-                    const std::string &standard, const std::string &problem) {
+                    const std::string &standard, const std::string &problem,
+                    int compile_errors = 0, const std::string &first_error = "",
+                    const std::vector<std::string> &dropped = {}) {
     llvm::json::OStream out(stream);
     out.object([&] {
         out.attribute("frontend", "clang " CLANG_VERSION_STRING);
         out.attribute("language", language);
         out.attribute("standard", standard);
         out.attribute("problem", problem);
+        out.attribute("compile_errors", compile_errors);
+        out.attribute("first_error", first_error);
+        out.attributeArray("dropped_flags", [&] {
+            for (const std::string &flag : dropped) out.value(flag);
+        });
         out.attributeArray("files", [&] {
             if (tables == nullptr) return;
             for (const FileRec &file : tables->files) {
@@ -445,6 +454,44 @@ void write_document(llvm::raw_ostream &stream, const Tables *tables, const std::
     stream << "\n";
 }
 
+// Counts the compile errors and keeps the first one; prints nothing.  Oculus
+// reports units that did not compile cleanly, because a rule then sees only what
+// Clang recovered.
+class CountingDiagConsumer : public DiagnosticConsumer {
+public:
+    void HandleDiagnostic(DiagnosticsEngine::Level level, const Diagnostic &info) override {
+        if (level < DiagnosticsEngine::Error) {
+            return;
+        }
+        llvm::SmallString<256> message;
+        info.FormatDiagnostic(message);
+        // Driver flags of another compiler (GCC's -fno-reorder-functions and the
+        // like): remembered, the caller drops them and parses again.
+        static const llvm::Regex unknown("unknown argument:? '([^']+)'");
+        llvm::SmallVector<llvm::StringRef, 2> groups;
+        if (unknown.match(message.str(), &groups)) {
+            unknown_args.push_back(groups[1].str());
+            return;
+        }
+        ++errors;
+        if (first.empty()) {
+            llvm::SmallString<256> text;
+            info.FormatDiagnostic(text);
+            if (info.getLocation().isValid() && info.hasSourceManager()) {
+                const SourceManager &sm = info.getSourceManager();
+                PresumedLoc where = sm.getPresumedLoc(sm.getExpansionLoc(info.getLocation()));
+                if (where.isValid()) {
+                    first = std::string(where.getFilename()) + ":" + std::to_string(where.getLine()) + ": ";
+                }
+            }
+            first += text.str().str();
+        }
+    }
+    int errors = 0;
+    std::string first;
+    std::vector<std::string> unknown_args;
+};
+
 // Exactly the one command Oculus was given, no lookup.
 class SingleCommandDatabase : public tooling::CompilationDatabase {
 public:
@@ -492,14 +539,31 @@ int main(int argc, char **argv) {
         command_argv.insert(command_argv.begin() + 1, "-resource-dir=" + resource_dir);
     }
 
-    SingleCommandDatabase database(tooling::CompileCommand(directory, file, command_argv, ""));
-    tooling::ClangTool tool(database, {file});
-    tool.appendArgumentsAdjuster(tooling::getClangStripOutputAdjuster());
-    tool.appendArgumentsAdjuster(tooling::getClangStripDependencyFileAdjuster());
-    IgnoringDiagConsumer quiet;
-    tool.setDiagnosticConsumer(&quiet);
+    // Parse; flags Clang does not know are dropped and the unit parsed again (a
+    // compilation database written by a GCC build has some).
+    std::vector<std::string> dropped;
     std::vector<std::unique_ptr<ASTUnit>> units;
-    tool.buildASTs(units);
+    CountingDiagConsumer quiet;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        units.clear();
+        quiet = CountingDiagConsumer();
+        SingleCommandDatabase database(tooling::CompileCommand(directory, file, command_argv, ""));
+        tooling::ClangTool tool(database, {file});
+        tool.appendArgumentsAdjuster(tooling::getClangStripOutputAdjuster());
+        tool.appendArgumentsAdjuster(tooling::getClangStripDependencyFileAdjuster());
+        tool.setDiagnosticConsumer(&quiet);
+        tool.buildASTs(units);
+        if (quiet.unknown_args.empty()) {
+            break;
+        }
+        for (const std::string &flag : quiet.unknown_args) {
+            auto at = std::find(command_argv.begin() + 1, command_argv.end(), flag);
+            if (at != command_argv.end()) {
+                command_argv.erase(at);
+                dropped.push_back(flag);
+            }
+        }
+    }
     if (units.empty() || !units.front()) {
         write_document(llvm::outs(), nullptr, "", "", "clang could not parse " + file);
         return 0;
@@ -513,6 +577,6 @@ int main(int argc, char **argv) {
     Collector collector(tables, context.getSourceManager());
     collector.TraverseDecl(context.getTranslationUnitDecl());
     // Compile errors do not stop the analysis: the rules see what Clang recovered.
-    write_document(llvm::outs(), &tables, language, standard, "");
+    write_document(llvm::outs(), &tables, language, standard, "", quiet.errors, quiet.first, dropped);
     return 0;
 }

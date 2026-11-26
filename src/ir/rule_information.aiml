@@ -2,7 +2,8 @@
 # frontend fills it, after that it is never changed (doc/ir.md).  It holds no
 # reference into the frontend: the Clang worker writes it as one JSON document,
 # and Oculus reads it with sys.deserialize.  `problem` is set when the frontend
-# could not deliver it.
+# could not deliver it; `compile_errors` counts Clang's errors (the rules then see
+# only what Clang recovered), `first_error` is the first of them.
 
 - import: "src/ir/entities.aiml"
 
@@ -13,6 +14,9 @@
       - [language, string, ""]
       - [standard, string, ""]
       - [problem, string, ""]
+      - [compile_errors, i32, 0]
+      - [first_error, string, ""]
+      - [dropped_flags, list<string>]
       - [files, list<IrFile>]
       - [types, list<IrType>]
       - [decls, list<IrDecl>]

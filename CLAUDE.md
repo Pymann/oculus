@@ -57,4 +57,7 @@ to be defined; do not treat anything below as a spec.
   the end-to-end checks against `tests/e2e/`, and `tests/run_catalog.sh`: the bad and good
   examples of each implemented rule, copied from coding-rules into `tests/catalog/` with
   `tools/sync_catalog_tests.sh`.
+- Real projects: `tools/run_real_projects.sh` (yyjson, fmt, sqlite, imgui at pinned
+  commits; `ZEPHYR=1` adds a Zephyr native_sim sample). In CI only on manual dispatch
+  with `real_projects`. No third-party code in this repository.
 - Commit directly to `main`, no pull requests.

@@ -8,6 +8,9 @@
       - [scanned_units, i32, 0, { access: public }]
       - [planned_workers, i32, 0, { access: public }]
       - [unit_problems, list<string>, null, { access: public }]
+      - [unclean_units, list<string>, null, { access: public }]
+      # compiler flags Clang did not know, dropped by the worker (each once)
+      - [dropped_flags, list<string>, null, { access: public }]
       # file:line:col:rule of every finding so far: a header included by several
       # units is reported once
       - [reported, map<string:i32>, null, { access: public }]
