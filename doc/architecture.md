@@ -40,10 +40,12 @@ only speaks the C ABI and cannot call the C++ LibTooling API directly.
 Implementation language: AIML v2 (the `masterv2` line of `Pymann/aiml`), built
 with `aiml build`. The parts are wired by one class group, `ScanRuntime`
 (`src/runtime.aiml`, aiml spec/58). The frontend sits behind the `Frontend`
-interface. **Decided and implemented:** the LibTooling worker `oculus-clang`
-(`worker/oculus_clang.cpp`), one process per TU, started by `ClangFrontend`
-(`src/frontend/clang_frontend.aiml`). It prints the RuleInformation of `doc/ir.md`
-as JSON, which Oculus reads with `sys.deserialize`. `StubFrontend` (text only)
+interface. **Decided and implemented:** LibTooling, reached in-process through
+the shim `liboculus_clang.so` (default, `doc/inprocess_frontend.md`, about half the
+time of the JSON path) or through the JSON worker `oculus-clang`
+(`worker/oculus_clang.cpp`, `--frontend json`, one process per TU). Both are chosen
+in `ClangFrontend` (`src/frontend/clang_frontend.aiml`) and fill the
+RuleInformation of `doc/ir.md`. `StubFrontend` (text only)
 remains for tests.
 
 ## 3. Pipeline
