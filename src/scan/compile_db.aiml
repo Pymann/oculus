@@ -1,5 +1,7 @@
 # compile_commands.json: the list of translation units and their flags.
 
+- import: "src/config/fallback.aiml"
+
 - model:
     name: CompileCommand
     fields:
@@ -40,14 +42,16 @@
       - set: [result.commands, cmds]
       - return: result
 
-# A translation unit given as a plain path, without a compilation database.
+# A translation unit given as a plain path, without a compilation database: the
+# compiler argv is built from the fallback flags (src/config/fallback.aiml).
 - def:
     name: command_for_path
-    args: [[source_path, string]]
+    args: [[source_path, string], [flags, FallbackFlags]]
     return: CompileCommand
     body:
       - decl: [cmd, CompileCommand]
       - set: [cmd.file, source_path]
+      - set: [cmd.arguments, { call: [fallback_argv, source_path, flags] }]
       - return: cmd
 
 # The file of a command as a path the process can open.

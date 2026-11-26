@@ -3,8 +3,10 @@
 
 - import: "src/rules/rule.aiml"
 - import: "src/report/finding.aiml"
+- import: "src/config/fallback.aiml"
 
-# Read by sys.arg_dump: `--single-rule 7` sets single_rule, `-p dir` sets build_dir.
+# Read by sys.arg_dump: `--single-rule 7` sets single_rule, `-p dir` sets build_dir,
+# `-I dir` and `-D name` (repeatable) and `--std c11` the fallback flags.
 - model:
     name: CliArgs
     fields:
@@ -14,6 +16,9 @@
       - [threshold, string, ""]
       - [jobs, i32, 0]
       - [single_rule, i32, 0]
+      - [include_dirs, list<string>, null, { alias: "I" }]
+      - [defines, list<string>, null, { alias: "D" }]
+      - [standard, string, "", { alias: "std" }]
       - [version, bool, false]
       - [help, bool, false]
       - [positional, list<string>]
@@ -28,6 +33,7 @@
       - [threshold, string, "info"]
       - [jobs, i32, 0]
       - [rules, list<RuleSetting>]
+      - [fallback, FallbackFlags]
 
 - model:
     name: ScanOptions
@@ -39,4 +45,5 @@
       - [jobs, i32, 0]
       - [single_rule, i32, 0]
       - [rules, list<RuleSetting>]
+      - [fallback, FallbackFlags]
       - [problem, string, ""]

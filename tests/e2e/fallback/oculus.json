@@ -1,0 +1,1 @@
+{ "fallback": { "include_dirs": ["tests/e2e/fallback/inc"], "defines": ["WITH_FIELDS"], "std": "c11" } }

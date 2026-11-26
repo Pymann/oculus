@@ -1,0 +1,1 @@
+tests/e2e/fallback/main.c:5:5: OC-0040: bit-field 'level' has type 'plain_t'; use signed int, unsigned int or bool

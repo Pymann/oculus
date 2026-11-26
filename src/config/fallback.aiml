@@ -1,0 +1,50 @@
+# Compiler flags for scanning plain source paths when the project has no
+# compile_commands.json.  They come from the `fallback` object of oculus.json and
+# from the command line (-I DIR, -D NAME[=VALUE], --std STD, repeatable -I/-D);
+# the command line adds to oculus.json and its --std wins.  Results are less
+# accurate than with a compilation database: flags that differ per file are not
+# known.  doc/compile_commands.md says how to get a database for most builds.
+#
+#   { "fallback": { "include_dirs": ["include"], "defines": ["NDEBUG"],
+#                   "std": "c11", "flags": ["-fno-builtin"] } }
+
+- model:
+    name: FallbackFlags
+    fields:
+      - [include_dirs, list<string>]
+      - [defines, list<string>]
+      - [standard, string, "", { alias: "std" }]
+      - [extra_flags, list<string>, null, { alias: "flags" }]
+
+# The compiler argv for one plain source path: driver by suffix, then -std, -I, -D
+# and the extra flags, then `-c file`.
+- def:
+    name: fallback_argv
+    args: [[source_path, string], [flags, FallbackFlags]]
+    return: list<string>
+    body:
+      - decl: [argv, list<string>]
+      - decl: [driver, string, "clang"]
+      - decl: [cpp_hit, i32, { call: [regex.search, "\\.(cc|cpp|cxx|C|hpp|hh|hxx)$", source_path] }]
+      - if: { condition: { gte: [cpp_hit, 0] }, then: [{ set: [driver, "clang++"] }] }
+      - call: [argv.push, driver]
+      - if: { condition: { gt: [flags.standard.len, 0] }, then: [{ call: [argv.push, "-std=${flags.standard}"] }] }
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, flags.include_dirs.len] }
+          body:
+            - decl: [inc, string, { at: [flags.include_dirs, idx] }]
+            - call: [argv.push, "-I${inc}"]
+            - set: [idx, { "+": [idx, 1] }]
+      - set: [idx, 0]
+      - while:
+          condition: { lt: [idx, flags.defines.len] }
+          body:
+            - decl: [def, string, { at: [flags.defines, idx] }]
+            - call: [argv.push, "-D${def}"]
+            - set: [idx, { "+": [idx, 1] }]
+      - decl: [extra, list<string>, flags.extra_flags]
+      - call: [argv.extend, extra]
+      - call: [argv.push, "-c"]
+      - call: [argv.push, source_path]
+      - return: argv

@@ -50,6 +50,12 @@
             - set: [opts.build_dir, cli.build_dir]
             - set: [opts.single_rule, cli.single_rule]
             - set: [opts.paths, cli.positional]
+            - set: [opts.fallback, project.fallback]
+            - decl: [cli_dirs, list<string>, cli.include_dirs]
+            - call: [opts.fallback.include_dirs.extend, cli_dirs]
+            - decl: [cli_defs, list<string>, cli.defines]
+            - call: [opts.fallback.defines.extend, cli_defs]
+            - if: { condition: { gt: [cli.standard.len, 0] }, then: [{ set: [opts.fallback.standard, cli.standard] }] }
             - if:
                 condition: { lt: [{ call: [report_format_code, opts.format] }, 0] }
                 then:

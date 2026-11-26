@@ -17,7 +17,7 @@
 # or in the typedef that finally spells it?
 - def:
     name: sign_explicit
-    args: [[info, RuleInformation], [field, IrDecl]]
+    args: [[info, RuleInformation], [field, ref<IrDecl>]]
     return: bool
     body:
       - if: { condition: field.written_builtin, then: [{ return: { gt: [field.sign_written.len, 0] } }] }
@@ -38,7 +38,7 @@
 
 - def:
     name: bitfield_type_allowed
-    args: [[info, RuleInformation], [field, IrDecl]]
+    args: [[info, RuleInformation], [field, ref<IrDecl>]]
     return: bool
     body:
       - if: { condition: { eq: [{ call: [info_has_type, info, field.type_uid] }, false] }, then: [{ return: true }] }

@@ -43,6 +43,12 @@ expect threshold 0 - "$OCULUS" -p "$FIX" --config "$FIX/oculus.json" --threshold
 expect default-limit 0 - "$OCULUS" -p "$FIX"
 expect paths 0 - "$OCULUS" "$FIX/short.cpp"
 
+# Plain paths without compile_commands.json: the fallback flags must reach Clang.
+FB=tests/e2e/fallback
+expect fallback-cli 1 tests/e2e/expected_fallback.txt sh -c "\"$OCULUS\" -I $FB/inc -D WITH_FIELDS --std c11 $FB/main.c 2>/dev/null"
+expect fallback-config 1 tests/e2e/expected_fallback.txt sh -c "\"$OCULUS\" --config $FB/oculus.json $FB/main.c 2>/dev/null"
+expect fallback-no-define 0 - sh -c "\"$OCULUS\" -I $FB/inc $FB/main.c 2>/dev/null"
+
 # Without its Clang worker oculus must fail the unit, not report it clean.
 lonely="$(mktemp -d)"
 cp "$OCULUS" "$lonely/oculus"
