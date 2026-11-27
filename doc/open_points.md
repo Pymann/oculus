@@ -58,6 +58,14 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0286** explicit base construction: classes with dependent bases (templates)
   are not checked, and a base with no data members (an interface that has only a
   vtable) does not count.
+- **OC-0337** and **OC-0250** (0/NULL): judged by the implicit conversion above
+  the constant, so uses inside templates whose types are not known yet are not
+  reported. OC-0250 counts only integral conversions of NULL.
+- **OC-0353**: only comparisons where one side is written as `&Class::virtual_fn`;
+  two member-pointer variables are not known statically.
+- **OC-0273** const member returning a mutable handle: deferred. The exception for
+  non-owning views needs a configuration key first (span-like classes return `T*`
+  from const members by design).
 - **OC-0369** constant assert: only arguments made of literals, `true`, `false`,
   `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen. An
   assert written in a macro body is reported once, at the definition.

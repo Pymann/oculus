@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/ParentMapContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Type.h"
@@ -289,7 +290,13 @@ struct NodeRec {
     // initializers: partial (InitListExpr of an array with fewer elements and no
     // designators, not {0}), override (a DesignatedInitExpr that initialises an
     // element again), undesignated (a positional element of a list with chained
-    // designators); the argument of std::move: move_const, move_rvalue
+    // designators); the argument of std::move: move_const, move_rvalue; C++:
+    // null_pointer (0 or NULL used as a null pointer), null_integer (NULL used as
+    // an integer), polymorphic_downcast (a cast from a polymorphic base to a
+    // derived class), virtual_base_cast (the operand of a reinterpret or C-style
+    // cast from a virtual base to a derived class), virtual_member_compare (== or
+    // != of the address of a virtual member function with anything but a null
+    // pointer constant)
     std::string shape;
 };
 
@@ -915,12 +922,96 @@ public:
     }
 
     // Is `loc` (or a macro it comes from) the expansion of the macro errno?
-    bool from_errno(SourceLocation loc) const {
+    bool from_errno(SourceLocation loc) const { return from_macro_named(loc, "errno"); }
+
+    bool from_macro_named(SourceLocation loc, llvm::StringRef name) const {
         while (loc.isMacroID()) {
-            if (Lexer::getImmediateMacroName(loc, sm_, context_.getLangOpts()) == "errno") return true;
+            if (Lexer::getImmediateMacroName(loc, sm_, context_.getLangOpts()) == name) return true;
             loc = sm_.getImmediateMacroCallerLoc(loc);
         }
         return false;
+    }
+
+    // 0 or NULL in C++: the first implicit conversion above it (parentheses
+    // skipped) tells a null pointer from an integer use (an integral conversion).
+    const char *null_shape(const Expr *expr) {
+        if (!context_.getLangOpts().CPlusPlus) return nullptr;
+        bool null_macro = isa<GNUNullExpr>(expr) || from_macro_named(expr->getBeginLoc(), "NULL");
+        const auto *literal = dyn_cast<IntegerLiteral>(expr);
+        if (!null_macro && (literal == nullptr || literal->getValue() != 0)) return nullptr;
+        DynTypedNode node = DynTypedNode::create(*expr);
+        for (int depth = 0; depth < 8; ++depth) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return nullptr;
+            node = parents[0];
+            if (node.get<ParenExpr>() != nullptr) continue;
+            if (const auto *cast = node.get<ImplicitCastExpr>()) {
+                if (cast->getCastKind() == CK_NullToPointer || cast->getCastKind() == CK_NullToMemberPointer) {
+                    return "null_pointer";
+                }
+                CastKind kind = cast->getCastKind();
+                bool integral = kind == CK_IntegralCast || kind == CK_IntegralToBoolean ||
+                                kind == CK_IntegralToFloating;
+                return null_macro && integral ? "null_integer" : nullptr;
+            }
+            break;
+        }
+        // No conversion: an integer of NULL's own type, or a dependent use in a
+        // template whose type is not known; neither is reported.
+        return nullptr;
+    }
+
+    // The class a pointer or reference type refers to.
+    static const CXXRecordDecl *pointed_class(QualType type) {
+        if (type.isNull() || type->isDependentType()) return nullptr;
+        if (type->isPointerType()) type = type->getPointeeType();
+        else type = type.getNonReferenceType();
+        const CXXRecordDecl *record = type->getAsCXXRecordDecl();
+        return record != nullptr && record->hasDefinition() ? record->getDefinition() : nullptr;
+    }
+
+    // Downcasts (0253) and casts from a virtual base (0252).
+    void note_cast(const ExplicitCastExpr *cast, NodeRec &rec) {
+        if (cast->isTypeDependent() || cast->getSubExpr()->isTypeDependent()) return;
+        const Expr *operand = cast->getSubExprAsWritten();
+        QualType from = operand->getType();
+        QualType to = cast->getTypeAsWritten();
+        if (to->isPointerType() != from->isPointerType() && !to->isReferenceType()) return;
+        const CXXRecordDecl *base = pointed_class(from);
+        const CXXRecordDecl *derived = pointed_class(to);
+        if (base == nullptr || derived == nullptr || base == derived || !derived->isDerivedFrom(base)) return;
+        bool reinterpret = isa<CXXReinterpretCastExpr>(cast);
+        if (reinterpret || isa<CStyleCastExpr>(cast)) {
+            if (derived->isVirtuallyDerivedFrom(base)) {
+                pending_shape_[without_implicit_casts(operand)] = "virtual_base_cast";
+                return;
+            }
+        }
+        if (!reinterpret && base->isPolymorphic() &&
+            (isa<CXXStaticCastExpr>(cast) || isa<CXXDynamicCastExpr>(cast) || isa<CStyleCastExpr>(cast))) {
+            rec.shape = "polymorphic_downcast";
+        }
+    }
+
+    // == or != with the address of a virtual member function on one side.
+    void note_member_compare(const BinaryOperator *binary, NodeRec &rec) {
+        if (!binary->isEqualityOp() || binary->isTypeDependent()) return;
+        auto virtual_address = [](const Expr *side) {
+            const auto *address = dyn_cast<UnaryOperator>(side->IgnoreParenImpCasts());
+            if (address == nullptr || address->getOpcode() != UO_AddrOf) return false;
+            const auto *ref = dyn_cast<DeclRefExpr>(address->getSubExpr()->IgnoreParens());
+            const auto *method = ref != nullptr ? dyn_cast<CXXMethodDecl>(ref->getDecl()) : nullptr;
+            return method != nullptr && method->isVirtual();
+        };
+        auto null_constant = [this](const Expr *side) {
+            return !side->isValueDependent() &&
+                   side->isNullPointerConstant(context_, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull;
+        };
+        const Expr *left = binary->getLHS();
+        const Expr *right = binary->getRHS();
+        if ((virtual_address(left) && !null_constant(right)) || (virtual_address(right) && !null_constant(left))) {
+            rec.shape = "virtual_member_compare";
+        }
     }
 
     bool is_errno(const Expr *expr) const {
@@ -1808,6 +1899,11 @@ public:
         rec.errno_write = errno_write(stmt);
         if (const auto *list = dyn_cast<InitListExpr>(stmt)) note_init_list(list, rec);
         if (const auto *call = dyn_cast<CallExpr>(stmt)) note_move(call);
+        if (isa<IntegerLiteral>(stmt) || isa<GNUNullExpr>(stmt)) {
+            if (const char *null = null_shape(cast<Expr>(stmt))) rec.shape = null;
+        }
+        if (const auto *explicit_cast = dyn_cast<ExplicitCastExpr>(stmt)) note_cast(explicit_cast, rec);
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) note_member_compare(binary, rec);
         auto shaped = pending_shape_.find(stmt);
         if (shaped != pending_shape_.end()) rec.shape = shaped->second;
         if (const auto *attempt = dyn_cast<CXXTryStmt>(stmt)) note_shadowed_handlers(attempt);

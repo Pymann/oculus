@@ -1,0 +1,92 @@
+# OC-0253 no_polymorphic_downcast, OC-0252 dynamic_cast_from_virtual_base and
+# OC-0353 virtual_member_pointer_compare_null (catalogue in Pymann/coding-rules),
+# C++.  Read from IrNode.shape (doc/ir.md): polymorphic_downcast on the cast,
+# virtual_base_cast on the operand of a reinterpret or C-style cast,
+# virtual_member_compare on == and != (one side the address of a virtual member
+# function; two variables of member pointer type are not known and not reported).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: PolymorphicDowncastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 253, "safety.cpp98-.15.2.no_polymorphic_downcast", "Polymorphic types are not cast from base to derived", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^polymorphic_downcast$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 253, "cast from a polymorphic base class down to a derived class; call a virtual function instead"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: VirtualBaseCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 252, "safety.cpp98-.15.2.dynamic_cast_from_virtual_base", "A pointer to a virtual base is converted to a derived pointer only by dynamic_cast", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^virtual_base_cast$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 252, "cast from a virtual base class to a derived class gives a wrong address; use dynamic_cast"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: VirtualMemberCompareRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 353, "safety.cpp98-.15.2.virtual_member_pointer_compare_null", "A pointer to a virtual member function is compared only with a null pointer", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^virtual_member_compare$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 353, "comparing a pointer to a virtual member function with anything but nullptr is unspecified"] }]
+                  - set: [idx, { "+": [idx, 1] }]

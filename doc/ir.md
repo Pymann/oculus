@@ -525,7 +525,13 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   earlier one again; lists with only designated elements and no ranges),
   `undesignated` (a positional element in a list with a chained designator);
   of the argument of a one-argument `std::move`: `move_const`, `move_rvalue` (a
-  temporary).  `IrDecl.missing_base_init`: a user-provided, non-delegating
+  temporary); in C++ `null_pointer` and `null_integer` on `0` and `NULL` (by the
+  first implicit conversion above them), `polymorphic_downcast` on a static,
+  dynamic or C-style cast from a polymorphic base to a derived class,
+  `virtual_base_cast` on the operand of a reinterpret or C-style cast from a
+  virtual base, `virtual_member_compare` on `==`/`!=` of the address of a virtual
+  member function with something that is not a null pointer constant.
+  `IrDecl.missing_base_init`: a user-provided, non-delegating
   constructor of a non-dependent class does not name a direct or virtual base
   that has data members (its own or inherited; a vtable pointer does not count).  `IrMacro` kind `condition`: a `#if` or `#elif` whose condition
   uses a macro that expands to `defined` (`name` the macro, `name_pos` where it is

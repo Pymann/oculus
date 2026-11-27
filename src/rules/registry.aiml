@@ -61,6 +61,8 @@
 - import: "src/rules/scopes.aiml"
 - import: "src/rules/initializers.aiml"
 - import: "src/rules/cxx_construction.aiml"
+- import: "src/rules/cxx_downcasts.aiml"
+- import: "src/rules/null_constants.aiml"
 - import: "src/rules/override_shapes.aiml"
 
 - class:
@@ -315,6 +317,14 @@
             - call: [<.rules.push, raw_smart]
             - decl: [unused_param, ptr<Rule>, { new: NoUnusedParameterRule }]
             - call: [<.rules.push, unused_param]
+            - call: [<.register_later]
+
+      # The second half of the built-in rules (a function has at most 300 lines).
+      - def:
+          name: register_later
+          args: []
+          return: void
+          body:
             - decl: [unused_local, ptr<Rule>, { new: NoUnusedLocalRule }]
             - call: [<.rules.push, unused_local]
             - decl: [comment_open, ptr<Rule>, { new: CommentStartInCommentRule }]
@@ -355,6 +365,16 @@
             - call: [<.rules.push, base_construction]
             - decl: [defined_form, ptr<Rule>, { new: DefinedStandardFormRule }]
             - call: [<.rules.push, defined_form]
+            - decl: [polymorphic_downcast, ptr<Rule>, { new: PolymorphicDowncastRule }]
+            - call: [<.rules.push, polymorphic_downcast]
+            - decl: [virtual_base_cast, ptr<Rule>, { new: VirtualBaseCastRule }]
+            - call: [<.rules.push, virtual_base_cast]
+            - decl: [virtual_member_compare, ptr<Rule>, { new: VirtualMemberCompareRule }]
+            - call: [<.rules.push, virtual_member_compare]
+            - decl: [nullptr_only, ptr<Rule>, { new: NullptrOnlyRule }]
+            - call: [<.rules.push, nullptr_only]
+            - decl: [null_integer, ptr<Rule>, { new: NoNullAsIntegerRule }]
+            - call: [<.rules.push, null_integer]
             - decl: [abstract_copy, ptr<Rule>, { new: AbstractCopyAssignmentRule }]
             - call: [<.rules.push, abstract_copy]
             - decl: [template_ctor, ptr<Rule>, { new: TemplateCtorCopyRule }]
