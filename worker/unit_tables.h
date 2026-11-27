@@ -237,6 +237,11 @@ struct DeclRec {
     std::string enum_value;             // enumerators: the value, decimal ("" if dependent)
     bool designated_array = false;      // variables: written `[]` size, initialised with array designators
     bool missing_base_init = false;     // user-provided constructors: a non-empty base not in the init list
+    // float_loop_counter (a floating variable declared in a for header and used as
+    // its counter), exposed_data (a public or protected field of a non-trivial
+    // class), vexing_function (a block-scope function declaration written `T f();`),
+    // pasted_name (functions and variables whose name a macro made with ##)
+    std::string shape;
     // alignment specifiers written on this declaration (alignas, _Alignas; not
     // inherited from an earlier one): how many, where the second one is, and
     // where an alignment that evaluates to zero is written
@@ -699,6 +704,14 @@ public:
         }
         if (const auto *var = dyn_cast<VarDecl>(decl)) rec.designated_array = designated_array(var);
         if (const auto *ctor = dyn_cast<CXXConstructorDecl>(decl)) rec.missing_base_init = missing_base_init(ctor);
+        bool pasted = pasted_name(decl);
+        if (pasted && (isa<FunctionDecl>(decl) || isa<VarDecl>(decl))) rec.shape = "pasted_name";
+        if (const auto *field = dyn_cast<FieldDecl>(decl)) {
+            if (!pasted && exposed_data(field)) rec.shape = "exposed_data";
+        }
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            if (vexing_function(fn)) rec.shape = "vexing_function";
+        }
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
         note_override_defaults(decl, rec);
@@ -720,6 +733,51 @@ public:
             if (first->isArrayDesignator() || first->isArrayRangeDesignator()) return true;
         }
         return false;
+    }
+
+    // The name is made by a macro with ## (gmock's mockers, Zephyr's K_*_DEFINE
+    // buffers): the user did not write it.
+    bool pasted_name(const Decl *decl) const {
+        SourceLocation loc = decl->getLocation();
+        return loc.isMacroID() && sm_.isWrittenInScratchSpace(sm_.getSpellingLoc(loc));
+    }
+
+    // A named public or protected field of a C++ class that is not an aggregate and
+    // has a user-provided constructor or destructor, a virtual function, a base or a
+    // private field.
+    static bool exposed_data(const FieldDecl *field) {
+        if (field->isImplicit() || field->getIdentifier() == nullptr) return false;
+        if (field->getAccess() != AS_public && field->getAccess() != AS_protected) return false;
+        const auto *record = dyn_cast<CXXRecordDecl>(field->getParent());
+        if (record == nullptr || record->isUnion() || record->isLambda() || !record->hasDefinition()) return false;
+        record = record->getDefinition();
+        if (record->isAggregate()) return false;
+        bool invariant = record->isPolymorphic() || record->getNumBases() > 0 || record->getNumVBases() > 0;
+        if (const CXXDestructorDecl *dtor = record->getDestructor()) invariant = invariant || dtor->isUserProvided();
+        for (const CXXConstructorDecl *ctor : record->ctors()) invariant = invariant || ctor->isUserProvided();
+        for (const Decl *member : record->decls()) {
+            if (const auto *tmpl = dyn_cast<FunctionTemplateDecl>(member)) {
+                invariant = invariant || isa<CXXConstructorDecl>(tmpl->getTemplatedDecl());
+            }
+        }
+        for (const FieldDecl *other : record->fields()) invariant = invariant || other->getAccess() == AS_private;
+        return invariant;
+    }
+
+    // A block-scope function declaration with nothing between its parentheses
+    // (`Widget widget();`, which reads like an object with no arguments).
+    bool vexing_function(const FunctionDecl *fn) const {
+        if (!context_.getLangOpts().CPlusPlus || !fn->isLocalExternDecl() || fn->getTypeSourceInfo() == nullptr) return false;
+        if (fn->getNumParams() != 0) return false;
+        auto proto = fn->getTypeSourceInfo()->getTypeLoc().IgnoreParens().getAs<FunctionProtoTypeLoc>();
+        if (!proto) return false;
+        SourceLocation open = proto.getLParenLoc();
+        SourceLocation close = proto.getRParenLoc();
+        if (open.isInvalid() || close.isInvalid() || open.isMacroID() || close.isMacroID()) return false;
+        bool bad = false;
+        StringRef text = Lexer::getSourceText(CharSourceRange::getCharRange(open.getLocWithOffset(1), close),
+                                              sm_, context_.getLangOpts(), &bad);
+        return !bad && text.trim().empty();
     }
 
     // Does the class or one of its bases have a non-static data member (a vtable
@@ -848,6 +906,126 @@ public:
                 }
             }
         }
+    }
+
+    // Arrays passed as arguments of a call to a function of the user's (not a
+    // builtin, not declared in a system header): the decayed operand is marked.
+    // String literals, __func__ (also chosen by ?:) and va_list do not count.
+    void note_array_decay(const CallExpr *call) {
+        if (isa<CXXOperatorCallExpr>(call) || isa<UserDefinedLiteral>(call)) return;
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || callee->getBuiltinID() != 0) return;
+        for (const FunctionDecl *seen : callee->redecls()) {
+            SourceLocation spelled = sm_.getSpellingLoc(seen->getLocation());
+            if (spelled.isInvalid() || sm_.isInSystemHeader(spelled)) return;
+        }
+        for (const Expr *arg : call->arguments()) {
+            if (arg == nullptr || isa<CXXDefaultArgExpr>(arg)) continue;
+            const Expr *walk = arg;
+            const ImplicitCastExpr *decay = nullptr;
+            while (const auto *cast = dyn_cast<ImplicitCastExpr>(walk)) {
+                if (cast->getCastKind() == CK_ArrayToPointerDecay) decay = cast;
+                walk = cast->getSubExpr();
+            }
+            if (decay == nullptr) continue;
+            if (text_literal(decay->getSubExpr())) continue;
+            QualType held = decay->getSubExpr()->getType();
+            if (context_.hasSameUnqualifiedType(held, context_.getBuiltinVaListType())) continue;
+            pending_shape_[without_implicit_casts(decay->getSubExpr())] = "array_decay";
+        }
+    }
+
+    // A string literal, __func__, or a choice between such (`ok ? "yes" : "no"`).
+    static bool text_literal(const Expr *expr) {
+        expr = expr->IgnoreParenImpCasts();
+        if (isa<StringLiteral>(expr) || isa<PredefinedExpr>(expr)) return true;
+        if (const auto *choice = dyn_cast<ConditionalOperator>(expr)) {
+            return text_literal(choice->getTrueExpr()) && text_literal(choice->getFalseExpr());
+        }
+        return false;
+    }
+
+    // The variable compared directly by a comparison that is the whole loop
+    // condition, if it has a real floating type.
+    static const DeclRefExpr *compared_float(const Expr *condition) {
+        if (condition == nullptr) return nullptr;
+        const auto *compare = dyn_cast<BinaryOperator>(condition->IgnoreParenImpCasts());
+        if (compare == nullptr || !compare->isComparisonOp()) return nullptr;
+        for (const Expr *side : {compare->getLHS(), compare->getRHS()}) {
+            const auto *ref = dyn_cast<DeclRefExpr>(side->IgnoreParenImpCasts());
+            const auto *var = ref == nullptr ? nullptr : dyn_cast<VarDecl>(ref->getDecl());
+            if (var != nullptr && !var->getType().isNull() && var->getType()->isRealFloatingType()) return ref;
+        }
+        return nullptr;
+    }
+
+    static bool names_var(const Stmt *stmt, const VarDecl *var) {
+        if (stmt == nullptr) return false;
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) return ref->getDecl() == var;
+        for (const Stmt *child : stmt->children()) {
+            if (names_var(child, var)) return true;
+        }
+        return false;
+    }
+
+    static bool is_var(const Expr *expr, const VarDecl *var) {
+        const auto *ref = dyn_cast<DeclRefExpr>(expr->IgnoreParenImpCasts());
+        return ref != nullptr && ref->getDecl() == var;
+    }
+
+    // Is the variable stepped: ++, --, a compound assignment, or `v = ...v...`?
+    // Lambdas inside do not count.
+    static bool stepped(const Stmt *stmt, const VarDecl *var) {
+        if (stmt == nullptr || isa<LambdaExpr>(stmt)) return false;
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            if (unary->isIncrementDecrementOp() && is_var(unary->getSubExpr(), var)) return true;
+        }
+        if (const auto *compound = dyn_cast<CompoundAssignOperator>(stmt)) {
+            if (is_var(compound->getLHS(), var)) return true;
+        } else if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            if (binary->getOpcode() == BO_Assign && is_var(binary->getLHS(), var) && names_var(binary->getRHS(), var)) return true;
+        }
+        for (const Stmt *child : stmt->children()) {
+            if (stepped(child, var)) return true;
+        }
+        return false;
+    }
+
+    // A loop whose condition compares a floating variable that the increment or
+    // the body steps.  Declared in the for header: the declaration is marked,
+    // otherwise the reference in the condition.
+    void note_float_counter(const Stmt *stmt) {
+        const Expr *condition = nullptr;
+        const Stmt *step = nullptr;
+        const Stmt *body = nullptr;
+        const Stmt *init = nullptr;
+        if (const auto *loop = dyn_cast<ForStmt>(stmt)) {
+            condition = loop->getCond();
+            step = loop->getInc();
+            body = loop->getBody();
+            init = loop->getInit();
+        } else if (const auto *loop = dyn_cast<WhileStmt>(stmt)) {
+            condition = loop->getCond();
+            body = loop->getBody();
+        } else if (const auto *loop = dyn_cast<DoStmt>(stmt)) {
+            condition = loop->getCond();
+            body = loop->getBody();
+        } else {
+            return;
+        }
+        const DeclRefExpr *ref = compared_float(condition);
+        if (ref == nullptr) return;
+        const auto *var = cast<VarDecl>(ref->getDecl());
+        if (!stepped(step, var) && !stepped(body, var)) return;
+        if (const auto *declared = dyn_cast_or_null<DeclStmt>(init)) {
+            for (const Decl *item : declared->decls()) {
+                if (item == var) {
+                    decls[static_cast<size_t>(decl_of(var))].shape = "float_loop_counter";
+                    return;
+                }
+            }
+        }
+        pending_shape_[ref] = "float_loop_counter";
     }
 
     // std::move (one argument) of a const object or of a temporary.
@@ -1898,7 +2076,11 @@ public:
         if (isa<NullStmt>(stmt)) rec.before = char_before(stmt->getBeginLoc());
         rec.errno_write = errno_write(stmt);
         if (const auto *list = dyn_cast<InitListExpr>(stmt)) note_init_list(list, rec);
-        if (const auto *call = dyn_cast<CallExpr>(stmt)) note_move(call);
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            note_move(call);
+            note_array_decay(call);
+        }
+        note_float_counter(stmt);
         if (isa<IntegerLiteral>(stmt) || isa<GNUNullExpr>(stmt)) {
             if (const char *null = null_shape(cast<Expr>(stmt))) rec.shape = null;
         }

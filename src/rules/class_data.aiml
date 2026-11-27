@@ -1,0 +1,92 @@
+# OC-0284 private_member_data, OC-0330 no_ambiguous_block_declaration (C++) and
+# OC-0049 declaration_before_definition (C), catalogue in Pymann/coding-rules.
+# 0284 and 0330 read IrDecl.shape (doc/ir.md): exposed_data, vexing_function.
+# 0049: a function or object definition with external linkage that is the first
+# declaration of the entity in the unit (not main, not inline, not a name that a
+# macro pasted together).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: PrivateMemberDataRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 284, "style.cpp98-.15.1.private_member_data", "Data members of non-trivial classes are private", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^exposed_data$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 284, "data member '${rec.name}' of a class with invariants is not private; make it private and give access through member functions"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: AmbiguousBlockDeclarationRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 330, "safety.cpp98-.6.4.no_ambiguous_block_declaration", "A block-scope declaration cannot be misread as something else", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^vexing_function$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 330, "'${rec.name}' declares a function, not an object; write ${rec.name}{} or remove the parentheses"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: DeclarationBeforeDefinitionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 49, "safety.c90-.6.3.declaration_before_definition", "An external definition is preceded by a compatible visible declaration", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Function|Var)$", rec.kind] }, 0] }, rec.is_definition, rec.external_linkage, rec.is_first_decl, { eq: [rec.is_main, false] }, { eq: [rec.is_inline, false] }, { eq: [rec.is_local, false] }, { neq: [{ call: [regex.search, "^pasted_name$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 49, "'${rec.name}' has external linkage and no declaration before this definition; declare it in the module's header, or make it static"] }]
+                  - set: [idx, { "+": [idx, 1] }]

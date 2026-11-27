@@ -64,6 +64,8 @@
 - import: "src/rules/cxx_downcasts.aiml"
 - import: "src/rules/null_constants.aiml"
 - import: "src/rules/override_shapes.aiml"
+- import: "src/rules/loop_counters.aiml"
+- import: "src/rules/class_data.aiml"
 
 - class:
     name: RuleRegistry
@@ -387,6 +389,16 @@
             - call: [<.rules.push, override_defaults]
             - decl: [must_not_throw, ptr<Rule>, { new: NoexceptSpecialFunctionsRule }]
             - call: [<.rules.push, must_not_throw]
+            - decl: [float_counter, ptr<Rule>, { new: FloatLoopCounterRule }]
+            - call: [<.rules.push, float_counter]
+            - decl: [array_decay, ptr<Rule>, { new: ArrayDecayCallRule }]
+            - call: [<.rules.push, array_decay]
+            - decl: [member_data, ptr<Rule>, { new: PrivateMemberDataRule }]
+            - call: [<.rules.push, member_data]
+            - decl: [vexing_decl, ptr<Rule>, { new: AmbiguousBlockDeclarationRule }]
+            - call: [<.rules.push, vexing_decl]
+            - decl: [declared_first, ptr<Rule>, { new: DeclarationBeforeDefinitionRule }]
+            - call: [<.rules.push, declared_first]
       - def:
           name: rule_count
           args: []

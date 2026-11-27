@@ -530,7 +530,20 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   dynamic or C-style cast from a polymorphic base to a derived class,
   `virtual_base_cast` on the operand of a reinterpret or C-style cast from a
   virtual base, `virtual_member_compare` on `==`/`!=` of the address of a virtual
-  member function with something that is not a null pointer constant.
+  member function with something that is not a null pointer constant,
+  `array_decay` on an array (not a string literal, `__func__`, a `?:` choosing such, or a `va_list`) that decays as
+  an argument of a call to a function not declared in a system header (no
+  builtins, no operator calls), `float_loop_counter` on the reference in a loop
+  condition that is a comparison with a floating variable which the increment or
+  the body steps (`++`, `--`, compound assignment, `v = ...v...`), when the
+  variable is not declared in the for header.
+  `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
+  the for header, `exposed_data` on a named public or protected field of a C++
+  class that is not an aggregate and has a user-provided constructor or
+  destructor (or a constructor template), a virtual function, a base or a private
+  field, `vexing_function` on a block-scope function declaration with nothing
+  between its parentheses, `pasted_name` on a function or variable whose name a
+  macro made with `##` (such a field is never `exposed_data`).
   `IrDecl.missing_base_init`: a user-provided, non-delegating
   constructor of a non-dependent class does not name a direct or virtual base
   that has data members (its own or inherited; a vtable pointer does not count).  `IrMacro` kind `condition`: a `#if` or `#elif` whose condition

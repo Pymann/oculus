@@ -66,6 +66,18 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0273** const member returning a mutable handle: deferred. The exception for
   non-owning views needs a configuration key first (span-like classes return `T*`
   from const members by design).
+- **OC-0100** float loop counter: only loops whose whole condition is one
+  comparison with the variable as one side, stepped by `++`, `--`, a compound
+  assignment or `v = ...v...`. Conditions joined with `&&`/`||` and convergence
+  loops such as `while (fabs(x - y) > eps)` are not checked.
+- **OC-0255** array decay: only calls of functions not declared in a system header
+  (no builtins, no operator calls, no constructors). A `va_list` argument and a
+  `?:` that picks between string literals are not reported.
+- **OC-0284** and **OC-0049**: a member or definition whose name a macro made with
+  `##` (gmock's MOCK_METHOD, Zephyr's K_*_DEFINE buffers) is not reported.
+- **OC-0330**: only `T name();` with nothing between the parentheses. A
+  parenthesised declarator `T (name);` and the vexing parse with arguments
+  (`Widget w(Timer());`) are not reported yet.
 - **OC-0369** constant assert: only arguments made of literals, `true`, `false`,
   `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen. An
   assert written in a macro body is reported once, at the definition.

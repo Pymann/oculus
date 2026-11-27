@@ -175,6 +175,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("enum_value", decl.enum_value);
                     out.attribute("designated_array", decl.designated_array);
                     out.attribute("missing_base_init", decl.missing_base_init);
+                    out.attribute("shape", decl.shape);
                     write_pos(out, "default_arg_pos", decl.default_arg_pos);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);

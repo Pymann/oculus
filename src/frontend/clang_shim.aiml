@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 22
+      - version: 23
 
 - enum:
     name: ClangUnitText
@@ -106,6 +106,7 @@
       - ref_qualifier
       - returns_kind
       - enum_value
+      - shape
 
 - enum:
     name: ClangDeclNum

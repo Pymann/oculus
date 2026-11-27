@@ -1,0 +1,74 @@
+# OC-0100 no_float_loop_counter (C) and OC-0255 no_array_decay_in_call (C++),
+# catalogue in Pymann/coding-rules.  Read from IrDecl.shape and IrNode.shape
+# (doc/ir.md): float_loop_counter on the variable declared in a for header, or on
+# the reference in the loop condition; array_decay on an array argument of a
+# call to a function that is not declared in a system header.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: FloatLoopCounterRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 100, "safety.c90-.4.1.no_float_loop_counter", "Loop counters are not of floating type", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^float_loop_counter$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 100, "loop counter '${rec.name}' has a floating type; count with an integer and compute the value from it"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [node, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, node] }, { eq: [{ call: [regex.search, "^float_loop_counter$", node.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, node.pos] }, 100, "this loop is counted by a floating variable; count with an integer and compute the value from it"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: ArrayDecayCallRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 255, "safety.cpp98-.10.3.no_array_decay_in_call", "An array passed to a function does not decay to a pointer", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [node, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, node] }, { eq: [{ call: [regex.search, "^array_decay$", node.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, node.pos] }, 255, "this array decays to a pointer and loses its size; pass a std::span, a std::array or a reference to the array"] }]
+                  - set: [idx, { "+": [idx, 1] }]

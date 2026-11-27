@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 22;
+constexpr int32_t OC_SHIM_ABI = 23;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -227,6 +227,7 @@ OC_EXPORT char *oc_decl_text(void *unit, int32_t index, int32_t field) {
     case ClangDeclText_ref_qualifier: return fresh(decl->ref_qualifier);
     case ClangDeclText_returns_kind: return fresh(decl->returns_kind);
     case ClangDeclText_enum_value: return fresh(decl->enum_value);
+    case ClangDeclText_shape: return fresh(decl->shape);
     default: return fresh("");
     }
 }

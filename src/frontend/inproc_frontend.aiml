@@ -195,6 +195,7 @@
       - set: [rec.may_throw, { call: [decl_flag, unit, index, ClangDeclNum.may_throw] }]
       - set: [rec.pure_overrides_impl, { call: [decl_flag, unit, index, ClangDeclNum.pure_overrides_impl] }]
       - set: [rec.enum_value, { call: [oc_decl_text, unit, index, ClangDeclText.enum_value] }]
+      - set: [rec.shape, { call: [oc_decl_text, unit, index, ClangDeclText.shape] }]
       - set: [rec.designated_array, { call: [decl_flag, unit, index, ClangDeclNum.designated_array] }]
       - set: [rec.missing_base_init, { call: [decl_flag, unit, index, ClangDeclNum.missing_base_init] }]
       - set: [rec.default_arg_pos, { call: [shim_pos, unit, index, ClangPosWhich.default_arg_pos] }]
