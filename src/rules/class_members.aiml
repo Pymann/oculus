@@ -1,0 +1,91 @@
+# OC-0289 abstract_copy_assignment_hidden, OC-0291 copy_ctor_with_template_ctor and
+# OC-0292 copy_assign_with_template_assign (catalogue in Pymann/coding-rules), C++.
+# Read from RuleInformation: what the frontend found on each class definition (an
+# abstract class has its implicit copy assignment declared, so its access and
+# whether it is deleted are known).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: AbstractCopyAssignmentRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 289, "safety.cpp98-.15.3.abstract_copy_assignment_hidden", "Copy assignment of an abstract class is not public", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.abstract_public_copy] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 289, "abstract class '${rec.name}' has a public copy assignment, which slices; make it protected or delete it"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: TemplateCtorCopyRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 291, "safety.cpp98-.16.1.copy_ctor_with_template_ctor", "A class with a single-parameter template constructor declares a copy constructor", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.template_ctor_no_copy] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 291, "class '${rec.name}' has a constructor template callable with one argument but no declared copy constructor; declare, default or delete it"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: TemplateAssignCopyRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 292, "safety.cpp98-.16.1.copy_assign_with_template_assign", "A class with a template assignment operator declares a copy assignment operator", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.template_assign_no_copy] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 292, "class '${rec.name}' has an operator= template but no declared copy assignment; declare, default or delete it"] }]
+                  - set: [idx, { "+": [idx, 1] }]

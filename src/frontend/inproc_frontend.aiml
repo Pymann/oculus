@@ -186,6 +186,14 @@
       - set: [rec.is_referenced, { call: [decl_flag, unit, index, ClangDeclNum.is_referenced] }]
       - set: [rec.maybe_unused, { call: [decl_flag, unit, index, ClangDeclNum.maybe_unused] }]
       - set: [rec.named_in_body, { call: [decl_flag, unit, index, ClangDeclNum.named_in_body] }]
+      - set: [rec.name_count, { call: [oc_decl_num, unit, index, ClangDeclNum.name_count] }]
+      - set: [rec.special_local, { call: [decl_flag, unit, index, ClangDeclNum.special_local] }]
+      - set: [rec.abstract_public_copy, { call: [decl_flag, unit, index, ClangDeclNum.abstract_public_copy] }]
+      - set: [rec.template_ctor_no_copy, { call: [decl_flag, unit, index, ClangDeclNum.template_ctor_no_copy] }]
+      - set: [rec.template_assign_no_copy, { call: [decl_flag, unit, index, ClangDeclNum.template_assign_no_copy] }]
+      - set: [rec.may_throw, { call: [decl_flag, unit, index, ClangDeclNum.may_throw] }]
+      - set: [rec.pure_overrides_impl, { call: [decl_flag, unit, index, ClangDeclNum.pure_overrides_impl] }]
+      - set: [rec.default_arg_pos, { call: [shim_pos, unit, index, ClangPosWhich.default_arg_pos] }]
       - return: rec
 
 - def:

@@ -524,6 +524,9 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   function calls written there.
 - `IrDecl.ref_qualifier`, `returns_kind`, `is_referenced`, `maybe_unused`,
   `named_in_body` (a parameter's name among the raw tokens of the body);
+  `name_count`, `special_local`, `abstract_public_copy`,
+  `template_ctor_no_copy`, `template_assign_no_copy`, `may_throw`,
+  `pure_overrides_impl` and `default_arg_pos` for the class and override rules;
   `IrNode.detail` `placement` (placement new other than nothrow), `destructor`
   (an explicit destructor call), `operator_new_delete` (operator new or delete
   called as a function); a marker node `RawSmartPointer` at the raw pointer

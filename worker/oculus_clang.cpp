@@ -164,6 +164,14 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("is_referenced", decl.is_referenced);
                     out.attribute("maybe_unused", decl.maybe_unused);
                     out.attribute("named_in_body", decl.named_in_body);
+                    out.attribute("name_count", decl.name_count);
+                    out.attribute("special_local", decl.special_local);
+                    out.attribute("abstract_public_copy", decl.abstract_public_copy);
+                    out.attribute("template_ctor_no_copy", decl.template_ctor_no_copy);
+                    out.attribute("template_assign_no_copy", decl.template_assign_no_copy);
+                    out.attribute("may_throw", decl.may_throw);
+                    out.attribute("pure_overrides_impl", decl.pure_overrides_impl);
+                    write_pos(out, "default_arg_pos", decl.default_arg_pos);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);

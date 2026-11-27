@@ -1,4 +1,8 @@
-# OC-0016 no_unused_parameter (catalogue in Pymann/coding-rules).  Read from
+# OC-0016 no_unused_parameter and OC-0017 no_unused_local (catalogue in
+# Pymann/coding-rules).  Locals: never named, the name written only once in the
+# body (so no macro argument or skipped code names it), not of class type (an RAII
+# object works by being there), not a handler, range-for or structured binding.
+#  Read from
 # RuleInformation: parameters that are never named, the function they belong to,
 # and the uses of that function.  A function another unit could take the address
 # of may have a signature fixed by a callback type, so only functions with internal
@@ -74,4 +78,31 @@
                       condition: { "&&": [{ eq: [{ call: [regex.search, "^ParmVar$", rec.kind] }, 0] }, { gt: [rec.name.len, 0] }, { eq: [rec.is_referenced, false] }, { eq: [rec.maybe_unused, false] }, { eq: [rec.named_in_body, false] }, { call: [user_decl, rec] }, { call: [checked_function, info, taken, rec.parent_uid] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 16, "parameter '${rec.name}' is never used; remove it, leave it unnamed or cast it to void"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoUnusedLocalRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 17, "style.c90-.2.3.no_unused_local", "Every local variable is used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^Var$", rec.kind] }, 0] }, rec.is_local, { eq: [rec.name_count, 1] }, { eq: [rec.is_referenced, false] }, { eq: [rec.maybe_unused, false] }, { eq: [rec.special_local, false] }, { eq: [rec.origin.from_macro, false] }, { call: [user_decl, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 17, "local variable '${rec.name}' is never used; remove it"] }]
                   - set: [idx, { "+": [idx, 1] }]

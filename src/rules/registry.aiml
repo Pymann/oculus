@@ -52,6 +52,8 @@
 - import: "src/rules/expression_shapes.aiml"
 - import: "src/rules/cxx_ownership.aiml"
 - import: "src/rules/unused_params.aiml"
+- import: "src/rules/class_members.aiml"
+- import: "src/rules/override_shapes.aiml"
 
 - class:
     name: RuleRegistry
@@ -305,6 +307,20 @@
             - call: [<.rules.push, raw_smart]
             - decl: [unused_param, ptr<Rule>, { new: NoUnusedParameterRule }]
             - call: [<.rules.push, unused_param]
+            - decl: [unused_local, ptr<Rule>, { new: NoUnusedLocalRule }]
+            - call: [<.rules.push, unused_local]
+            - decl: [abstract_copy, ptr<Rule>, { new: AbstractCopyAssignmentRule }]
+            - call: [<.rules.push, abstract_copy]
+            - decl: [template_ctor, ptr<Rule>, { new: TemplateCtorCopyRule }]
+            - call: [<.rules.push, template_ctor]
+            - decl: [template_assign, ptr<Rule>, { new: TemplateAssignCopyRule }]
+            - call: [<.rules.push, template_assign]
+            - decl: [pure_override, ptr<Rule>, { new: PureOverrideRule }]
+            - call: [<.rules.push, pure_override]
+            - decl: [override_defaults, ptr<Rule>, { new: OverrideDefaultArgumentsRule }]
+            - call: [<.rules.push, override_defaults]
+            - decl: [must_not_throw, ptr<Rule>, { new: NoexceptSpecialFunctionsRule }]
+            - call: [<.rules.push, must_not_throw]
       - def:
           name: rule_count
           args: []

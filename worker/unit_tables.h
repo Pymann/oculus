@@ -208,6 +208,22 @@ struct DeclRec {
     // parameters of a definition: the name is written in the body as a token
     // (also in a macro argument, in code that #if skipped, in an inactive assert)
     bool named_in_body = false;
+    // local variables: how often the name is written in the function body (the
+    // declaration included), and whether it is a handler or range-for variable, a
+    // structured binding or of class type (RAII objects)
+    int name_count = -1;
+    bool special_local = false;
+    // class definitions: abstract with a public, not deleted copy assignment; a
+    // one-argument constructor template and no user-declared copy constructor; a
+    // one-parameter operator= template and no user-declared copy assignment
+    bool abstract_public_copy = false;
+    bool template_ctor_no_copy = false;
+    bool template_assign_no_copy = false;
+    // functions that must not throw (move members, swap, std::hash call operator)
+    // and are not noexcept; destructors declared noexcept(false)
+    bool may_throw = false;
+    bool pure_overrides_impl = false;   // pure virtual, overriding a function that is not pure
+    Pos default_arg_pos;                // overriders: a default argument the overridden function differs in
     // alignment specifiers written on this declaration (alignas, _Alignas; not
     // inherited from an earlier one): how many, where the second one is, and
     // where an alignment that evaluates to zero is written
@@ -637,7 +653,22 @@ public:
                 !param->getName().empty()) {
                 rec.named_in_body = body_names(owner).count(param->getName().str()) > 0;
             }
+        } else if (const auto *local = dyn_cast<VarDecl>(decl)) {
+            const auto *owner = dyn_cast_or_null<FunctionDecl>(local->getDeclContext());
+            if (local->isLocalVarDecl() && owner != nullptr && owner->doesThisDeclarationHaveABody() &&
+                owner->getBody() != nullptr && local->getIdentifier() != nullptr) {
+                const auto &names = body_names(owner);
+                auto found = names.find(local->getName().str());
+                rec.name_count = found != names.end() ? found->second : 0;
+            }
+            rec.special_local = local->isExceptionVariable() || local->isCXXForRangeDecl() ||
+                                isa<DecompositionDecl>(local);
+            QualType held = context_.getBaseElementType(local->getType());
+            rec.special_local = rec.special_local || held->isRecordType() || held->isDependentType();
         }
+        note_class_shape(decl, rec);
+        note_must_not_throw(decl, rec);
+        note_override_defaults(decl, rec);
     }
 
     // The alignas specifiers written on the declaration, in source order.
@@ -1617,12 +1648,140 @@ private:
     // The type specifiers as written: is the declared type spelled as a builtin
     // type, and was `signed` or `unsigned` written?  Plain `int` and `signed int`
     // are the same type, only the spelling tells them apart.
+    void note_class_shape(const NamedDecl *decl, DeclRec &rec) {
+        const auto *record = dyn_cast<CXXRecordDecl>(decl);
+        if (record == nullptr || !record->isThisDeclarationADefinition() || !record->hasDefinition()) return;
+        if (!record->isDependentType() && record->isAbstract()) {
+            for (const CXXMethodDecl *method : record->methods()) {
+                if (method->isCopyAssignmentOperator() && method->getAccess() == AS_public && !method->isDeleted()) {
+                    rec.abstract_public_copy = true;
+                }
+            }
+        }
+        bool template_ctor = false;
+        bool template_assign = false;
+        for (const Decl *member : record->decls()) {
+            const auto *pattern = dyn_cast<FunctionTemplateDecl>(member);
+            if (pattern == nullptr) continue;
+            const FunctionDecl *fn = pattern->getTemplatedDecl();
+            if (fn->getNumParams() < 1 || fn->getMinRequiredArguments() > 1) continue;
+            if (isa<CXXConstructorDecl>(fn)) template_ctor = true;
+            if (fn->getOverloadedOperator() == OO_Equal && fn->getNumParams() == 1) template_assign = true;
+        }
+        rec.template_ctor_no_copy = template_ctor && !record->hasUserDeclaredCopyConstructor();
+        rec.template_assign_no_copy = template_assign && !record->hasUserDeclaredCopyAssignment();
+    }
+
+    // Spelled noexcept (noexcept, noexcept(true), throw()), and known.
+    static bool spelled_noexcept(const FunctionDecl *fn) {
+        const auto *proto = fn->getType()->getAs<FunctionProtoType>();
+        if (proto == nullptr) return false;
+        ExceptionSpecificationType spec = proto->getExceptionSpecType();
+        return spec == EST_BasicNoexcept || spec == EST_NoexceptTrue || spec == EST_DynamicNone ||
+               spec == EST_DependentNoexcept || spec == EST_Unevaluated || spec == EST_Uninstantiated ||
+               spec == EST_Unparsed;
+    }
+
+    static bool same_class_param(const FunctionDecl *fn, unsigned at, const CXXRecordDecl *owner) {
+        QualType type = fn->getParamDecl(at)->getType().getNonReferenceType();
+        const CXXRecordDecl *record = type->getAsCXXRecordDecl();
+        return record != nullptr && owner != nullptr && record->getCanonicalDecl() == owner->getCanonicalDecl();
+    }
+
+    void note_must_not_throw(const NamedDecl *decl, DeclRec &rec) {
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || fn->isDefaulted() || fn->isDeleted() || fn->isImplicit() || fn->isDependentContext()) return;
+        const auto *proto = fn->getType()->getAs<FunctionProtoType>();
+        if (proto == nullptr) return;
+        if (isa<CXXDestructorDecl>(fn)) {
+            rec.may_throw = proto->getExceptionSpecType() == EST_NoexceptFalse;
+            return;
+        }
+        bool must = false;
+        const auto *method = dyn_cast<CXXMethodDecl>(fn);
+        if (const auto *ctor = dyn_cast<CXXConstructorDecl>(fn)) must = ctor->isMoveConstructor();
+        if (method != nullptr && method->isMoveAssignmentOperator()) must = true;
+        if (fn->getIdentifier() != nullptr && fn->getName() == "swap") {
+            if (method != nullptr && !method->isStatic() && fn->getNumParams() == 1) {
+                must = same_class_param(fn, 0, method->getParent());
+            } else if (method == nullptr && fn->getNumParams() == 2) {
+                QualType left = fn->getParamDecl(0)->getType().getNonReferenceType().getUnqualifiedType();
+                QualType right = fn->getParamDecl(1)->getType().getNonReferenceType().getUnqualifiedType();
+                must = context_.hasSameType(left, right) && left->isRecordType() &&
+                       fn->getParamDecl(0)->getType()->isLValueReferenceType();
+            }
+        }
+        if (method != nullptr && method->getOverloadedOperator() == OO_Call) {
+            const CXXRecordDecl *owner = method->getParent();
+            if (owner->getIdentifier() != nullptr && owner->getName() == "hash" && owner->isInStdNamespace()) must = true;
+        }
+        rec.may_throw = must && !spelled_noexcept(fn);
+    }
+
+    // The = before `loc` (white space between), else `loc` itself.
+    SourceLocation equal_before(SourceLocation loc) const {
+        std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(loc);
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(at.first, &invalid);
+        if (invalid) return loc;
+        unsigned offset = at.second;
+        while (offset > 0) {
+            char ch = buffer[offset - 1];
+            if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+                --offset;
+                continue;
+            }
+            if (ch == '=') return loc.getLocWithOffset(static_cast<int>(offset) - 1 - static_cast<int>(at.second));
+            break;
+        }
+        return loc;
+    }
+
+    // An overrider whose default argument differs in value from the overridden
+    // function's, or that adds one; values that are not constants are left alone.
+    void note_override_defaults(const NamedDecl *decl, DeclRec &rec) {
+        const auto *method = dyn_cast<CXXMethodDecl>(decl);
+        if (method == nullptr) return;
+        rec.pure_overrides_impl = false;
+        for (const CXXMethodDecl *base : method->overridden_methods()) {
+            if (method->isPureVirtual() && !base->isPureVirtual()) rec.pure_overrides_impl = true;
+            if (base->getNumParams() != method->getNumParams()) continue;
+            for (unsigned at = 0; at < method->getNumParams(); ++at) {
+                const ParmVarDecl *mine = method->getParamDecl(at);
+                if (!mine->hasDefaultArg() || mine->hasUnparsedDefaultArg() || mine->hasUninstantiatedDefaultArg()) continue;
+                const ParmVarDecl *theirs = base->getParamDecl(at);
+                bool differs = !theirs->hasDefaultArg();
+                if (!differs) {
+                    if (theirs->hasUnparsedDefaultArg() || theirs->hasUninstantiatedDefaultArg()) continue;
+                    Expr::EvalResult left;
+                    Expr::EvalResult right;
+                    const Expr *own = mine->getDefaultArg();
+                    const Expr *other = theirs->getDefaultArg();
+                    if (own == nullptr || other == nullptr || own->isValueDependent() || other->isValueDependent()) continue;
+                    if (!own->EvaluateAsRValue(left, context_) || !other->EvaluateAsRValue(right, context_)) continue;
+                    if (left.HasSideEffects || right.HasSideEffects) continue;
+                    if (left.Val.isInt() && right.Val.isInt()) {
+                        differs = llvm::APSInt::compareValues(left.Val.getInt(), right.Val.getInt()) != 0;
+                    } else if (left.Val.isFloat() && right.Val.isFloat()) {
+                        differs = !left.Val.getFloat().bitwiseIsEqual(right.Val.getFloat());
+                    } else {
+                        continue;
+                    }
+                }
+                if (differs && rec.default_arg_pos.file < 0) {
+                    const Expr *own = mine->getDefaultArg();
+                    if (own != nullptr) rec.default_arg_pos = pos_of(equal_before(sm_.getExpansionLoc(own->getBeginLoc())));
+                }
+            }
+        }
+    }
+
     // The identifiers written in a function body, from the raw tokens of the file
     // between its braces (macros not expanded, skipped code included).
-    const std::set<std::string> &body_names(const FunctionDecl *fn) {
+    const std::map<std::string, int> &body_names(const FunctionDecl *fn) {
         auto known = body_names_.find(fn);
         if (known != body_names_.end()) return known->second;
-        std::set<std::string> &names = body_names_[fn];
+        std::map<std::string, int> &names = body_names_[fn];
         const Stmt *body = fn->getBody();
         SourceLocation open = sm_.getExpansionLoc(body->getBeginLoc());
         SourceLocation close = sm_.getExpansionRange(body->getEndLoc()).getEnd();
@@ -1640,7 +1799,7 @@ private:
             lexer.LexFromRawLexer(tok);
             if (tok.is(tok::eof)) break;
             if (sm_.getFileOffset(tok.getLocation()) > last.second) break;
-            if (tok.is(tok::raw_identifier)) names.insert(tok.getRawIdentifier().str());
+            if (tok.is(tok::raw_identifier)) ++names[tok.getRawIdentifier().str()];
         }
         return names;
     }
@@ -1713,7 +1872,7 @@ private:
     std::map<const Type *, int> type_ids_;
     std::map<const NamedDecl *, int> decl_ids_;
     std::map<std::pair<const void *, unsigned>, int> groups_;
-    std::map<const FunctionDecl *, std::set<std::string>> body_names_;
+    std::map<const FunctionDecl *, std::map<std::string, int>> body_names_;
     std::map<const Stmt *, std::string> roles_;
     std::map<const Stmt *, std::string> default_order_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> skipped_;

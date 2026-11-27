@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 18;
+constexpr int32_t OC_SHIM_ABI = 19;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -77,6 +77,7 @@ const Pos *pos_at(const DeclRec &decl, int32_t which) {
     case ClangPosWhich_second_align_pos: return &decl.second_align_pos;
     case ClangPosWhich_zero_align_pos: return &decl.zero_align_pos;
     case ClangPosWhich_pointer_pos: return &decl.pointer_pos;
+    case ClangPosWhich_default_arg_pos: return &decl.default_arg_pos;
     default: return nullptr;
     }
 }
@@ -289,6 +290,13 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_is_referenced: return flag(decl->is_referenced);
     case ClangDeclNum_maybe_unused: return flag(decl->maybe_unused);
     case ClangDeclNum_named_in_body: return flag(decl->named_in_body);
+    case ClangDeclNum_name_count: return decl->name_count;
+    case ClangDeclNum_special_local: return flag(decl->special_local);
+    case ClangDeclNum_abstract_public_copy: return flag(decl->abstract_public_copy);
+    case ClangDeclNum_template_ctor_no_copy: return flag(decl->template_ctor_no_copy);
+    case ClangDeclNum_template_assign_no_copy: return flag(decl->template_assign_no_copy);
+    case ClangDeclNum_may_throw: return flag(decl->may_throw);
+    case ClangDeclNum_pure_overrides_impl: return flag(decl->pure_overrides_impl);
     default: return -1;
     }
 }

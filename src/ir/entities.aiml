@@ -171,3 +171,20 @@
       # parameters of a definition: the name is written in the body as a token
       # (also in a macro argument, skipped code, an inactive assert)
       - [named_in_body, bool, false]
+      # local variables: how often the name is written in the function body (the
+      # declaration included, -1 unknown); a handler or range-for variable, a
+      # structured binding or of class type
+      - [name_count, i32, -1]
+      - [special_local, bool, false]
+      # class definitions: abstract with a public copy assignment; a one-argument
+      # constructor template without a user-declared copy constructor; an operator=
+      # template without a user-declared copy assignment
+      - [abstract_public_copy, bool, false]
+      - [template_ctor_no_copy, bool, false]
+      - [template_assign_no_copy, bool, false]
+      # functions that must not throw and are not noexcept; destructors noexcept(false)
+      - [may_throw, bool, false]
+      # pure virtual functions overriding one that is not pure
+      - [pure_overrides_impl, bool, false]
+      # overriders: a default argument that differs from the overridden function's
+      - [default_arg_pos, IrPos]

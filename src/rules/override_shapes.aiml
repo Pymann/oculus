@@ -1,0 +1,90 @@
+# OC-0283 pure_override_only_of_pure, OC-0271 override_default_arguments and
+# OC-0360 noexcept_special_functions (catalogue in Pymann/coding-rules), C++.  Read
+# from RuleInformation: what the frontend found on each method against the ones it
+# overrides, and the exception specification of the functions that must not throw.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: PureOverrideRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 283, "safety.cpp98-.15.2.pure_override_only_of_pure", "Only a pure virtual function is overridden by a pure virtual function", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.pure_overrides_impl] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 283, "'${rec.name}' is pure but overrides a function that has an implementation; this hides it and makes the class abstract again"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: OverrideDefaultArgumentsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 271, "safety.cpp98-.15.2.override_default_arguments", "An overriding function repeats the default arguments of the overridden one, or has none", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { gte: [rec.default_arg_pos.file_uid, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.default_arg_pos, 271, "this default argument of '${rec.name}' differs from the one of the function it overrides; a call takes the default of the static type"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoexceptSpecialFunctionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 360, "safety.cpp11-.17.3.noexcept_special_functions", "Functions that must not throw (destructors, moves, swaps) are noexcept", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.may_throw, rec.is_first_decl] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 360, "'${rec.name}' must not throw (containers rely on it) but is not declared noexcept (or is noexcept(false)); declare it noexcept"] }]
+                  - set: [idx, { "+": [idx, 1] }]

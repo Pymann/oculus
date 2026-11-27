@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 18
+      - version: 19
 
 - enum:
     name: ClangUnitText
@@ -163,6 +163,13 @@
       - is_referenced
       - maybe_unused
       - named_in_body
+      - name_count
+      - special_local
+      - abstract_public_copy
+      - template_ctor_no_copy
+      - template_assign_no_copy
+      - may_throw
+      - pure_overrides_impl
 
 - enum:
     name: ClangNodeText
@@ -244,6 +251,7 @@
       - second_align_pos
       - zero_align_pos
       - pointer_pos
+      - default_arg_pos
 
 - enum:
     name: ClangPosPart
