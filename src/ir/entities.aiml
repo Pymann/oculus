@@ -149,3 +149,6 @@
       - [def_begin, IrPos]
       - [body_end, IrPos]
       - [body_tokens, i32, -1]
+      # parameters: written with array syntax, and the `static` in its brackets
+      - [array_param, bool, false]
+      - [static_array_pos, IrPos]

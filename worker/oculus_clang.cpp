@@ -152,6 +152,8 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("body_tokens", decl.body_tokens);
                     write_pos(out, "def_begin", decl.def_begin);
                     write_pos(out, "body_end", decl.body_end);
+                    out.attribute("array_param", decl.array_param);
+                    write_pos(out, "static_array_pos", decl.static_array_pos);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);

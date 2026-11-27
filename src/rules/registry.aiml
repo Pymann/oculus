@@ -42,6 +42,9 @@
 - import: "src/rules/function_size.aiml"
 - import: "src/rules/function_paths.aiml"
 - import: "src/rules/file_lines.aiml"
+- import: "src/rules/exits.aiml"
+- import: "src/rules/array_params.aiml"
+- import: "src/rules/cxx_operands.aiml"
 
 - class:
     name: RuleRegistry
@@ -249,6 +252,18 @@
             - call: [<.rules.push, comment_density]
             - decl: [token_count, ptr<Rule>, { new: FunctionTokenCountRule }]
             - call: [<.rules.push, token_count]
+            - decl: [loop_exit, ptr<Rule>, { new: SingleLoopExitRule }]
+            - call: [<.rules.push, loop_exit]
+            - decl: [single_exit, ptr<Rule>, { new: SingleExitRule }]
+            - call: [<.rules.push, single_exit]
+            - decl: [static_param, ptr<Rule>, { new: NoStaticArrayParamRule }]
+            - call: [<.rules.push, static_param]
+            - decl: [sizeof_param, ptr<Rule>, { new: NoSizeofArrayParamRule }]
+            - call: [<.rules.push, sizeof_param]
+            - decl: [typeid_poly, ptr<Rule>, { new: NoTypeidPolymorphicRule }]
+            - call: [<.rules.push, typeid_poly]
+            - decl: [delete_incomplete, ptr<Rule>, { new: NoDeleteIncompleteRule }]
+            - call: [<.rules.push, delete_incomplete]
       - def:
           name: rule_count
           args: []

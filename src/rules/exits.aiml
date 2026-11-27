@@ -1,0 +1,199 @@
+# OC-0107 single_loop_exit and OC-0108 single_exit (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: the statements of each body
+# with their parents, in source order; a goto names its label.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: loop_kind
+    args: [[kind, string]]
+    return: bool
+    body:
+      - return: { eq: [{ call: [regex.search, "^(ForStmt|CXXForRangeStmt|WhileStmt|DoStmt)$", kind] }, 0] }
+
+# The loop a break leaves: its nearest loop or switch; -1 for a switch.
+- def:
+    name: break_target
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: i32
+    body:
+      - decl: [cur, i32, rec.parent_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { call: [loop_kind, upper.kind] }, then: [{ return: cur }] }
+            - if: { condition: { eq: [{ call: [regex.search, "^(SwitchStmt|LambdaExpr)$", upper.kind] }, 0] }, then: [{ return: -1 }] }
+            - set: [cur, upper.parent_uid]
+      - return: -1
+
+# `inner` lies inside node `outer` (or is it).
+- def:
+    name: node_within
+    args: [[info, RuleInformation], [inner, i32], [outer, i32]]
+    return: bool
+    body:
+      - decl: [cur, i32, inner]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - if: { condition: { eq: [cur, outer] }, then: [{ return: true }] }
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, cur] }]
+            - set: [cur, upper.parent_uid]
+      - return: false
+
+# The LabelStmt node of a goto's label in the same function (-1 if not found).
+- def:
+    name: label_node
+    args: [[info, RuleInformation], [labels, map<string:i32>], [rec, ref<IrNode>]]
+    return: i32
+    body:
+      - return: { call: [labels.get, "${rec.ref_uid}", -1] }
+
+# Counts one exit of `loop` by node `exit_uid`; reports every exit after the first.
+- def:
+    name: note_exit
+    args: [[exits, map<string:i32>], [loop, i32], [exit_uid, i32], [hits, list<i32>]]
+    return: void
+    body:
+      - decl: [key, string, "${loop}"]
+      - decl: [first, i32, { call: [exits.get, key, -1] }]
+      - if:
+          condition: { lt: [first, 0] }
+          then:
+            - call: [exits.set, key, exit_uid]
+          else:
+            - call: [hits.push, exit_uid]
+            - call: [hits.push, first]
+
+- class:
+    name: SingleLoopExitRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 107, "style.c90-.4.1.single_loop_exit", "A loop has at most one break or goto that leaves it", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [labels, map<string:i32>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if: { condition: { eq: [{ call: [regex.search, "^LabelStmt$", rec.kind] }, 0] }, then: [{ call: [labels.set, "${rec.ref_uid}", idx] }] }
+                  - set: [idx, { "+": [idx, 1] }]
+            - decl: [exits, map<string:i32>]
+            # pairs: the exit to report, then the first exit of its loop
+            - decl: [hits, list<i32>]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^BreakStmt$", rec.kind] }, 0] }] }
+                      then:
+                        - decl: [target, i32, { call: [break_target, info, rec] }]
+                        - if: { condition: { gte: [target, 0] }, then: [{ call: [note_exit, exits, target, idx, hits] }] }
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^GotoStmt$", rec.kind] }, 0] }] }
+                      then:
+                        - decl: [label, i32, { call: [label_node, info, labels, rec] }]
+                        - decl: [cur, i32, rec.parent_uid]
+                        - while:
+                            condition: { "&&": [{ gte: [label, 0] }, { call: [info_has_node, info, cur] }] }
+                            body:
+                              - decl: [upper, ref<IrNode>, { at: [info.nodes, cur] }]
+                              - if: { condition: { eq: [{ call: [regex.search, "^LambdaExpr$", upper.kind] }, 0] }, then: [{ set: [label, -1] }] }
+                              - if:
+                                  condition: { "&&": [{ gte: [label, 0] }, { call: [loop_kind, upper.kind] }] }
+                                  then:
+                                    - if: { condition: { eq: [{ call: [node_within, info, label, cur] }, false] }, then: [{ call: [note_exit, exits, cur, idx, hits] }] }
+                              - set: [cur, upper.parent_uid]
+                  - set: [idx, { "+": [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [{ "+": [idx, 1] }, hits.len] }
+                body:
+                  - decl: [hit, ref<IrNode>, { at: [info.nodes, { at: [hits, idx] }] }]
+                  - decl: [first, ref<IrNode>, { at: [info.nodes, { at: [hits, { "+": [idx, 1] }] }] }]
+                  - decl: [line, i32, first.pos.expansion.line]
+                  - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, hit.pos] }, 107, "this loop is already left by the break or goto in line ${line}; leave a loop at most once besides its condition"] }]
+                  - set: [idx, { "+": [idx, 2] }]
+
+# A return that is the last statement of its function or lambda body (also after
+# a label: `done: return rc;`).
+- def:
+    name: final_return
+    args: [[info, RuleInformation], [last_child, map<string:i32>], [node_uid, i32]]
+    return: bool
+    body:
+      - decl: [cur, i32, node_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [info_has_node, info, here.parent_uid] }, false] }, then: [{ return: false }] }
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, here.parent_uid] }]
+            - if:
+                condition: { eq: [{ call: [regex.search, "^LabelStmt$", upper.kind] }, 0] }
+                then:
+                  - set: [cur, here.parent_uid]
+                else:
+                  - if: { condition: { neq: [{ call: [regex.search, "^CompoundStmt$", upper.kind] }, 0] }, then: [{ return: false }] }
+                  - if: { condition: { neq: [{ call: [last_child.get, "${here.parent_uid}", -1] }, cur] }, then: [{ return: false }] }
+                  - if: { condition: { lt: [upper.parent_uid, 0] }, then: [{ return: true }] }
+                  - if: { condition: { eq: [{ call: [info_has_node, info, upper.parent_uid] }, false] }, then: [{ return: false }] }
+                  - decl: [owner, ref<IrNode>, { at: [info.nodes, upper.parent_uid] }]
+                  - return: { eq: [{ call: [regex.search, "^LambdaExpr$", owner.kind] }, 0] }
+      - return: false
+
+- class:
+    name: SingleExitRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 108, "style.c90-.4.3.single_exit", "A function returns only at its end", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            # the last direct child of each node (nodes come in source order)
+            - decl: [last_child, map<string:i32>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if: { condition: { gte: [rec.parent_uid, 0] }, then: [{ call: [last_child.set, "${rec.parent_uid}", idx] }] }
+                  - set: [idx, { "+": [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^ReturnStmt$", rec.kind] }, 0] }, { gte: [rec.function_uid, 0] }] }
+                      then:
+                        - if:
+                            condition: { eq: [{ call: [final_return, info, last_child, idx] }, false] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 108, "this return leaves the function before its end; keep a single return as the last statement"] }]
+                  - set: [idx, { "+": [idx, 1] }]

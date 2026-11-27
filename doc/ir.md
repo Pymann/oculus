@@ -510,6 +510,10 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `body_end` and `body_tokens` for function definitions (lambdas belong to their
   enclosing function), and `IrNode.macro_body` (the node's keyword or operator
   comes from a macro body, so it is not part of the source as written).
+- `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;
+  `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`
+  (`type`, `expr` or `polymorphic`, the evaluated form) and of `delete`
+  (`incomplete` when it destroys an incomplete class).
 
 ## 12. Notes on the AIML side
 

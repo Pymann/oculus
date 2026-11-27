@@ -174,6 +174,8 @@
       - set: [rec.def_begin, { call: [shim_pos, unit, index, ClangPosWhich.def_begin] }]
       - set: [rec.body_end, { call: [shim_pos, unit, index, ClangPosWhich.body_end] }]
       - set: [rec.body_tokens, { call: [oc_decl_num, unit, index, ClangDeclNum.body_tokens] }]
+      - set: [rec.array_param, { call: [decl_flag, unit, index, ClangDeclNum.array_param] }]
+      - set: [rec.static_array_pos, { call: [shim_pos, unit, index, ClangPosWhich.static_array_pos] }]
       - return: rec
 
 - def:

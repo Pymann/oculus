@@ -195,6 +195,10 @@ struct DeclRec {
     Pos def_begin;
     Pos body_end;
     int body_tokens = -1;
+    // parameters: written with array syntax (`int items[16]`), and the `static`
+    // inside its brackets (`int items[static 16]`; invalid when there is none)
+    bool array_param = false;
+    Pos static_array_pos;
     int group_uid = -1;         // a variable or field: uid of the first declarator of its declaration
     int field_index = -1;       // position in its list: field in the record,
                                 // enumerator in the enum, parameter in the function
@@ -419,6 +423,7 @@ public:
         }
         if (written != nullptr) {
             note_written(written->getTypeLoc(), rec);
+            if (isa<ParmVarDecl>(decl)) note_array_param(written->getTypeLoc(), rec);
         }
         note_kind_details(decl, rec);
         if (const auto *field = dyn_cast<FieldDecl>(decl)) {
@@ -1218,6 +1223,17 @@ public:
                 rec.ref_uid = decl_of(caught);
                 rec.type_uid = type_of(handler->getCaughtType());
             }
+        } else if (const auto *trait = dyn_cast<UnaryExprOrTypeTraitExpr>(stmt)) {
+            if (trait->getKind() == UETT_SizeOf) rec.detail = trait->isArgumentType() ? "sizeof_type" : "sizeof";
+        } else if (const auto *typeid_expr = dyn_cast<CXXTypeidExpr>(stmt)) {
+            rec.detail = typeid_expr->isTypeOperand() ? "type"
+                       : !typeid_expr->isValueDependent() && typeid_expr->isPotentiallyEvaluated() ? "polymorphic" : "expr";
+        } else if (const auto *removal = dyn_cast<CXXDeleteExpr>(stmt)) {
+            QualType destroyed = removal->getDestroyedType();
+            if (!destroyed.isNull() && !destroyed->isDependentType() && destroyed->isRecordType() &&
+                destroyed->isIncompleteType()) {
+                rec.detail = "incomplete";
+            }
         } else if (const auto *choice = dyn_cast<SwitchStmt>(stmt)) {
             note_switch(choice, rec);
         } else if (isa<DefaultStmt>(stmt)) {
@@ -1415,6 +1431,25 @@ private:
     // The type specifiers as written: is the declared type spelled as a builtin
     // type, and was `signed` or `unsigned` written?  Plain `int` and `signed int`
     // are the same type, only the spelling tells them apart.
+    // A parameter written as an array, and where a `static` in its brackets is.
+    void note_array_param(TypeLoc loc, DeclRec &rec) {
+        while (auto paren = loc.getAs<ParenTypeLoc>()) loc = paren.getInnerLoc();
+        auto array = loc.getAs<ArrayTypeLoc>();
+        if (!array) return;
+        rec.array_param = true;
+        if (array.getTypePtr()->getSizeModifier() != ArraySizeModifier::Static) return;
+        SourceLocation at = array.getLBracketLoc();
+        for (int step = 0; step < 4 && at.isValid(); ++step) {
+            std::optional<Token> next = Lexer::findNextToken(at, sm_, context_.getLangOpts());
+            if (!next || next->is(tok::r_square)) return;
+            if (next->is(tok::raw_identifier) && next->getRawIdentifier() == "static") {
+                rec.static_array_pos = pos_of(sm_.getExpansionLoc(next->getLocation()));
+                return;
+            }
+            at = next->getLocation();
+        }
+    }
+
     static void note_written(TypeLoc loc, DeclRec &rec) {
         for (;;) {
             if (auto qualified = loc.getAs<QualifiedTypeLoc>()) {

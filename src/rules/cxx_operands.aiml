@@ -1,0 +1,87 @@
+# OC-0341 no_typeid_on_polymorphic and OC-0368 no_delete_incomplete (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: a typeid whose operand is a
+# glvalue of polymorphic class type (detail "polymorphic"), a delete whose operand
+# points to an incomplete class (detail "incomplete"); the finding goes to the
+# operand, the node that follows.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Where the operand of node `node_uid` is written: its first child, else the node.
+- def:
+    name: operand_pos
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: IrPos
+    body:
+      - decl: [rec, ref<IrNode>, { at: [info.nodes, node_uid] }]
+      - decl: [next, i32, { "+": [node_uid, 1] }]
+      - if:
+          condition: { call: [info_has_node, info, next] }
+          then:
+            - decl: [child, ref<IrNode>, { at: [info.nodes, next] }]
+            - if: { condition: { eq: [child.parent_uid, node_uid] }, then: [{ return: { call: [written_pos, child.pos] } }] }
+      - return: { call: [written_pos, rec.pos] }
+
+- def:
+    name: operand_rule_hit
+    args: [[rec, ref<IrNode>], [kind, string], [detail, string]]
+    return: bool
+    body:
+      - if: { condition: { "||": [{ eq: [{ call: [user_node, rec] }, false] }, rec.is_dependent] }, then: [{ return: false }] }
+      - return: { "&&": [{ eq: [{ call: [regex.search, kind, rec.kind] }, 0] }, { eq: [{ call: [regex.search, detail, rec.detail] }, 0] }] }
+
+- class:
+    name: NoTypeidPolymorphicRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 341, "safety.cpp98-.9.4.no_typeid_on_polymorphic", "typeid is not applied to an expression of polymorphic class type", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { call: [operand_rule_hit, rec, "^CXXTypeidExpr$", "^polymorphic$"] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [operand_pos, info, idx] }, 341, "typeid is applied to an object of polymorphic class type; the operand is evaluated and a null dereference throws"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoDeleteIncompleteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 368, "safety.cpp98-.14.1.no_delete_incomplete", "A pointer to an incomplete class type is not deleted", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { call: [operand_rule_hit, rec, "^CXXDeleteExpr$", "^incomplete$"] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [operand_pos, info, idx] }, 368, "the class this pointer points to is incomplete here; delete does not run its destructor"] }]
+                  - set: [idx, { "+": [idx, 1] }]

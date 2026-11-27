@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 13
+      - version: 14
 
 - enum:
     name: ClangUnitText
@@ -155,6 +155,7 @@
       - is_defaulted
       - min_args
       - body_tokens
+      - array_param
 
 - enum:
     name: ClangNodeText
@@ -231,6 +232,7 @@
       - declarator_pos
       - def_begin
       - body_end
+      - static_array_pos
 
 - enum:
     name: ClangPosPart

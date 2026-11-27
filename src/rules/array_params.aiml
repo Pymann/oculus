@@ -1,0 +1,89 @@
+# OC-0125 no_static_in_array_param and OC-0190 no_sizeof_array_parameter
+# (catalogue in Pymann/coding-rules).  Read from RuleInformation: parameters written
+# with array syntax (IrDecl.array_param) and the `static` in their brackets
+# (IrDecl.static_array_pos), sizeof expressions and what they name.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: NoStaticArrayParamRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 125, "safety.c99-.11.1.no_static_in_array_param", "Array parameters do not use static inside the brackets", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^ParmVar$", rec.kind] }, 0] }, { gte: [rec.static_array_pos.file_uid, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.static_array_pos, 125, "parameter '${rec.name}' uses static in its array brackets; the promised size is not checked, write the bound without static"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+# The declaration a sizeof operand names, through parentheses (-1 if it names none).
+- def:
+    name: sizeof_operand_decl
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: i32
+    body:
+      - decl: [cur, i32, { "+": [node_uid, 1] }]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [info_has_node, info, here.parent_uid] }, false] }, then: [{ return: -1 }] }
+            - if: { condition: { neq: [here.parent_uid, { "-": [cur, 1] }] }, then: [{ return: -1 }] }
+            - if: { condition: { eq: [{ call: [regex.search, "^DeclRefExpr$", here.kind] }, 0] }, then: [{ return: here.ref_uid }] }
+            - if: { condition: { neq: [{ call: [regex.search, "^ParenExpr$", here.kind] }, 0] }, then: [{ return: -1 }] }
+            - set: [cur, { "+": [cur, 1] }]
+      - return: -1
+
+- class:
+    name: NoSizeofArrayParamRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 190, "safety.c90-.9.4.no_sizeof_array_parameter", "sizeof is not applied to a parameter declared as an array", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^UnaryExprOrTypeTraitExpr$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^sizeof$", rec.detail] }, 0] }] }
+                      then:
+                        - decl: [named, i32, { call: [sizeof_operand_decl, info, idx] }]
+                        - if:
+                            condition: { call: [info_has_decl, info, named] }
+                            then:
+                              - decl: [param, ref<IrDecl>, { at: [info.decls, named] }]
+                              - if:
+                                  condition: { "&&": [{ eq: [{ call: [regex.search, "^ParmVar$", param.kind] }, 0] }, param.array_param] }
+                                  then:
+                                    - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 190, "sizeof is applied to parameter '${param.name}', which is declared as an array but is a pointer; this gives the size of the pointer"] }]
+                  - set: [idx, { "+": [idx, 1] }]
