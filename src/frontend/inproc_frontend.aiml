@@ -180,6 +180,7 @@
       - set: [rec.align_count, { call: [oc_decl_num, unit, index, ClangDeclNum.align_count] }]
       - set: [rec.second_align_pos, { call: [shim_pos, unit, index, ClangPosWhich.second_align_pos] }]
       - set: [rec.zero_align_pos, { call: [shim_pos, unit, index, ClangPosWhich.zero_align_pos] }]
+      - set: [rec.pointer_pos, { call: [shim_pos, unit, index, ClangPosWhich.pointer_pos] }]
       - return: rec
 
 - def:
@@ -220,6 +221,7 @@
       - set: [rec.clause_count, { call: [oc_node_num, unit, index, ClangNodeNum.clause_count] }]
       - set: [rec.has_skipped_code, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.has_skipped_code] }, 1] }]
       - set: [rec.macro_body, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.macro_body] }, 1] }]
+      - set: [rec.side_effect, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.side_effect] }, 1] }]
       - return: rec
 
 - def:

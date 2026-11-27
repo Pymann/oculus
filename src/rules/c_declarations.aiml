@@ -1,0 +1,142 @@
+# OC-0047 prototype_with_names, OC-0137 no_variable_length_array and OC-0198
+# no_pointer_to_vla (catalogue in Pymann/coding-rules), C.  Read from
+# RuleInformation: function types without a prototype, parameter names, and array
+# types whose size is a run-time value.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The canonical type of `type_uid` has the kind `kind` (regex).
+- def:
+    name: canonical_kind
+    args: [[info, RuleInformation], [type_uid, i32], [kind, string]]
+    return: bool
+    body:
+      - decl: [canon_uid, i32, { call: [canonical_of, info, type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: { eq: [{ call: [regex.search, kind, canon.kind] }, 0] }
+
+# Following pointers (when `through_pointers`) and array elements from `type_uid`:
+# 0 no variable-length array is reached, 1 one is reached before any pointer, 2
+# one is reached behind a pointer.
+- def:
+    name: vla_reach
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: i32
+    body:
+      - decl: [pointers, i32, 0]
+      - decl: [cur, i32, { call: [canonical_of, info, type_uid] }]
+      - decl: [steps, i32, 0]
+      - while:
+          condition: { "&&": [{ gte: [cur, 0] }, { lt: [steps, 32] }] }
+          body:
+            - decl: [here, ref<IrType>, { at: [info.types, cur] }]
+            - if:
+                condition: { eq: [{ call: [regex.search, "^variable$", here.array_kind] }, 0] }
+                then:
+                  - if: { condition: { gt: [pointers, 0] }, then: [{ return: 2 }] }
+                  - return: 1
+            - if: { condition: { "&&": [here.is_pointer, { eq: [here.array_kind.len, 0] }] }, then: [{ set: [pointers, { "+": [pointers, 1] }] }] }
+            - if: { condition: { "&&": [{ eq: [here.is_pointer, false] }, { eq: [here.array_kind.len, 0] }] }, then: [{ return: 0 }] }
+            - set: [cur, { call: [canonical_of, info, here.element_uid] }]
+            - set: [steps, { "+": [steps, 1] }]
+      - return: 0
+
+- class:
+    name: PrototypeWithNamesRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 47, "safety.c90-.6.2.prototype_with_names", "Function declarations are prototypes and name all parameters", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^Function$", rec.kind] }, 0] }, { call: [canonical_kind, info, rec.type_uid, "^FunctionNoProto$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 47, "function '${rec.name}' is declared without a prototype; list its parameters, or write (void) for none"] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^ParmVar$", rec.kind] }, 0] }, { eq: [rec.name.len, 0] }] }
+                      then:
+                        - decl: [defined, bool, false]
+                        - if:
+                            condition: { call: [info_has_decl, info, rec.parent_uid] }
+                            then:
+                              - decl: [owner, ref<IrDecl>, { at: [info.decls, rec.parent_uid] }]
+                              - set: [defined, { "&&": [owner.is_definition, { eq: [{ call: [regex.search, "^Function$", owner.kind] }, 0] }] }]
+                        - if:
+                            condition: { eq: [defined, false] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 47, "this parameter has no name; name every parameter of a declaration"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoVariableLengthArrayRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 137, "safety.c99-.10.2.no_variable_length_array", "Arrays have a size known at compile time", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Var|Typedef)$", rec.kind] }, 0] }, { eq: [{ call: [vla_reach, info, rec.type_uid] }, 1] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 137, "the size of array '${rec.name}' is only known at run time; use a fixed bound"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoPointerToVlaRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 198, "safety.c99-.10.2.no_pointer_to_vla", "Pointers to variably modified array types are not used", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Var|ParmVar|Field|Typedef)$", rec.kind] }, 0] }, { eq: [{ call: [vla_reach, info, rec.type_uid] }, 2] }] }
+                      then:
+                        - decl: [where, IrPos, rec.declarator_pos]
+                        - if: { condition: { gte: [rec.pointer_pos.file_uid, 0] }, then: [{ set: [where, rec.pointer_pos] }] }
+                        - call: [out.push, { call: [pos_finding, unit, where, 198, "'${rec.name}' points to an array whose size is a run-time value; use a fixed bound"] }]
+                  - set: [idx, { "+": [idx, 1] }]

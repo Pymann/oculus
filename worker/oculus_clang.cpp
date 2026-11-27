@@ -158,6 +158,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("align_count", decl.align_count);
                     write_pos(out, "second_align_pos", decl.second_align_pos);
                     write_pos(out, "zero_align_pos", decl.zero_align_pos);
+                    write_pos(out, "pointer_pos", decl.pointer_pos);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);
@@ -190,6 +191,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("role", node.role);
                     out.attribute("before", node.before);
                     out.attribute("macro_body", node.macro_body);
+                    out.attribute("side_effect", node.side_effect);
                 });
             }
         });

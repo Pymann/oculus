@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 15;
+constexpr int32_t OC_SHIM_ABI = 16;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -76,6 +76,7 @@ const Pos *pos_at(const DeclRec &decl, int32_t which) {
     case ClangPosWhich_static_array_pos: return &decl.static_array_pos;
     case ClangPosWhich_second_align_pos: return &decl.second_align_pos;
     case ClangPosWhich_zero_align_pos: return &decl.zero_align_pos;
+    case ClangPosWhich_pointer_pos: return &decl.pointer_pos;
     default: return nullptr;
     }
 }
@@ -338,6 +339,7 @@ OC_EXPORT int32_t oc_node_num(void *unit, int32_t index, int32_t field) {
     case ClangNodeNum_clause_count: return node->clause_count;
     case ClangNodeNum_has_skipped_code: return flag(node->has_skipped_code);
     case ClangNodeNum_macro_body: return flag(node->macro_body);
+    case ClangNodeNum_side_effect: return flag(node->side_effect);
     default: return -1;
     }
 }

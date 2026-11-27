@@ -200,6 +200,7 @@ struct DeclRec {
     bool array_param = false;
     Pos static_array_pos;
     bool copy_or_move = false;      // constructors: a copy or move constructor
+    Pos pointer_pos;                // the * of a declarator whose written type is a pointer
     // alignment specifiers written on this declaration (alignas, _Alignas; not
     // inherited from an earlier one): how many, where the second one is, and
     // where an alignment that evaluates to zero is written
@@ -244,6 +245,9 @@ struct NodeRec {
     // its key token (the keyword, a binary operator, the ? of ?:) is written in a
     // macro body, not in the source or a macro argument
     bool macro_body = false;
+    // sizeof and alignof of an expression: the operand has a side effect (calls
+    // not counted) and is not evaluated, because its type is not variably modified
+    bool side_effect = false;
 };
 
 // The tables of one TU, filled while the AST is alive.
@@ -431,6 +435,7 @@ public:
         if (written != nullptr) {
             note_written(written->getTypeLoc(), rec);
             if (isa<ParmVarDecl>(decl)) note_array_param(written->getTypeLoc(), rec);
+            note_pointer(written->getTypeLoc(), rec);
         }
         note_kind_details(decl, rec);
         if (const auto *field = dyn_cast<FieldDecl>(decl)) {
@@ -1265,6 +1270,10 @@ public:
             }
         } else if (const auto *trait = dyn_cast<UnaryExprOrTypeTraitExpr>(stmt)) {
             if (trait->getKind() == UETT_SizeOf) rec.detail = trait->isArgumentType() ? "sizeof_type" : "sizeof";
+            if (!trait->isArgumentType() && !trait->getArgumentExpr()->isInstantiationDependent() &&
+                !trait->getArgumentExpr()->getType()->isVariablyModifiedType()) {
+                rec.side_effect = trait->getArgumentExpr()->HasSideEffects(context_, false);
+            }
         } else if (const auto *typeid_expr = dyn_cast<CXXTypeidExpr>(stmt)) {
             rec.detail = typeid_expr->isTypeOperand() ? "type"
                        : !typeid_expr->isValueDependent() && typeid_expr->isPotentiallyEvaluated() ? "polymorphic" : "expr";
@@ -1288,6 +1297,23 @@ public:
             rec.detail = generic->getNumAssocs() == 1 && generic->getAssociation(0).getTypeSourceInfo() == nullptr ? "default_only" : "";
         }
         nodes.push_back(rec);
+        // The range of a range-based for: a marker node at its start that counts the
+        // function calls in it (OC-0345 simple_range_initializer).
+        if (const auto *loop = dyn_cast<CXXForRangeStmt>(stmt)) {
+            if (const Expr *range = loop->getRangeInit()) {
+                NodeRec calls;
+                calls.uid = static_cast<int>(nodes.size());
+                calls.kind = "RangeInitCalls";
+                calls.detail = std::to_string(count_calls(range));
+                calls.pos = src_pos_of(range->getBeginLoc());
+                calls.from_macro = range->getBeginLoc().isMacroID();
+                calls.in_system_header = rec.in_system_header;
+                calls.parent_uid = rec.uid;
+                calls.function_uid = function_uid;
+                nodes.push_back(calls);
+            }
+            return rec.uid;
+        }
         // A default association between others: a marker node at `default`
         // (OC-0234 generic_default_position).
         if (const auto *generic = dyn_cast<GenericSelectionExpr>(stmt)) {
@@ -1325,6 +1351,22 @@ public:
             }
         }
         return rec.uid;
+    }
+
+    // The function calls written in an expression: calls of functions, members and
+    // overloaded operators; implicit conversion functions and lambda bodies do not
+    // count.
+    static int count_calls(const Stmt *stmt) {
+        if (stmt == nullptr || isa<LambdaExpr>(stmt)) return 0;
+        int count = 0;
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            const auto *member = dyn_cast<CXXMemberCallExpr>(call);
+            bool conversion = member != nullptr && member->getMethodDecl() != nullptr &&
+                              isa<CXXConversionDecl>(member->getMethodDecl());
+            if (!conversion) ++count;
+        }
+        for (const Stmt *child : stmt->children()) count += count_calls(child);
+        return count;
     }
 
     // The token at `loc` comes from a macro body (also of a macro called in a macro
@@ -1492,6 +1534,24 @@ private:
     // The type specifiers as written: is the declared type spelled as a builtin
     // type, and was `signed` or `unsigned` written?  Plain `int` and `signed int`
     // are the same type, only the spelling tells them apart.
+    // The * of the outermost pointer of the written type.
+    void note_pointer(TypeLoc loc, DeclRec &rec) {
+        for (;;) {
+            if (auto qualified = loc.getAs<QualifiedTypeLoc>()) {
+                loc = qualified.getUnqualifiedLoc();
+            } else if (auto paren = loc.getAs<ParenTypeLoc>()) {
+                loc = paren.getInnerLoc();
+            } else if (auto attributed = loc.getAs<AttributedTypeLoc>()) {
+                loc = attributed.getModifiedLoc();
+            } else {
+                break;
+            }
+        }
+        if (auto pointer = loc.getAs<PointerTypeLoc>()) {
+            rec.pointer_pos = pos_of(sm_.getExpansionLoc(pointer.getStarLoc()));
+        }
+    }
+
     // A parameter written as an array, and where a `static` in its brackets is.
     void note_array_param(TypeLoc loc, DeclRec &rec) {
         while (auto paren = loc.getAs<ParenTypeLoc>()) loc = paren.getInnerLoc();

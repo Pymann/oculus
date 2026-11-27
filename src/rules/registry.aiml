@@ -48,6 +48,8 @@
 - import: "src/rules/assignments.aiml"
 - import: "src/rules/alignment.aiml"
 - import: "src/rules/generic_selection.aiml"
+- import: "src/rules/c_declarations.aiml"
+- import: "src/rules/expression_shapes.aiml"
 
 - class:
     name: RuleRegistry
@@ -281,6 +283,18 @@
             - call: [<.rules.push, generic_default_only]
             - decl: [generic_default_pos, ptr<Rule>, { new: GenericDefaultPositionRule }]
             - call: [<.rules.push, generic_default_pos]
+            - decl: [prototypes, ptr<Rule>, { new: PrototypeWithNamesRule }]
+            - call: [<.rules.push, prototypes]
+            - decl: [no_vla, ptr<Rule>, { new: NoVariableLengthArrayRule }]
+            - call: [<.rules.push, no_vla]
+            - decl: [no_vla_pointer, ptr<Rule>, { new: NoPointerToVlaRule }]
+            - call: [<.rules.push, no_vla_pointer]
+            - decl: [sizeof_effect, ptr<Rule>, { new: NoSideEffectInSizeofRule }]
+            - call: [<.rules.push, sizeof_effect]
+            - decl: [pointer_arith, ptr<Rule>, { new: NoPointerArithOperatorsRule }]
+            - call: [<.rules.push, pointer_arith]
+            - decl: [range_calls, ptr<Rule>, { new: SimpleRangeInitializerRule }]
+            - call: [<.rules.push, range_calls]
       - def:
           name: rule_count
           args: []

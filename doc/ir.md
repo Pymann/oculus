@@ -519,6 +519,9 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   of for, if and switch, the increment of for); a `_Generic` with only a
   default association has detail `default_only`, a default between other
   associations gets a marker node `GenericDefaultMiddle` at `default`.
+- `IrDecl.pointer_pos` (the * of a written pointer declarator); `IrNode.side_effect` for sizeof and alignof; a range-based for gets a marker
+  node `RangeInitCalls` at its range expression, the detail being the number of
+  function calls written there.
 
 ## 12. Notes on the AIML side
 

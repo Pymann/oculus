@@ -50,3 +50,6 @@
       # the key token (keyword, binary operator, the ? of ?:) is written in a macro
       # body, not in the file or in a macro argument
       - [macro_body, bool, false]
+      # sizeof and alignof of an expression: the operand has a side effect (calls
+      # not counted) and is not evaluated
+      - [side_effect, bool, false]

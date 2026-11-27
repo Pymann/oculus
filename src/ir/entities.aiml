@@ -159,3 +159,5 @@
       - [align_count, i32, 0]
       - [second_align_pos, IrPos]
       - [zero_align_pos, IrPos]
+      # the * of the outermost pointer of the written type
+      - [pointer_pos, IrPos]

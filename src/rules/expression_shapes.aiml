@@ -1,0 +1,141 @@
+# OC-0099 no_side_effect_in_sizeof, OC-0133 no_pointer_arith_operators and OC-0345
+# simple_range_initializer (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation: sizeof and alignof operands with side effects, the result types
+# of + and -, and the RangeInitCalls marker of a range-based for.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The operand of node `node_uid` without its parentheses (the node itself if it has
+# no operand node).
+- def:
+    name: bare_operand
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: i32
+    body:
+      - decl: [cur, i32, { "+": [node_uid, 1] }]
+      - decl: [parent, i32, node_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { neq: [here.parent_uid, parent] }, then: [{ return: parent }] }
+            - if: { condition: { neq: [{ call: [regex.search, "^ParenExpr$", here.kind] }, 0] }, then: [{ return: cur }] }
+            - set: [parent, cur]
+            - set: [cur, { "+": [cur, 1] }]
+      - return: parent
+
+# The outermost parentheses around node `node_uid` (the node itself if none).
+- def:
+    name: paren_wrapper
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: i32
+    body:
+      - decl: [cur, i32, node_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [info_has_node, info, here.parent_uid] }, false] }, then: [{ return: cur }] }
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, here.parent_uid] }]
+            - if: { condition: { neq: [{ call: [regex.search, "^ParenExpr$", upper.kind] }, 0] }, then: [{ return: cur }] }
+            - set: [cur, here.parent_uid]
+      - return: node_uid
+
+- class:
+    name: NoSideEffectInSizeofRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 99, "safety.c90-.9.3.no_side_effect_in_sizeof", "The operand of sizeof has no side effects", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^UnaryExprOrTypeTraitExpr$", rec.kind] }, 0] }, rec.side_effect] }
+                      then:
+                        - decl: [operand, ref<IrNode>, { at: [info.nodes, { call: [bare_operand, info, idx] }] }]
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, operand.pos] }, 99, "this operand has a side effect, but it is not evaluated; do the side effect in a statement of its own"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoPointerArithOperatorsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 133, "style.c90-.10.1.no_pointer_arith_operators", "Pointers are not used with + - += -=; indexing is used instead", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(BinaryOperator|CompoundAssignOperator)$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(\\+|-|\\+=|-=)$", rec.detail] }, 0] }] }
+                      then:
+                        - decl: [canon_uid, i32, { call: [canonical_of, info, rec.type_uid] }]
+                        - if:
+                            condition: { gte: [canon_uid, 0] }
+                            then:
+                              - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+                              - if:
+                                  condition: canon.is_pointer
+                                  then:
+                                    - decl: [outer, i32, { call: [paren_wrapper, info, idx] }]
+                                    - decl: [shown, ref<IrNode>, { at: [info.nodes, outer] }]
+                                    - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, shown.pos] }, 133, "arithmetic with ${rec.detail} on a pointer; index the array instead"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: SimpleRangeInitializerRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 345, "style.cpp11-.4.1.simple_range_initializer", "The range expression of a range-based for calls at most one function", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^RangeInitCalls$", rec.kind] }, 0] }] }
+                      then:
+                        - decl: [calls, i32, { call: [rec.detail.parse_i32] }]
+                        - if:
+                            condition: { gt: [calls, 1] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 345, "the range expression calls ${calls} functions; store the range in a variable first"] }]
+                  - set: [idx, { "+": [idx, 1] }]
