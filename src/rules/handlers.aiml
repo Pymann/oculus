@@ -1,7 +1,8 @@
 # OC-0305 rethrow_in_handler_only (catalogue in Pymann/coding-rules), C++ only.
 # Read from RuleInformation: CXXThrowExpr nodes without operand (child_count 0) and
-# their ancestors through parent_uid.  (OC-0386 catch_all_handler_last needs no rule:
-# Clang rejects such code, and a unit that does not compile is reported as such.)
+# their ancestors through parent_uid.  (OC-0386 catch_all_handler_last is not
+# implemented, see catalog/not_implemented.txt in coding-rules: Clang rejects such
+# code, and a unit that does not compile is reported as such.)
 
 - import: "src/ir/ir.aiml"
 - import: "src/report/finding.aiml"
