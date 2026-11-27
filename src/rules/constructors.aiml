@@ -1,0 +1,76 @@
+# OC-0287 explicit_single_arg_constructor (catalogue in Pymann/coding-rules), C++.
+# Read from RuleInformation: constructors with explicit, deleted and the number of
+# arguments a call needs, and the type of their first parameter.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The type of the first parameter of each function, by the function's uid.
+- def:
+    name: first_param_types
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [found, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.decls.len] }
+          body:
+            - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+            - if:
+                condition: { "&&": [{ eq: [{ call: [regex.search, "^ParmVar$", rec.kind] }, 0] }, { eq: [rec.field_index, 0] }] }
+                then: [{ call: [found.set, "${rec.parent_uid}", rec.type_uid] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: found
+
+# int, double, bool and the other arithmetic types (not enums, pointers, classes).
+- def:
+    name: fundamental_type
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - decl: [canon_uid, i32, { call: [canonical_of, info, type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - if: { condition: { "||": [{ eq: [canon.is_builtin, false] }, canon.is_dependent] }, then: [{ return: false }] }
+      - if: { condition: { "||": [canon.is_integer, canon.is_bool] }, then: [{ return: true }] }
+      - return: { eq: [{ call: [regex.search, "^(float|double|long double|_Float16|__fp16|__bf16|__float128|__ibm128)$", canon.name] }, 0] }
+
+- def:
+    name: converting_constructor
+    args: [[info, RuleInformation], [firsts, map<string:i32>], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^CXXConstructor$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "||": [rec.is_explicit, rec.is_deleted, { eq: [rec.is_first_decl, false] }, { lt: [rec.param_count, 1] }, { gt: [rec.min_args, 1] }] }, then: [{ return: false }] }
+      - return: { call: [fundamental_type, info, { call: [firsts.get, "${rec.uid}", -1] }] }
+
+- class:
+    name: ExplicitSingleArgConstructorRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 287, "safety.cpp98-.15.3.explicit_single_arg_constructor", "Constructors callable with one fundamental-type argument are explicit", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [firsts, map<string:i32>, { call: [first_param_types, info] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [converting_constructor, info, firsts, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 287, "this constructor converts implicitly from a fundamental type; declare it explicit"] }]
+                  - set: [idx, { "+": [idx, 1] }]

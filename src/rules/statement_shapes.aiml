@@ -1,0 +1,91 @@
+# OC-0109 braced_bodies and OC-0258 null_statement_alone (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: the role of a statement under
+# its if, else, loop or switch, and for an empty statement the character before it
+# on its line.  Statements that start in a macro are the macro's.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The body of if, else, a loop or a switch that is not in braces.  `else if` is
+# fine; an attribute in front of a body is left alone.
+- def:
+    name: unbraced_body
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { "||": [{ eq: [rec.role.len, 0] }, rec.from_macro] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^(CompoundStmt|AttributedStmt)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^else$", rec.role] }, 0] }, { eq: [{ call: [regex.search, "^IfStmt$", rec.kind] }, 0] }] }, then: [{ return: false }] }
+      - return: true
+
+# An empty statement after other code on its line: `while (x);`, `a = 1;;`.  After
+# a label (`done: ;`) it is needed, after a name it ends a macro that expands to
+# nothing or to `[[fallthrough]]`; after `)` outside a body it ends a macro call
+# that expands to a block (`LOCKED(x) { } ;`).
+- def:
+    name: null_after_code
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { "||": [{ neq: [{ call: [regex.search, "^NullStmt$", rec.kind] }, 0] }, rec.from_macro, { eq: [rec.before.len, 0] }] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^:$", rec.before] }, 0] }, then: [{ return: false }] }
+      # after a name: a macro that expands to nothing or to an attribute (FALLTHROUGH;)
+      - if: { condition: { eq: [{ call: [regex.search, "^[A-Za-z0-9_]$", rec.before] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^\\)$", rec.before] }, 0] }, { eq: [rec.role.len, 0] }] }, then: [{ return: false }] }
+      - return: true
+
+- class:
+    name: BracedBodiesRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 109, "safety.c90-.4.4.braced_bodies", "Bodies of if, else, loops and switch are compound statements", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [unbraced_body, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 109, "this body is a single statement without braces; put it in { }"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NullStatementAloneRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 258, "style.cpp98-.4.4.null_statement_alone", "An empty statement stands on a line of its own", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [null_after_code, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 258, "this empty statement follows other code on its line; put it on a line of its own or remove it"] }]
+                  - set: [idx, { "+": [idx, 1] }]

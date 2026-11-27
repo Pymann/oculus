@@ -34,6 +34,9 @@
 - import: "src/rules/system_macros.aiml"
 - import: "src/rules/exceptions.aiml"
 - import: "src/rules/bits_pointers_switch.aiml"
+- import: "src/rules/literals.aiml"
+- import: "src/rules/statement_shapes.aiml"
+- import: "src/rules/constructors.aiml"
 
 - class:
     name: RuleRegistry
@@ -205,6 +208,18 @@
             - call: [<.rules.push, pointer_levels_rule]
             - decl: [boolean_switch, ptr<Rule>, { new: NoBooleanSwitchRule }]
             - call: [<.rules.push, boolean_switch]
+            - decl: [octal_literal_rule, ptr<Rule>, { new: NoOctalLiteralRule }]
+            - call: [<.rules.push, octal_literal_rule]
+            - decl: [lowercase_suffix_rule, ptr<Rule>, { new: NoLowercaseSuffixRule }]
+            - call: [<.rules.push, lowercase_suffix_rule]
+            - decl: [long_long_rule, ptr<Rule>, { new: LongLongSuffixRule }]
+            - call: [<.rules.push, long_long_rule]
+            - decl: [braced_bodies, ptr<Rule>, { new: BracedBodiesRule }]
+            - call: [<.rules.push, braced_bodies]
+            - decl: [null_alone, ptr<Rule>, { new: NullStatementAloneRule }]
+            - call: [<.rules.push, null_alone]
+            - decl: [explicit_ctor, ptr<Rule>, { new: ExplicitSingleArgConstructorRule }]
+            - call: [<.rules.push, explicit_ctor]
       - def:
           name: rule_count
           args: []

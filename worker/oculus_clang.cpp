@@ -144,6 +144,9 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("first_decl_static", decl.first_decl_static);
                     out.attribute("odr_definition", decl.odr_definition);
                     out.attribute("paren_declarator", decl.paren_declarator);
+                    out.attribute("is_explicit", decl.is_explicit);
+                    out.attribute("is_deleted", decl.is_deleted);
+                    out.attribute("min_args", decl.min_args);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);
@@ -172,6 +175,9 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("label_count", node.label_count);
                     out.attribute("clause_count", node.clause_count);
                     out.attribute("has_skipped_code", node.has_skipped_code);
+                    out.attribute("spelling", node.spelling);
+                    out.attribute("role", node.role);
+                    out.attribute("before", node.before);
                 });
             }
         });

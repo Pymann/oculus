@@ -177,6 +177,9 @@ struct DeclRec {
     bool first_decl_static = false; // the first declaration of the entity says static
     bool odr_definition = false;    // a definition with external linkage that each includer repeats
     bool paren_declarator = false;  // a local `T (name);`: the name alone in parentheses, no initializer
+    bool is_explicit = false;       // constructors and conversion functions: explicit (also explicit(true))
+    bool is_deleted = false;        // functions: = delete
+    int min_args = -1;              // functions: arguments a call needs (default arguments not counted)
     Pos type_pos;                   // where the written type starts (functions: the return type)
     Pos restrict_pos;               // the first restrict keyword of the declarator
     Pos declarator_pos;             // where the declarator starts: `*p` at the *, else the name
@@ -212,6 +215,9 @@ struct NodeRec {
     // switch, if and function bodies: the preprocessor skipped code inside it
     // (#if 0, an #ifdef that is not taken).  Another configuration may compile more.
     bool has_skipped_code = false;
+    std::string spelling;           // literals: the characters as written (spelling file)
+    std::string role;               // then | else | body: the sub-statement of its parent
+    std::string before;             // NullStmt: the character before it on its line, "" if none
 };
 
 // The tables of one TU, filled while the AST is alive.
@@ -561,6 +567,12 @@ public:
             rec.group_uid = known->second;
         }
         rec.odr_definition = odr_definition(decl);
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            rec.is_deleted = fn->isDeleted();
+            rec.min_args = static_cast<int>(fn->getMinRequiredArguments());
+            if (const auto *ctor = dyn_cast<CXXConstructorDecl>(fn)) rec.is_explicit = ctor->isExplicit();
+            if (const auto *conv = dyn_cast<CXXConversionDecl>(fn)) rec.is_explicit = conv->isExplicit();
+        }
         if (const auto *var = dyn_cast<VarDecl>(decl)) {
             rec.paren_declarator = paren_declarator(var);
         }
@@ -608,6 +620,63 @@ public:
         if (init == nullptr) return true;
         const auto *construct = dyn_cast<CXXConstructExpr>(init);
         return construct != nullptr && construct->getNumArgs() == 0 && construct->getParenOrBraceRange().isInvalid();
+    }
+
+    // The sub-statements of a statement, by the node they will get: an implicit
+    // cast is not recorded, so its operand stands for it.
+    void note_roles(const Stmt *stmt) {
+        auto mark = [&](const Stmt *body, const char *role) {
+            if (body == nullptr) return;
+            if (const auto *cast = dyn_cast<ImplicitCastExpr>(body)) body = cast->IgnoreImpCasts();
+            roles_[body] = role;
+        };
+        if (const auto *branch = dyn_cast<IfStmt>(stmt)) {
+            mark(branch->getThen(), "then");
+            mark(branch->getElse(), "else");
+        } else if (const auto *loop = dyn_cast<WhileStmt>(stmt)) {
+            mark(loop->getBody(), "body");
+        } else if (const auto *loop = dyn_cast<DoStmt>(stmt)) {
+            mark(loop->getBody(), "body");
+        } else if (const auto *loop = dyn_cast<ForStmt>(stmt)) {
+            mark(loop->getBody(), "body");
+        } else if (const auto *loop = dyn_cast<CXXForRangeStmt>(stmt)) {
+            mark(loop->getBody(), "body");
+        } else if (const auto *choice = dyn_cast<SwitchStmt>(stmt)) {
+            mark(choice->getBody(), "body");
+        }
+    }
+
+    // A literal as written: the characters from its first to its last token in the
+    // file that spells them; "" when they are not in one file (a token made by ##,
+    // pieces of a string from different macros).
+    std::string literal_spelling(const Stmt *stmt) const {
+        SourceLocation begin = sm_.getSpellingLoc(stmt->getBeginLoc());
+        SourceLocation end = sm_.getSpellingLoc(stmt->getEndLoc());
+        if (begin.isInvalid() || end.isInvalid() || sm_.isWrittenInScratchSpace(begin)) return "";
+        if (sm_.getFileID(begin) != sm_.getFileID(end)) return "";
+        unsigned first = sm_.getFileOffset(begin);
+        unsigned last = sm_.getFileOffset(end) + Lexer::MeasureTokenLength(end, sm_, context_.getLangOpts());
+        if (last < first || last - first > 4096) return "";
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(sm_.getFileID(begin), &invalid);
+        if (invalid || last > buffer.size()) return "";
+        return buffer.slice(first, last).str();
+    }
+
+    // The character before `loc` on its line (spaces skipped), "" at the line start.
+    std::string char_before(SourceLocation loc) const {
+        SourceLocation spelled = sm_.getSpellingLoc(loc);
+        if (spelled.isInvalid() || sm_.isWrittenInScratchSpace(spelled)) return "";
+        std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(spelled);
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(at.first, &invalid);
+        if (invalid) return "";
+        for (unsigned back = std::min<unsigned>(at.second, static_cast<unsigned>(buffer.size())); back > 0; --back) {
+            char ch = buffer[back - 1];
+            if (ch == '\n') return "";
+            if (ch != ' ' && ch != '\t' && ch != '\r') return std::string(1, ch);
+        }
+        return "";
     }
 
     // The leftmost token of the declarator: the first *, &, ( or the name.
@@ -982,6 +1051,14 @@ public:
         rec.in_system_header = spelled.isValid() && sm_.isInSystemHeader(spelled);
         rec.parent_uid = parent_uid;
         rec.function_uid = function_uid;
+        auto role = roles_.find(stmt);
+        if (role != roles_.end()) rec.role = role->second;
+        note_roles(stmt);
+        if (isa<IntegerLiteral>(stmt) || isa<FloatingLiteral>(stmt) || isa<CharacterLiteral>(stmt) ||
+            isa<StringLiteral>(stmt)) {
+            rec.spelling = literal_spelling(stmt);
+        }
+        if (isa<NullStmt>(stmt)) rec.before = char_before(stmt->getBeginLoc());
         for (const Stmt *child : stmt->children()) {
             if (child != nullptr) ++rec.child_count;
         }
@@ -1245,6 +1322,7 @@ private:
     std::map<const Type *, int> type_ids_;
     std::map<const NamedDecl *, int> decl_ids_;
     std::map<std::pair<const void *, unsigned>, int> groups_;
+    std::map<const Stmt *, std::string> roles_;
     std::map<const Stmt *, std::string> default_order_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> skipped_;
     std::set<std::string> call_site_macros_;

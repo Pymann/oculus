@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 10;
+constexpr int32_t OC_SHIM_ABI = 11;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -269,6 +269,9 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_first_decl_static: return flag(decl->first_decl_static);
     case ClangDeclNum_odr_definition: return flag(decl->odr_definition);
     case ClangDeclNum_paren_declarator: return flag(decl->paren_declarator);
+    case ClangDeclNum_is_explicit: return flag(decl->is_explicit);
+    case ClangDeclNum_is_deleted: return flag(decl->is_deleted);
+    case ClangDeclNum_min_args: return decl->min_args;
     default: return -1;
     }
 }
@@ -297,6 +300,9 @@ OC_EXPORT char *oc_node_text(void *unit, int32_t index, int32_t field) {
     switch (field) {
     case ClangNodeText_kind: return fresh(node->kind);
     case ClangNodeText_detail: return fresh(node->detail);
+    case ClangNodeText_spelling: return fresh(node->spelling);
+    case ClangNodeText_role: return fresh(node->role);
+    case ClangNodeText_before: return fresh(node->before);
     default: return fresh("");
     }
 }

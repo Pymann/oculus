@@ -1,0 +1,130 @@
+# OC-0042 no_octal_literal, OC-0044 no_lowercase_l_suffix and OC-0328
+# long_long_suffix (catalogue in Pymann/coding-rules).  Read from RuleInformation:
+# literal nodes with their spelling as written and their value; literals spelled
+# in a system header (a system macro) are not the user's.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# An octal integer literal (`010`, not `0`), or an octal escape other than a lone
+# `\0` in a character or string literal (raw strings have no escapes).
+- def:
+    name: octal_literal
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [rec.spelling.len, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^IntegerLiteral$", rec.kind] }, 0] }, then: [{ return: { eq: [{ call: [regex.search, "^0[0-7']+[uUlLzZ]*$", rec.spelling] }, 0] } }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^(CharacterLiteral|StringLiteral)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^(u8|u|U|L)?R\"", rec.spelling] }, 0] }, then: [{ return: false }] }
+      - return: { gte: [{ call: [regex.search, "(^|[^\\\\])(\\\\\\\\)*\\\\([1-7]|0[0-7])", rec.spelling] }, 0] }
+
+# A suffix with a lower-case letter: `100l`, `5u`, `1.5f`.  User-defined literal
+# suffixes (C++) start with an underscore and are not suffixes of this kind.
+- def:
+    name: lowercase_suffix
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { gte: [{ call: [regex.search, "_", rec.spelling] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^IntegerLiteral$", rec.kind] }, 0] }, then: [{ return: { gte: [{ call: [regex.search, "[0-9a-fA-F'][uUlLzZ]*[ulz][uUlLzZ]*$", rec.spelling] }, 0] } }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^FloatingLiteral$", rec.kind] }, 0] }, then: [{ return: { gte: [{ call: [regex.search, "[0-9.][fl]$", rec.spelling] }, 0] } }] }
+      - return: false
+
+# A single L (`5000000000L`) on a value that does not fit a 32-bit long (signed,
+# or unsigned with U): where long has 32 bits the literal is long long.
+- def:
+    name: long_long_by_size
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^IntegerLiteral$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "||": [{ gte: [{ call: [regex.search, "_", rec.spelling] }, 0] }, { lt: [{ call: [regex.search, "[0-9a-fA-F'][uU]?[lL][uU]?$", rec.spelling] }, 0] }] }, then: [{ return: false }] }
+      - decl: [value, i64, "${rec.detail}"]
+      - decl: [signed_limit, i64, "2147483647"]
+      - decl: [unsigned_limit, i64, "4294967295"]
+      - if: { condition: { gte: [{ call: [regex.search, "[uU]", rec.spelling] }, 0] }, then: [{ return: { gt: [value, unsigned_limit] } }] }
+      - return: { gt: [value, signed_limit] }
+
+- class:
+    name: NoOctalLiteralRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 42, "safety.c90-.3.3.no_octal_literal", "Integer literals are not written in octal", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [octal_literal, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 42, "this literal or escape is octal; write the value in decimal or hexadecimal"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoLowercaseSuffixRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 44, "style.c90-.3.3.no_lowercase_l_suffix", "Literal suffixes use upper-case L", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [lowercase_suffix, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 44, "the literal suffix is written in lower case; use upper case (L, U, F)"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: LongLongSuffixRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 328, "style.c99-.3.3.long_long_suffix", "A long long literal uses LL, not a single L", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [long_long_by_size, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 328, "this value needs long long where long has 32 bits; write the suffix LL"] }]
+                  - set: [idx, { "+": [idx, 1] }]

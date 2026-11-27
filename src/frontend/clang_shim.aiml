@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 10
+      - version: 11
 
 - enum:
     name: ClangUnitText
@@ -149,6 +149,9 @@
       - group_uid
       - odr_definition
       - paren_declarator
+      - is_explicit
+      - is_deleted
+      - min_args
 
 - enum:
     name: ClangNodeText
@@ -156,6 +159,9 @@
     values:
       - kind
       - detail
+      - spelling
+      - role
+      - before
 
 - enum:
     name: ClangNodeNum

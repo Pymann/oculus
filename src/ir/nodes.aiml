@@ -39,3 +39,10 @@
       # switch, if and function bodies: code inside was skipped by #if; another
       # configuration of the build may compile more of it
       - [has_skipped_code, bool, false]
+      # literals: the characters as written in the file that spells them ("" when
+      # the pieces come from different places or from ##)
+      - [spelling, string, ""]
+      # then | else | body: this node is that sub-statement of its parent
+      - [role, string, ""]
+      # NullStmt: the character before it on its line ("" if it starts the line)
+      - [before, string, ""]

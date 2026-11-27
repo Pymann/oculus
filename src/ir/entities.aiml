@@ -126,6 +126,12 @@
       - [odr_definition, bool, false]
       # a local `T (name);`: the name alone in parentheses, no initializer
       - [paren_declarator, bool, false]
+      # constructors and conversion functions declared explicit
+      - [is_explicit, bool, false]
+      # functions defined as deleted
+      - [is_deleted, bool, false]
+      # functions: the arguments a call needs, default arguments not counted
+      - [min_args, i32, -1]
       # where the written type starts (functions: the return type)
       - [type_pos, IrPos]
       # the first restrict keyword of the declarator (has_restrict)
