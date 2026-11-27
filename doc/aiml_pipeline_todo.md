@@ -39,7 +39,7 @@ Script by script:
 | `tests/run_catalog.sh` | Writes one `compile_commands.json` per bad and good case, runs oculus per rule, compares `file:line:col` against `expected.txt` | Yes. `io.list_dir`/`io.glob`, JSON written with `sys.serialize`, `sys.exe`, regex to pick findings, sort and compare. | Nothing known. |
 | `tools/sync_catalog_tests.sh` | Copies `catalog/tests/<id>/` from a coding-rules checkout, skipping not-implemented rules | Yes. `io.copy`, `io.remove_all`, `io.mkdir_all`, regex on `not_implemented.txt`. | Check whether `io.copy` copies directory trees; if not, a small recursive walk. |
 | `tools/run_real_projects.sh` | Clones yyjson, fmt, sqlite, imgui (and Zephyr) at pinned commits, configures with cmake/ninja, runs oculus, prints exit code, time and findings | Yes, as a driver of external programs (`git`, `cmake`, `ninja`, oculus) via `sys.exe`, `time.mono_ms` for the time. | git, cmake and ninja stay external tools; that is fine, no Python involved. spec/62 would later make it a cached matrix. |
-| `tools/bench_frontends.py` | Times oculus per project and frontend and samples the peak RSS of the whole process tree from `/proc` every 10 ms | Yes; feasibility confirmed (2026-11-27). | Nothing open. Not needed in CI. |
+| `tools/bench_frontends.py` | Times oculus per project and frontend and samples the peak RSS of the whole process tree from `/proc` every 10 ms | Yes; feasibility confirmed (2026-11-27), see the tech sheet `doc/tech_sheet/process_tree_peak_rss.md` in Pymann/aiml, branch `masterv2`. | Nothing open. Not needed in CI. |
 
 Order: first `gen_shim_header` (removes Python from CI), then `worker/build.sh`
 (removes the build shell script), then the test scripts. The real-project and
