@@ -201,6 +201,13 @@ struct DeclRec {
     Pos static_array_pos;
     bool copy_or_move = false;      // constructors: a copy or move constructor
     Pos pointer_pos;                // the * of a declarator whose written type is a pointer
+    std::string ref_qualifier;      // member functions: "", "&" or "&&"
+    std::string returns_kind;       // functions: "reference" or "pointer" when the return type is one
+    bool is_referenced = false;     // variables and parameters: named somewhere (Clang's isReferenced)
+    bool maybe_unused = false;      // [[maybe_unused]] or __attribute__((unused))
+    // parameters of a definition: the name is written in the body as a token
+    // (also in a macro argument, in code that #if skipped, in an inactive assert)
+    bool named_in_body = false;
     // alignment specifiers written on this declaration (alignas, _Alignas; not
     // inherited from an earlier one): how many, where the second one is, and
     // where an alignment that evaluates to zero is written
@@ -603,6 +610,12 @@ public:
             rec.is_deleted = fn->isDeleted();
             rec.is_defaulted = fn->isDefaulted();
             rec.min_args = static_cast<int>(fn->getMinRequiredArguments());
+            QualType result = fn->getReturnType();
+            rec.returns_kind = result.isNull() ? "" : result->isReferenceType() ? "reference" : result->isPointerType() ? "pointer" : "";
+            if (const auto *method = dyn_cast<CXXMethodDecl>(fn)) {
+                rec.ref_qualifier = method->getRefQualifier() == RQ_LValue ? "&"
+                                  : method->getRefQualifier() == RQ_RValue ? "&&" : "";
+            }
             if (const auto *ctor = dyn_cast<CXXConstructorDecl>(fn)) {
                 rec.is_explicit = ctor->isExplicit();
                 rec.copy_or_move = ctor->isCopyOrMoveConstructor();
@@ -616,6 +629,15 @@ public:
             rec.paren_declarator = paren_declarator(var);
         }
         note_alignment(decl, rec);
+        rec.maybe_unused = decl->hasAttr<UnusedAttr>();
+        if (isa<VarDecl>(decl)) rec.is_referenced = decl->isReferenced();
+        if (const auto *param = dyn_cast<ParmVarDecl>(decl)) {
+            const auto *owner = dyn_cast_or_null<FunctionDecl>(param->getDeclContext());
+            if (owner != nullptr && owner->doesThisDeclarationHaveABody() && owner->getBody() != nullptr &&
+                !param->getName().empty()) {
+                rec.named_in_body = body_names(owner).count(param->getName().str()) > 0;
+            }
+        }
     }
 
     // The alignas specifiers written on the declaration, in source order.
@@ -1256,6 +1278,10 @@ public:
             rec.detail = member->isArrow() ? "->" : ".";
         } else if (const auto *literal = dyn_cast<IntegerLiteral>(stmt)) {
             rec.detail = llvm::toString(literal->getValue(), 10, false);
+        } else if (const auto *fresh = dyn_cast<CXXNewExpr>(stmt)) {
+            rec.detail = placement_new(fresh) ? "placement" : "";
+        } else if (const auto *member_call = dyn_cast<CXXMemberCallExpr>(stmt)) {
+            rec.detail = member_call->getMethodDecl() != nullptr && isa<CXXDestructorDecl>(member_call->getMethodDecl()) ? "destructor" : "";
         } else if (const auto *op_call = dyn_cast<CXXOperatorCallExpr>(stmt)) {
             rec.detail = getOperatorSpelling(op_call->getOperator());
         } else if (const auto *branch = dyn_cast<IfStmt>(stmt)) {
@@ -1289,6 +1315,13 @@ public:
             auto known = default_order_.find(stmt);
             rec.detail = known != default_order_.end() ? known->second : "";
         }
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            const auto *callee = dyn_cast_or_null<FunctionDecl>(call->getCalleeDecl());
+            if (callee != nullptr && !isa<CXXOperatorCallExpr>(call)) {
+                OverloadedOperatorKind op = callee->getOverloadedOperator();
+                if (op == OO_New || op == OO_Delete || op == OO_Array_New || op == OO_Array_Delete) rec.detail = "operator_new_delete";
+            }
+        }
         if (const auto *expr = dyn_cast<Expr>(stmt)) {
             rec.type_uid = type_of(expr->getType());
             rec.is_dependent = expr->isTypeDependent() || expr->isValueDependent();
@@ -1297,6 +1330,20 @@ public:
             rec.detail = generic->getNumAssocs() == 1 && generic->getAssociation(0).getTypeSourceInfo() == nullptr ? "default_only" : "";
         }
         nodes.push_back(rec);
+        // A smart pointer made from a raw pointer: a marker node at that argument
+        // (OC-0371 no_raw_smart_pointer_ctor).
+        if (const Expr *raw = raw_smart_pointer_arg(stmt)) {
+            NodeRec arg;
+            arg.uid = static_cast<int>(nodes.size());
+            arg.kind = "RawSmartPointer";
+            arg.pos = src_pos_of(raw->getBeginLoc());
+            arg.from_macro = raw->getBeginLoc().isMacroID();
+            arg.in_system_header = rec.in_system_header;
+            arg.parent_uid = rec.uid;
+            arg.function_uid = function_uid;
+            nodes.push_back(arg);
+            return rec.uid;
+        }
         // The range of a range-based for: a marker node at its start that counts the
         // function calls in it (OC-0345 simple_range_initializer).
         if (const auto *loop = dyn_cast<CXXForRangeStmt>(stmt)) {
@@ -1351,6 +1398,42 @@ public:
             }
         }
         return rec.uid;
+    }
+
+    // Placement new other than the non-allocating nothrow form.
+    static bool placement_new(const CXXNewExpr *fresh) {
+        if (fresh->getNumPlacementArgs() == 0) return false;
+        if (fresh->getNumPlacementArgs() == 1) {
+            QualType arg = fresh->getPlacementArg(0)->IgnoreParenImpCasts()->getType();
+            const CXXRecordDecl *record = arg.isNull() ? nullptr : arg->getAsCXXRecordDecl();
+            if (record != nullptr && record->getIdentifier() != nullptr && record->getName() == "nothrow_t") return false;
+        }
+        return true;
+    }
+
+    static bool smart_pointer_class(const CXXRecordDecl *record) {
+        if (record == nullptr || record->getIdentifier() == nullptr) return false;
+        if (record->getName() != "shared_ptr" && record->getName() != "unique_ptr") return false;
+        return record->isInStdNamespace();
+    }
+
+    // The raw pointer argument of a std::shared_ptr or std::unique_ptr constructor
+    // or reset call, if there is one.
+    static const Expr *raw_smart_pointer_arg(const Stmt *stmt) {
+        const Expr *arg = nullptr;
+        if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
+            if (make->getNumArgs() >= 1 && smart_pointer_class(make->getConstructor()->getParent())) arg = make->getArg(0);
+        } else if (const auto *call = dyn_cast<CXXMemberCallExpr>(stmt)) {
+            const CXXMethodDecl *method = call->getMethodDecl();
+            if (method != nullptr && method->getIdentifier() != nullptr && method->getName() == "reset" && call->getNumArgs() >= 1 &&
+                smart_pointer_class(method->getParent())) {
+                arg = call->getArg(0);
+            }
+        }
+        if (arg == nullptr || isa<CXXDefaultArgExpr>(arg)) return nullptr;
+        const Expr *bare = arg->IgnoreParenImpCasts();
+        if (bare->isTypeDependent() || !bare->getType()->isPointerType()) return nullptr;
+        return bare;
     }
 
     // The function calls written in an expression: calls of functions, members and
@@ -1534,6 +1617,34 @@ private:
     // The type specifiers as written: is the declared type spelled as a builtin
     // type, and was `signed` or `unsigned` written?  Plain `int` and `signed int`
     // are the same type, only the spelling tells them apart.
+    // The identifiers written in a function body, from the raw tokens of the file
+    // between its braces (macros not expanded, skipped code included).
+    const std::set<std::string> &body_names(const FunctionDecl *fn) {
+        auto known = body_names_.find(fn);
+        if (known != body_names_.end()) return known->second;
+        std::set<std::string> &names = body_names_[fn];
+        const Stmt *body = fn->getBody();
+        SourceLocation open = sm_.getExpansionLoc(body->getBeginLoc());
+        SourceLocation close = sm_.getExpansionRange(body->getEndLoc()).getEnd();
+        if (open.isInvalid() || close.isInvalid()) return names;
+        std::pair<FileID, unsigned> first = sm_.getDecomposedLoc(open);
+        std::pair<FileID, unsigned> last = sm_.getDecomposedLoc(close);
+        if (first.first != last.first || first.second > last.second) return names;
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(first.first, &invalid);
+        if (invalid) return names;
+        Lexer lexer(sm_.getLocForStartOfFile(first.first), context_.getLangOpts(), buffer.begin(),
+                    buffer.begin() + first.second, buffer.end());
+        Token tok;
+        while (true) {
+            lexer.LexFromRawLexer(tok);
+            if (tok.is(tok::eof)) break;
+            if (sm_.getFileOffset(tok.getLocation()) > last.second) break;
+            if (tok.is(tok::raw_identifier)) names.insert(tok.getRawIdentifier().str());
+        }
+        return names;
+    }
+
     // The * of the outermost pointer of the written type.
     void note_pointer(TypeLoc loc, DeclRec &rec) {
         for (;;) {
@@ -1602,6 +1713,7 @@ private:
     std::map<const Type *, int> type_ids_;
     std::map<const NamedDecl *, int> decl_ids_;
     std::map<std::pair<const void *, unsigned>, int> groups_;
+    std::map<const FunctionDecl *, std::set<std::string>> body_names_;
     std::map<const Stmt *, std::string> roles_;
     std::map<const Stmt *, std::string> default_order_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> skipped_;

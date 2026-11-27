@@ -1,0 +1,77 @@
+# OC-0016 no_unused_parameter (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation: parameters that are never named, the function they belong to,
+# and the uses of that function.  A function another unit could take the address
+# of may have a signature fixed by a callback type, so only functions with internal
+# linkage whose address is not taken in the unit are checked; virtual functions
+# are left out (an override may use the parameter).  A name written in the body
+# (a macro argument, code skipped by #if, an inactive assert) counts as used.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Functions (by uid) that are named other than as the callee of a call.
+- def:
+    name: address_taken
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [found, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.nodes.len] }
+          body:
+            - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+            - if:
+                condition: { "&&": [{ eq: [{ call: [regex.search, "^(DeclRefExpr|MemberExpr)$", rec.kind] }, 0] }, { gte: [rec.ref_uid, 0] }] }
+                then:
+                  - decl: [callee, bool, false]
+                  - if:
+                      condition: { "&&": [{ call: [info_has_node, info, rec.parent_uid] }, { eq: [idx, { "+": [rec.parent_uid, 1] }] }] }
+                      then:
+                        - decl: [upper, ref<IrNode>, { at: [info.nodes, rec.parent_uid] }]
+                        - set: [callee, { eq: [{ call: [regex.search, "^(CallExpr|CXXMemberCallExpr)$", upper.kind] }, 0] }]
+                  - if: { condition: { eq: [callee, false] }, then: [{ call: [found.set, "${rec.ref_uid}", 1] }] }
+            - set: [idx, { "+": [idx, 1] }]
+      - return: found
+
+- def:
+    name: checked_function
+    args: [[info, RuleInformation], [taken, map<string:i32>], [fn_uid, i32]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_decl, info, fn_uid] }, false] }, then: [{ return: false }] }
+      - decl: [owner, ref<IrDecl>, { at: [info.decls, fn_uid] }]
+      - if: { condition: { eq: [{ call: [user_decl, owner] }, false] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^(Function|CXXMethod|CXXConstructor)$", owner.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "||": [{ eq: [owner.is_definition, false] }, { eq: [owner.internal_linkage, false] }, owner.virtual_written, { gt: [owner.overrides, 0] }, owner.is_main] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [taken.has, "${fn_uid}"] }, false] }
+
+- class:
+    name: NoUnusedParameterRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 16, "style.c90-.2.3.no_unused_parameter", "Every function parameter is read", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [taken, map<string:i32>, { call: [address_taken, info] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^ParmVar$", rec.kind] }, 0] }, { gt: [rec.name.len, 0] }, { eq: [rec.is_referenced, false] }, { eq: [rec.maybe_unused, false] }, { eq: [rec.named_in_body, false] }, { call: [user_decl, rec] }, { call: [checked_function, info, taken, rec.parent_uid] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 16, "parameter '${rec.name}' is never used; remove it, leave it unnamed or cast it to void"] }]
+                  - set: [idx, { "+": [idx, 1] }]

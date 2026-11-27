@@ -161,3 +161,13 @@
       - [zero_align_pos, IrPos]
       # the * of the outermost pointer of the written type
       - [pointer_pos, IrPos]
+      # member functions: "", "&" or "&&"; functions: "reference" or "pointer"
+      # when the return type is one; variables and parameters: named somewhere; marked
+      # [[maybe_unused]] or __attribute__((unused))
+      - [ref_qualifier, string, ""]
+      - [returns_kind, string, ""]
+      - [is_referenced, bool, false]
+      - [maybe_unused, bool, false]
+      # parameters of a definition: the name is written in the body as a token
+      # (also in a macro argument, skipped code, an inactive assert)
+      - [named_in_body, bool, false]

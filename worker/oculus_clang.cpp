@@ -159,6 +159,11 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     write_pos(out, "second_align_pos", decl.second_align_pos);
                     write_pos(out, "zero_align_pos", decl.zero_align_pos);
                     write_pos(out, "pointer_pos", decl.pointer_pos);
+                    out.attribute("ref_qualifier", decl.ref_qualifier);
+                    out.attribute("returns_kind", decl.returns_kind);
+                    out.attribute("is_referenced", decl.is_referenced);
+                    out.attribute("maybe_unused", decl.maybe_unused);
+                    out.attribute("named_in_body", decl.named_in_body);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);

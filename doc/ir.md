@@ -522,6 +522,12 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
 - `IrDecl.pointer_pos` (the * of a written pointer declarator); `IrNode.side_effect` for sizeof and alignof; a range-based for gets a marker
   node `RangeInitCalls` at its range expression, the detail being the number of
   function calls written there.
+- `IrDecl.ref_qualifier`, `returns_kind`, `is_referenced`, `maybe_unused`,
+  `named_in_body` (a parameter's name among the raw tokens of the body);
+  `IrNode.detail` `placement` (placement new other than nothrow), `destructor`
+  (an explicit destructor call), `operator_new_delete` (operator new or delete
+  called as a function); a marker node `RawSmartPointer` at the raw pointer
+  argument of a std::shared_ptr or std::unique_ptr constructor or reset.
 
 ## 12. Notes on the AIML side
 

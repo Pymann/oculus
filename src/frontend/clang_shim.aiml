@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 16
+      - version: 18
 
 - enum:
     name: ClangUnitText
@@ -102,6 +102,8 @@
       - tag
       - storage
       - target
+      - ref_qualifier
+      - returns_kind
 
 - enum:
     name: ClangDeclNum
@@ -158,6 +160,9 @@
       - array_param
       - copy_or_move
       - align_count
+      - is_referenced
+      - maybe_unused
+      - named_in_body
 
 - enum:
     name: ClangNodeText

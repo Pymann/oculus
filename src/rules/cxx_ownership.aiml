@@ -1,0 +1,185 @@
+# OC-0336 ref_qualified_self_reference, OC-0366 no_advanced_memory_management and
+# OC-0371 no_raw_smart_pointer_ctor (catalogue in Pymann/coding-rules), C++.  Read
+# from RuleInformation: what member functions return, placement new, explicit
+# destructor calls, operator new and delete called as functions, the C allocation
+# functions, and the RawSmartPointer marker.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/library_cxx.aiml"
+- import: "src/rules/expression_shapes.aiml"
+
+# Node `node_uid` (a MemberExpr) names a data member of the object itself:
+# this->member, or a member of such a member reached with `.`.
+- def:
+    name: member_of_this
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: bool
+    body:
+      - decl: [cur, i32, node_uid]
+      - decl: [steps, i32, 0]
+      - while:
+          condition: { "&&": [{ call: [info_has_node, info, cur] }, { lt: [steps, 16] }] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { neq: [{ call: [regex.search, "^MemberExpr$", here.kind] }, 0] }, then: [{ return: false }] }
+            - if: { condition: { eq: [{ call: [info_has_decl, info, here.ref_uid] }, false] }, then: [{ return: false }] }
+            - decl: [named, ref<IrDecl>, { at: [info.decls, here.ref_uid] }]
+            - if: { condition: { neq: [{ call: [regex.search, "^Field$", named.kind] }, 0] }, then: [{ return: false }] }
+            - if: { condition: { call: [canonical_kind_ref, info, named.type_uid] }, then: [{ return: false }] }
+            - decl: [base, i32, { call: [bare_operand, info, cur] }]
+            - if: { condition: { eq: [base, cur] }, then: [{ return: false }] }
+            - decl: [below, ref<IrNode>, { at: [info.nodes, base] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^CXXThisExpr$", below.kind] }, 0] }, then: [{ return: true }] }
+            - if: { condition: { neq: [{ call: [regex.search, "^\\.$", below.detail] }, 0] }, then: [{ return: false }] }
+            - set: [cur, base]
+            - set: [steps, { "+": [steps, 1] }]
+      - return: false
+
+# A reference type (a member of reference type refers to another object).
+- def:
+    name: canonical_kind_ref
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - decl: [canon_uid, i32, { call: [canonical_of, info, type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: { gte: [{ call: [regex.search, "Reference$", canon.kind] }, 0] }
+
+# The return statement `node_uid` hands out the object or one of its members:
+# *this or a member for a reference result, this or &member for a pointer result.
+- def:
+    name: returns_self
+    args: [[info, RuleInformation], [node_uid, i32], [returns, string]]
+    return: bool
+    body:
+      - decl: [value, i32, { call: [bare_operand, info, node_uid] }]
+      - if: { condition: { eq: [value, node_uid] }, then: [{ return: false }] }
+      - decl: [rec, ref<IrNode>, { at: [info.nodes, value] }]
+      - decl: [inner, i32, { call: [bare_operand, info, value] }]
+      - decl: [below, ref<IrNode>, { at: [info.nodes, inner] }]
+      - if:
+          condition: { eq: [{ call: [regex.search, "^reference$", returns] }, 0] }
+          then:
+            - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^UnaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^\\*$", rec.detail] }, 0] }, { neq: [inner, value] }, { eq: [{ call: [regex.search, "^CXXThisExpr$", below.kind] }, 0] }] }, then: [{ return: true }] }
+            - return: { call: [member_of_this, info, value] }
+      - if: { condition: { eq: [{ call: [regex.search, "^CXXThisExpr$", rec.kind] }, 0] }, then: [{ return: true }] }
+      - return: { "&&": [{ eq: [{ call: [regex.search, "^UnaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^&$", rec.detail] }, 0] }, { neq: [inner, value] }, { call: [member_of_this, info, inner] }] }
+
+# The return statement is the function's own, not one of a lambda in it.
+- def:
+    name: outside_lambda
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: bool
+    body:
+      - decl: [cur, i32, node_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^LambdaExpr$", here.kind] }, 0] }, then: [{ return: false }] }
+            - set: [cur, here.parent_uid]
+      - return: true
+
+- class:
+    name: RefQualifiedSelfReferenceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 336, "safety.cpp11-.15.1.ref_qualified_self_reference", "Member functions returning a reference to their object are ref-qualified", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [seen, map<string:i32>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^ReturnStmt$", rec.kind] }, 0] }, { call: [info_has_decl, info, rec.function_uid] }, { eq: [{ call: [seen.has, "${rec.function_uid}"] }, false] }] }
+                      then:
+                        - decl: [method, ref<IrDecl>, { at: [info.decls, rec.function_uid] }]
+                        - decl: [candidate, bool, { "&&": [{ call: [user_decl, method] }, { eq: [{ call: [regex.search, "^CXXMethod$", method.kind] }, 0] }, { eq: [method.ref_qualifier.len, 0] }, { gt: [method.returns_kind.len, 0] }] }]
+                        - if: { condition: { "||": [{ eq: [{ call: [regex.search, "^static$", method.storage] }, 0] }, { eq: [{ call: [regex.search, "^operator([-+*/%^&|]|<<|>>)?=$", method.name] }, 0] }] }, then: [{ set: [candidate, false] }] }
+                        - if:
+                            condition: { "&&": [candidate, { call: [outside_lambda, info, idx] }, { call: [returns_self, info, idx, method.returns_kind] }] }
+                            then:
+                              - call: [seen.set, "${rec.function_uid}", 1]
+                              - call: [out.push, { call: [pos_finding, unit, method.name_pos, 336, "'${method.name}' returns a ${method.returns_kind} into its own object; add the ref-qualifier & so that it cannot be called on a temporary"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoAdvancedMemoryManagementRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 366, "safety.cpp98-.14.1.no_advanced_memory_management", "Placement new, explicit destructor calls and raw allocation functions are not used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [words, map<string:string>, { placement: "placement new constructs an object in storage it does not own", destructor: "the destructor is called by name; let the object's owner end its lifetime", operator_new_delete: "operator new or delete is called as a function; use a container or a smart pointer" }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { call: [user_node, rec] }
+                      then:
+                        - decl: [why, string, ""]
+                        - if: { condition: { eq: [{ call: [regex.search, "^(CXXNewExpr|CXXMemberCallExpr|CallExpr)$", rec.kind] }, 0] }, then: [{ set: [why, { call: [words.get, rec.detail, ""] }] }] }
+                        - if: { condition: { eq: [{ call: [regex.search, "^CXXPseudoDestructorExpr$", rec.kind] }, 0] }, then: [{ set: [why, { call: [words.get, "destructor", ""] }] }] }
+                        - if:
+                            condition: { "&&": [{ call: [cxx_only_call, info, rec] }, { call: [library_function, info, rec, "^(malloc|calloc|realloc|aligned_alloc|free)$", "^$"] }] }
+                            then:
+                              - set: [why, { call: [library_message, info, rec, "use new and delete through a container or a smart pointer"] }]
+                        - if:
+                            condition: { gt: [why.len, 0] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 366, why] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoRawSmartPointerCtorRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 371, "safety.cpp11-.14.1.no_raw_smart_pointer_ctor", "shared_ptr and unique_ptr are not constructed from raw pointers", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^RawSmartPointer$", rec.kind] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 371, "a smart pointer takes ownership of a raw pointer here; use std::make_shared or std::make_unique"] }]
+                  - set: [idx, { "+": [idx, 1] }]

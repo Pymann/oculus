@@ -181,6 +181,11 @@
       - set: [rec.second_align_pos, { call: [shim_pos, unit, index, ClangPosWhich.second_align_pos] }]
       - set: [rec.zero_align_pos, { call: [shim_pos, unit, index, ClangPosWhich.zero_align_pos] }]
       - set: [rec.pointer_pos, { call: [shim_pos, unit, index, ClangPosWhich.pointer_pos] }]
+      - set: [rec.ref_qualifier, { call: [oc_decl_text, unit, index, ClangDeclText.ref_qualifier] }]
+      - set: [rec.returns_kind, { call: [oc_decl_text, unit, index, ClangDeclText.returns_kind] }]
+      - set: [rec.is_referenced, { call: [decl_flag, unit, index, ClangDeclNum.is_referenced] }]
+      - set: [rec.maybe_unused, { call: [decl_flag, unit, index, ClangDeclNum.maybe_unused] }]
+      - set: [rec.named_in_body, { call: [decl_flag, unit, index, ClangDeclNum.named_in_body] }]
       - return: rec
 
 - def:

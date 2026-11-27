@@ -1,0 +1,2 @@
+bad.cpp:7:18
+bad.cpp:8:5
