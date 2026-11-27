@@ -32,7 +32,7 @@
                 body:
                   - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^partial$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_node, rec] }, { gte: [{ call: [regex.search, "(^|,)partial(,|$)", rec.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 62, "the initializer gives fewer values than the array has elements; give all of them, or use {0}"] }]
                   - set: [idx, { "+": [idx, 1] }]
@@ -59,7 +59,7 @@
                 body:
                   - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^override$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_node, rec] }, { gte: [{ call: [regex.search, "(^|,)override(,|$)", rec.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 63, "this designator initialises an element that an earlier one in the list already initialises"] }]
                   - set: [idx, { "+": [idx, 1] }]
@@ -86,7 +86,7 @@
                 body:
                   - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^undesignated$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_node, rec] }, { gte: [{ call: [regex.search, "(^|,)undesignated(,|$)", rec.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 187, "positional value in a list with chained designators; give it a designator"] }]
                   - set: [idx, { "+": [idx, 1] }]

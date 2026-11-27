@@ -29,6 +29,7 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   compile is reported as such and is not checked. (0386 is listed in
   catalog/not_implemented.txt; 0329 is not listed yet.)
 - **OC-0189** (_Atomic void): only a compile-error example. Same reason.
+- **OC-0084** no_pointer_float_cast: only a compile-error example. Same reason.
 - **OC-0142** include_form: an `#include` of anything but `<name>` or `"name"`
   does not compile either.
 
@@ -78,6 +79,16 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0330**: only `T name();` with nothing between the parentheses. A
   parenthesised declarator `T (name);` and the vexing parse with arguments
   (`Widget w(Timer());`) are not reported yet.
+- **OC-0078**, **OC-0079**, **OC-0080**, **OC-0081**, **OC-0083**, **OC-0085**:
+  explicit casts only (implicit conversions between these pointer types do not
+  compile cleanly anyway). A chain such as `(int)(long)p` is reported once, at the
+  outermost cast. OC-0080 does not look through common initial sequences:
+  `(unixFile *)pFile` in sqlite is reported.
+- **OC-0081** and **OC-0082**: the configuration keys of the rule text do not
+  exist yet. In C, `uintptr_t` casts are reported, and there is no hardware-access
+  header. In C++ only `uintptr_t` is allowed. For OC-0082 no function is marked as
+  a callback, and only `malloc`, `calloc` and `realloc` are exempt, not wrappers
+  such as `sqlite3_malloc`.
 - **OC-0369** constant assert: only arguments made of literals, `true`, `false`,
   `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen. An
   assert written in a macro body is reported once, at the definition.

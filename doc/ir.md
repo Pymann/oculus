@@ -537,6 +537,13 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   condition that is a comparison with a floating variable which the increment or
   the body steps (`++`, `--`, compound assignment, `v = ...v...`), when the
   variable is not declared in the for header.
+  A node's shape is a comma-separated list. Explicit casts (a chain of them, at
+  the outermost cast) carry `function_pointer_cast`, `incomplete_cast` (C),
+  `object_cast` (not to character types or `std::byte`, not to a leading member),
+  `pointer_integer` (C++: `uintptr_t` allowed), `void_arithmetic` (C),
+  `void_to_object` (C, not of malloc, calloc or realloc) and `drop_qualifier`.
+  An implicit void-to-object pointer conversion in C marks its operand
+  `void_to_object`. Null pointer constants carry none of these.
   `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
   the for header, `exposed_data` on a named public or protected field of a C++
   class that is not an aggregate and has a user-provided constructor or

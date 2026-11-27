@@ -95,7 +95,7 @@
     body:
       - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^BinaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(<|>|<=|>=|==|!=|&&|\\|\\|)$", rec.detail] }, 0] }] }, then: [{ return: true }] }
       - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^UnaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^!$", rec.detail] }, 0] }] }, then: [{ return: true }] }
-      - if: { condition: { eq: [{ call: [regex.search, "(Expr|Operator|Literal)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { gte: [{ call: [regex.search, "(Expr|Operator|Literal)$", rec.kind] }, 0] }, then: [{ return: false }] }
       - decl: [canon_uid, i32, { call: [canonical_of, info, rec.type_uid] }]
       - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
       - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]

@@ -1,0 +1,26 @@
+# OC-0085 keep_cv_qualifiers, catalogue in Pymann/coding-rules.  Read from
+# IrNode.shape drop_qualifier (doc/ir.md): an explicit cast whose pointed-to or
+# referenced type loses const or volatile (top-level qualifiers of the pointer
+# itself do not count).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: KeepQualifiersRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 85, "safety.c90-.8.3.keep_cv_qualifiers", "A cast keeps the const and volatile qualifiers of the pointed-to type", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "drop_qualifier", 85, "this cast removes const or volatile from the type it points to; writing through the result is undefined", out]

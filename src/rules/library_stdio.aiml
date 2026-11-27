@@ -75,7 +75,7 @@
           condition: { "&&": [{ call: [info_has_type, info, cursor] }, { lt: [steps, 32] }] }
           body:
             - decl: [step, ref<IrType>, { at: [info.types, cursor] }]
-            - if: { condition: { eq: [{ call: [regex.search, "(^|::)(va_list|__gnuc_va_list|__builtin_va_list)$", step.name] }, 0] }, then: [{ return: true }] }
+            - if: { condition: { gte: [{ call: [regex.search, "(^|::)(va_list|__gnuc_va_list|__builtin_va_list)$", step.name] }, 0] }, then: [{ return: true }] }
             - set: [cursor, step.sugar_uid]
             - set: [steps, { "+": [steps, 1] }]
       - return: false

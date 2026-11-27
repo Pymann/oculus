@@ -1,0 +1,60 @@
+# OC-0078 no_function_pointer_cast, OC-0079 no_incomplete_pointer_cast (C) and
+# OC-0080 no_object_pointer_cast, catalogue in Pymann/coding-rules.  Read from
+# IrNode.shape of explicit casts (doc/ir.md): function_pointer_cast,
+# incomplete_cast, object_cast.  A chain of casts is reported at its outermost cast.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: FunctionPointerCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 78, "safety.c90-.8.3.no_function_pointer_cast", "Function pointers are not converted to or from any other type", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "function_pointer_cast", 78, "cast to or from a function pointer type; calling through a wrongly typed function pointer is undefined", out]
+
+- class:
+    name: IncompletePointerCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 79, "safety.c90-.8.3.no_incomplete_pointer_cast", "Pointers to incomplete types are not converted to other types", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "incomplete_cast", 79, "cast between a pointer to an incomplete type and another pointer type; keep opaque handles opaque", out]
+
+- class:
+    name: ObjectPointerCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 80, "safety.c90-.8.3.no_object_pointer_cast", "A pointer to one object type is not converted to a pointer to another", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "object_cast", 80, "cast between pointers to different object types breaks aliasing and alignment; copy with memcpy instead", out]

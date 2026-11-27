@@ -31,7 +31,7 @@
                 body:
                   - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^float_loop_counter$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_decl, rec] }, { gte: [{ call: [regex.search, "(^|,)float_loop_counter(,|$)", rec.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 100, "loop counter '${rec.name}' has a floating type; count with an integer and compute the value from it"] }]
                   - set: [idx, { "+": [idx, 1] }]
@@ -41,7 +41,7 @@
                 body:
                   - decl: [node, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_node, node] }, { eq: [{ call: [regex.search, "^float_loop_counter$", node.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_node, node] }, { gte: [{ call: [regex.search, "(^|,)float_loop_counter(,|$)", node.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, node.pos] }, 100, "this loop is counted by a floating variable; count with an integer and compute the value from it"] }]
                   - set: [idx, { "+": [idx, 1] }]
@@ -68,7 +68,7 @@
                 body:
                   - decl: [node, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_node, node] }, { eq: [{ call: [regex.search, "^array_decay$", node.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_node, node] }, { gte: [{ call: [regex.search, "(^|,)array_decay(,|$)", node.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, node.pos] }, 255, "this array decays to a pointer and loses its size; pass a std::span, a std::array or a reference to the array"] }]
                   - set: [idx, { "+": [idx, 1] }]

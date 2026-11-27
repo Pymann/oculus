@@ -32,7 +32,7 @@
                 body:
                   - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^exposed_data$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_decl, rec] }, { gte: [{ call: [regex.search, "(^|,)exposed_data(,|$)", rec.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 284, "data member '${rec.name}' of a class with invariants is not private; make it private and give access through member functions"] }]
                   - set: [idx, { "+": [idx, 1] }]
@@ -59,7 +59,7 @@
                 body:
                   - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^vexing_function$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_decl, rec] }, { gte: [{ call: [regex.search, "(^|,)vexing_function(,|$)", rec.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 330, "'${rec.name}' declares a function, not an object; write ${rec.name}{} or remove the parentheses"] }]
                   - set: [idx, { "+": [idx, 1] }]
@@ -86,7 +86,7 @@
                 body:
                   - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Function|Var)$", rec.kind] }, 0] }, rec.is_definition, rec.external_linkage, rec.is_first_decl, { eq: [rec.is_main, false] }, { eq: [rec.is_inline, false] }, { eq: [rec.is_local, false] }, { neq: [{ call: [regex.search, "^pasted_name$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Function|Var)$", rec.kind] }, 0] }, rec.is_definition, rec.external_linkage, rec.is_first_decl, { eq: [rec.is_main, false] }, { eq: [rec.is_inline, false] }, { eq: [rec.is_local, false] }, { lt: [{ call: [regex.search, "(^|,)pasted_name(,|$)", rec.shape] }, 0] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 49, "'${rec.name}' has external linkage and no declaration before this definition; declare it in the module's header, or make it static"] }]
                   - set: [idx, { "+": [idx, 1] }]

@@ -66,6 +66,9 @@
 - import: "src/rules/override_shapes.aiml"
 - import: "src/rules/loop_counters.aiml"
 - import: "src/rules/class_data.aiml"
+- import: "src/rules/pointer_casts.aiml"
+- import: "src/rules/pointer_conversions.aiml"
+- import: "src/rules/qualifier_casts.aiml"
 
 - class:
     name: RuleRegistry
@@ -399,6 +402,20 @@
             - call: [<.rules.push, vexing_decl]
             - decl: [declared_first, ptr<Rule>, { new: DeclarationBeforeDefinitionRule }]
             - call: [<.rules.push, declared_first]
+            - decl: [fn_cast, ptr<Rule>, { new: FunctionPointerCastRule }]
+            - call: [<.rules.push, fn_cast]
+            - decl: [incomplete_cast, ptr<Rule>, { new: IncompletePointerCastRule }]
+            - call: [<.rules.push, incomplete_cast]
+            - decl: [object_cast, ptr<Rule>, { new: ObjectPointerCastRule }]
+            - call: [<.rules.push, object_cast]
+            - decl: [pointer_int, ptr<Rule>, { new: PointerIntegerCastRule }]
+            - call: [<.rules.push, pointer_int]
+            - decl: [void_object, ptr<Rule>, { new: VoidPointerObjectRule }]
+            - call: [<.rules.push, void_object]
+            - decl: [void_arith, ptr<Rule>, { new: VoidPointerArithmeticRule }]
+            - call: [<.rules.push, void_arith]
+            - decl: [keep_cv, ptr<Rule>, { new: KeepQualifiersRule }]
+            - call: [<.rules.push, keep_cv]
       - def:
           name: rule_count
           args: []

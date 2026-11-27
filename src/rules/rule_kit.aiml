@@ -163,3 +163,22 @@
       - decl: [declared, ref<IrType>, { at: [info.types, type_uid] }]
       - if: { condition: { eq: [{ call: [info_has_type, info, declared.canonical_uid] }, false] }, then: [{ return: -1 }] }
       - return: declared.canonical_uid
+
+# A finding for every node of the user's whose shape list holds `shape`.
+- def:
+    name: node_shape_findings
+    args: [[unit, IrUnit], [shape, string], [rule_id, i32], [message, string], [out, list<Finding>]]
+    return: void
+    body:
+      - decl: [info, RuleInformation, unit.info]
+      - decl: [pattern, string, "(^|,)${shape}(,|$)"]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.nodes.len] }
+          body:
+            - decl: [node, ref<IrNode>, { at: [info.nodes, idx] }]
+            - if:
+                condition: { "&&": [{ call: [user_node, node] }, { gte: [{ call: [regex.search, pattern, node.shape] }, 0] }] }
+                then:
+                  - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, node.pos] }, rule_id, message] }]
+            - set: [idx, { "+": [idx, 1] }]

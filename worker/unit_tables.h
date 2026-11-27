@@ -1028,6 +1028,147 @@ public:
         pending_shape_[ref] = "float_loop_counter";
     }
 
+    // Shapes of one node are a comma-separated list.
+    static void add_shape(NodeRec &rec, const std::string &shape) {
+        if (shape.empty()) return;
+        std::string list = "," + rec.shape + ",";
+        if (list.find("," + shape + ",") != std::string::npos) return;
+        rec.shape = rec.shape.empty() ? shape : rec.shape + "," + shape;
+    }
+
+    bool null_constant(const Expr *expr) {
+        return expr->isNullPointerConstant(context_, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull;
+    }
+
+    // A call of malloc, calloc or realloc (the C library functions).
+    static bool allocation(const Expr *expr) {
+        const auto *call = dyn_cast<CallExpr>(expr->IgnoreParenImpCasts());
+        const FunctionDecl *callee = call == nullptr ? nullptr : call->getDirectCallee();
+        if (callee == nullptr || callee->getIdentifier() == nullptr) return false;
+        StringRef name = callee->getName();
+        return (name == "malloc" || name == "calloc" || name == "realloc") && callee->getDeclContext()->getRedeclContext()->isTranslationUnit();
+    }
+
+    // Does `part` lie at offset 0 of `whole`: its first member (any member of a
+    // union), also nested?
+    static bool leading_member(QualType whole, QualType part, int depth) {
+        if (depth > 8) return false;
+        const RecordDecl *record = whole->getAsRecordDecl();
+        if (record == nullptr || record->getDefinition() == nullptr) return false;
+        record = record->getDefinition();
+        for (const FieldDecl *field : record->fields()) {
+            QualType held = field->getType().getCanonicalType().getUnqualifiedType();
+            if (held == part || leading_member(held, part, depth + 1)) return true;
+            if (!record->isUnion()) break;
+        }
+        return false;
+    }
+
+    // Is the type, as written, the typedef uintptr_t?
+    static bool written_uintptr(QualType type) {
+        while (const auto *alias = type->getAs<TypedefType>()) {
+            if (alias->getDecl()->getName() == "uintptr_t") return true;
+            type = alias->desugar();
+        }
+        return false;
+    }
+
+    // What one explicit cast does with pointers (several shapes can apply).
+    void cast_shapes(const ExplicitCastExpr *cast, std::vector<std::string> &shapes) {
+        if (cast->isTypeDependent() || cast->isValueDependent() || cast->getSubExpr()->isTypeDependent()) return;
+        const Expr *operand = cast->getSubExprAsWritten();
+        CastKind kind = cast->getCastKind();
+        if (kind == CK_ToVoid || kind == CK_PointerToBoolean || null_constant(operand)) return;
+        bool cxx = context_.getLangOpts().CPlusPlus;
+        QualType from = operand->getType();
+        QualType written = cast->getTypeAsWritten();
+        if (from.isNull() || written.isNull() || from->isDependentType() || written->isDependentType()) return;
+        if (from->isFunctionType() || from->isArrayType()) from = context_.getDecayedType(from);
+        if (written->isReferenceType()) {
+            QualType target = written->getPointeeType();
+            if ((from.isConstQualified() && !target.isConstQualified()) ||
+                (from.isVolatileQualified() && !target.isVolatileQualified())) {
+                shapes.push_back("drop_qualifier");
+            }
+            return;
+        }
+        bool fn_from = from->isFunctionPointerType();
+        bool fn_to = written->isFunctionPointerType();
+        if (fn_from || fn_to) {
+            if (context_.getCanonicalType(from).getUnqualifiedType() != context_.getCanonicalType(written).getUnqualifiedType()) {
+                shapes.push_back("function_pointer_cast");
+            }
+            return;
+        }
+        if (from->isPointerType() && written->isPointerType()) {
+            QualType source = from->getPointeeType();
+            QualType target = written->getPointeeType();
+            if ((source.isConstQualified() && !target.isConstQualified()) ||
+                (source.isVolatileQualified() && !target.isVolatileQualified())) {
+                shapes.push_back("drop_qualifier");
+            }
+            QualType plain_source = context_.getCanonicalType(source).getUnqualifiedType();
+            QualType plain_target = context_.getCanonicalType(target).getUnqualifiedType();
+            if (plain_source == plain_target) return;
+            if (plain_source->isVoidType() || plain_target->isVoidType()) {
+                if (!cxx && plain_source->isVoidType() && !allocation(operand)) shapes.push_back("void_to_object");
+                return;
+            }
+            bool incomplete = (plain_source->isIncompleteType() && plain_source->isRecordType()) ||
+                              (plain_target->isIncompleteType() && plain_target->isRecordType());
+            if (incomplete) {
+                if (!cxx) shapes.push_back("incomplete_cast");
+                return;
+            }
+            if (kind != CK_BitCast) return;
+            if (plain_target->isCharType() || plain_target->isStdByteType()) return;
+            if (leading_member(plain_source, plain_target, 0) || leading_member(plain_target, plain_source, 0)) return;
+            shapes.push_back("object_cast");
+            return;
+        }
+        if (kind == CK_PointerToIntegral) {
+            if (from->getPointeeType()->isVoidType()) {
+                if (!cxx) shapes.push_back("void_arithmetic");
+            } else if (!(cxx && written_uintptr(written))) {
+                shapes.push_back("pointer_integer");
+            }
+        } else if (kind == CK_IntegralToPointer) {
+            if (written->getPointeeType()->isVoidType()) {
+                if (!cxx) shapes.push_back("void_arithmetic");
+            } else if (!(cxx && written_uintptr(operand->IgnoreParens()->getType()))) {
+                shapes.push_back("pointer_integer");
+            }
+        }
+    }
+
+    // A chain of explicit casts, `(int)(long)pointer`, is reported at its
+    // outermost cast: the casts inside add their shapes there.
+    void note_pointer_casts(const ExplicitCastExpr *cast, NodeRec &rec) {
+        auto parents = context_.getParents(*cast);
+        while (parents.size() == 1 && parents[0].get<ParenExpr>() != nullptr) parents = context_.getParents(parents[0]);
+        if (parents.size() == 1 && parents[0].get<ExplicitCastExpr>() != nullptr) return;
+        std::vector<std::string> shapes;
+        for (const ExplicitCastExpr *link = cast; link != nullptr;
+             link = dyn_cast<ExplicitCastExpr>(link->getSubExprAsWritten()->IgnoreParens())) {
+            cast_shapes(link, shapes);
+        }
+        for (const std::string &shape : shapes) add_shape(rec, shape);
+    }
+
+    // C: an implicit conversion of a void pointer to an object pointer (not of a
+    // null pointer constant, not of malloc, calloc or realloc); the operand is marked.
+    void note_implicit_cast(const ImplicitCastExpr *cast) {
+        if (context_.getLangOpts().CPlusPlus || cast->getCastKind() != CK_BitCast || cast->isTypeDependent()) return;
+        QualType from = cast->getSubExpr()->getType();
+        QualType to = cast->getType();
+        if (!from->isPointerType() || !to->isPointerType() || to->isFunctionPointerType()) return;
+        if (!from->getPointeeType()->isVoidType() || to->getPointeeType()->isVoidType()) return;
+        if (null_constant(cast->getSubExpr()) || allocation(cast->getSubExpr())) return;
+        const Expr *operand = without_implicit_casts(cast);
+        std::string &pending = pending_shape_[operand];
+        pending = pending.empty() ? "void_to_object" : pending + ",void_to_object";
+    }
+
     // std::move (one argument) of a const object or of a temporary.
     void note_move(const CallExpr *call) {
         const FunctionDecl *callee = call->getDirectCallee();
@@ -2086,8 +2227,9 @@ public:
         }
         if (const auto *explicit_cast = dyn_cast<ExplicitCastExpr>(stmt)) note_cast(explicit_cast, rec);
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) note_member_compare(binary, rec);
+        if (const auto *explicit_cast = dyn_cast<ExplicitCastExpr>(stmt)) note_pointer_casts(explicit_cast, rec);
         auto shaped = pending_shape_.find(stmt);
-        if (shaped != pending_shape_.end()) rec.shape = shaped->second;
+        if (shaped != pending_shape_.end()) add_shape(rec, shaped->second);
         if (const auto *attempt = dyn_cast<CXXTryStmt>(stmt)) note_shadowed_handlers(attempt);
         SourceLocation key = stmt->getBeginLoc();
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) key = binary->getOperatorLoc();
@@ -2822,6 +2964,9 @@ public:
         SourceLocation loc = stmt->getBeginLoc();
         bool skipped = isa<ImplicitCastExpr>(stmt) ||
                        (loc.isValid() && sm_.isInSystemHeader(sm_.getExpansionLoc(loc)));
+        if (const auto *implicit = dyn_cast<ImplicitCastExpr>(stmt)) {
+            if (!(loc.isValid() && sm_.isInSystemHeader(sm_.getExpansionLoc(loc)))) tables_.note_implicit_cast(implicit);
+        }
         stack_.push_back(skipped ? parent : tables_.node_of(stmt, parent, function_));
         return true;
     }

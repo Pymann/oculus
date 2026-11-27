@@ -42,7 +42,7 @@
                 body:
                   - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ eq: [{ call: [regex.search, "^null_pointer$", rec.shape] }, 0] }, { call: [expanded_in_user_file, info, rec.pos.expansion] }, { eq: [{ call: [in_extern_c_function, info, rec] }, false] }] }
+                      condition: { "&&": [{ gte: [{ call: [regex.search, "(^|,)null_pointer(,|$)", rec.shape] }, 0] }, { call: [expanded_in_user_file, info, rec.pos.expansion] }, { eq: [{ call: [in_extern_c_function, info, rec] }, false] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 337, "null pointer written as 0 or NULL; write nullptr"] }]
                   - set: [idx, { "+": [idx, 1] }]
@@ -69,7 +69,7 @@
                 body:
                   - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ eq: [{ call: [regex.search, "^null_integer$", rec.shape] }, 0] }, { call: [expanded_in_user_file, info, rec.pos.expansion] }] }
+                      condition: { "&&": [{ gte: [{ call: [regex.search, "(^|,)null_integer(,|$)", rec.shape] }, 0] }, { call: [expanded_in_user_file, info, rec.pos.expansion] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 250, "NULL is used as an integer; write 0 (or nullptr for a pointer)"] }]
                   - set: [idx, { "+": [idx, 1] }]

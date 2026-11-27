@@ -32,10 +32,10 @@
                 body:
                   - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^move_(const|rvalue)$", rec.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_node, rec] }, { gte: [{ call: [regex.search, "(^|,)move_(const|rvalue)(,|$)", rec.shape] }, 0] }] }
                       then:
                         - decl: [what, string, "a const object; it is copied, not moved"]
-                        - if: { condition: { eq: [{ call: [regex.search, "^move_rvalue$", rec.shape] }, 0] }, then: [{ set: [what, "a temporary, which is an rvalue already"] }] }
+                        - if: { condition: { gte: [{ call: [regex.search, "(^|,)move_rvalue(,|$)", rec.shape] }, 0] }, then: [{ set: [what, "a temporary, which is an rvalue already"] }] }
                         - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 377, "std::move of ${what}"] }]
                   - set: [idx, { "+": [idx, 1] }]
 

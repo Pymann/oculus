@@ -1,0 +1,60 @@
+# OC-0081 no_pointer_integer_cast, OC-0082 no_void_pointer_to_object (C) and
+# OC-0083 no_void_pointer_arith_cast (C), catalogue in Pymann/coding-rules.  Read
+# from IrNode.shape (doc/ir.md): pointer_integer and void_arithmetic on explicit
+# casts, void_to_object on a cast or on the operand of an implicit conversion.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: PointerIntegerCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 81, "safety.c90-.8.3.no_pointer_integer_cast", "Object pointers and integers are not converted into each other", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "pointer_integer", 81, "cast between an object pointer and an integer", out]
+
+- class:
+    name: VoidPointerObjectRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 82, "safety.c90-.8.3.no_void_pointer_to_object", "A void pointer is not converted to an object pointer", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "void_to_object", 82, "a void pointer is converted to an object pointer; the type is not checked", out]
+
+- class:
+    name: VoidPointerArithmeticRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 83, "safety.c90-.8.3.no_void_pointer_arith_cast", "Void pointers and arithmetic types are not cast into each other", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "void_arithmetic", 83, "cast between a void pointer and an arithmetic type", out]
