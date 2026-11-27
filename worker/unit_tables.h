@@ -986,7 +986,12 @@ public:
                 if (base == nullptr || former_pointer != later_pointer || base == derived) continue;
                 CXXBasePaths paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true, /*DetectVirtual=*/false);
                 if (!derived->isDerivedFrom(base, paths)) continue;
-                if (paths.isAmbiguous(context_.getCanonicalType(context_.getRecordType(base)))) continue;
+#if CLANG_VERSION_MAJOR >= 22
+                CanQualType base_type = context_.getCanonicalTagType(base);
+#else
+                CanQualType base_type = context_.getCanonicalType(context_.getRecordType(base));
+#endif
+                if (paths.isAmbiguous(base_type)) continue;
                 bool open = false;
                 for (const CXXBasePath &path : paths) open = open || path.Access == AS_public;
                 if (!open) continue;
@@ -1005,9 +1010,13 @@ public:
             if (auto qualified = loc.getAs<QualifiedTypeLoc>()) { loc = qualified.getUnqualifiedLoc(); continue; }
             if (auto reference = loc.getAs<ReferenceTypeLoc>()) { loc = reference.getPointeeLoc(); continue; }
             if (auto pointer = loc.getAs<PointerTypeLoc>()) { loc = pointer.getPointeeLoc(); continue; }
+#if CLANG_VERSION_MAJOR < 22
             if (auto elaborated = loc.getAs<ElaboratedTypeLoc>()) { loc = elaborated.getNamedTypeLoc(); continue; }
+#endif
             break;
         }
+        if (auto tag = loc.getAs<TagTypeLoc>()) return tag.getNameLoc();
+        if (auto special = loc.getAs<TemplateSpecializationTypeLoc>()) return special.getTemplateNameLoc();
         return loc.getBeginLoc();
     }
 
