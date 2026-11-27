@@ -16,6 +16,12 @@ waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   deliberate `+1.0f` style in imgui (84 findings). It is correct by the rule text.
   Open: should written literals (`+1.0f`, `+0`) be exempt?
 
+- **OC-0315 macros_at_global_scope.** Every #define or #undef inside a namespace
+  counts, including the configuration macros fmt and gtest define between
+  their namespace macros (239 findings in fmt, 206 of them in gtest). It is correct
+  by the rule text. Open: should headers that only wrap a namespace be treated
+  differently?
+
 ## Left out on purpose
 
 - **OC-0386** catch_all_handler_last and **OC-0329**
@@ -45,7 +51,8 @@ waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0057** implicit enum values: reported only when an *earlier* enumerator
   has the value. A later explicit alias (`LAST = C`) counts as intended.
 - **OC-0369** constant assert: only arguments made of literals, `true`, `false`,
-  `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen.
+  `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen. An
+  assert written in a macro body is reported once, at the definition.
 
 ## Infrastructure
 

@@ -56,6 +56,9 @@
 - import: "src/rules/lexical_comments.aiml"
 - import: "src/rules/lexical_literals.aiml"
 - import: "src/rules/lexical_tokens.aiml"
+- import: "src/rules/enum_values.aiml"
+- import: "src/rules/library_macros.aiml"
+- import: "src/rules/scopes.aiml"
 - import: "src/rules/override_shapes.aiml"
 
 - class:
@@ -324,6 +327,20 @@
             - call: [<.rules.push, trigraphs]
             - decl: [digraphs, ptr<Rule>, { new: NoDigraphsRule }]
             - call: [<.rules.push, digraphs]
+            - decl: [implicit_enum, ptr<Rule>, { new: UniqueImplicitEnumRule }]
+            - call: [<.rules.push, implicit_enum]
+            - decl: [sized_designated, ptr<Rule>, { new: SizedDesignatedArrayRule }]
+            - call: [<.rules.push, sized_designated]
+            - decl: [small_int_macro, ptr<Rule>, { new: SmallIntConstantMacroRule }]
+            - call: [<.rules.push, small_int_macro]
+            - decl: [constant_assert, ptr<Rule>, { new: ConstantAssertRule }]
+            - call: [<.rules.push, constant_assert]
+            - decl: [errno_zero, ptr<Rule>, { new: ErrnoZeroRule }]
+            - call: [<.rules.push, errno_zero]
+            - decl: [derived_handlers, ptr<Rule>, { new: DerivedHandlersFirstRule }]
+            - call: [<.rules.push, derived_handlers]
+            - decl: [global_macros, ptr<Rule>, { new: GlobalScopeMacrosRule }]
+            - call: [<.rules.push, global_macros]
             - decl: [abstract_copy, ptr<Rule>, { new: AbstractCopyAssignmentRule }]
             - call: [<.rules.push, abstract_copy]
             - decl: [template_ctor, ptr<Rule>, { new: TemplateCtorCopyRule }]

@@ -17,7 +17,10 @@
 # header skipped by its include guard is not entered again and not recorded).
 # expansion: a macro of a system header expanded in the user's code (NULL, errno,
 # offsetof ...); `pos` where its name is spelled (in a macro body of the user: that
-# body), `name_pos` the expansion in the file, `defined_file_uid` the header.
+# body), `name_pos` the expansion in the file, `defined_file_uid` the header; a
+# one-argument macro has its argument tokens in `body` and `argument_pos`.
+# define and undef: `scope` the innermost function body, class or namespace around
+# the directive (function, class, namespace; "" at global scope).
 
 - import: "src/ir/position.aiml"
 
@@ -42,4 +45,6 @@
       - [line_count, i32, 1]
       # define over several lines: the first backslash that continues a line
       - [splice_pos, IrPos]
+      - [argument_pos, IrPos]
+      - [scope, string, ""]
       - [defined_file_uid, i32, -1]

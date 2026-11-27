@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 20;
+constexpr int32_t OC_SHIM_ABI = 21;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -226,6 +226,7 @@ OC_EXPORT char *oc_decl_text(void *unit, int32_t index, int32_t field) {
     case ClangDeclText_target: return fresh(decl->target);
     case ClangDeclText_ref_qualifier: return fresh(decl->ref_qualifier);
     case ClangDeclText_returns_kind: return fresh(decl->returns_kind);
+    case ClangDeclText_enum_value: return fresh(decl->enum_value);
     default: return fresh("");
     }
 }
@@ -298,6 +299,7 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_template_assign_no_copy: return flag(decl->template_assign_no_copy);
     case ClangDeclNum_may_throw: return flag(decl->may_throw);
     case ClangDeclNum_pure_overrides_impl: return flag(decl->pure_overrides_impl);
+    case ClangDeclNum_designated_array: return flag(decl->designated_array);
     default: return -1;
     }
 }
@@ -354,6 +356,7 @@ OC_EXPORT int32_t oc_node_num(void *unit, int32_t index, int32_t field) {
     case ClangNodeNum_has_skipped_code: return flag(node->has_skipped_code);
     case ClangNodeNum_macro_body: return flag(node->macro_body);
     case ClangNodeNum_side_effect: return flag(node->side_effect);
+    case ClangNodeNum_errno_write: return flag(node->errno_write);
     default: return -1;
     }
 }
@@ -387,6 +390,7 @@ OC_EXPORT char *oc_macro_text(void *unit, int32_t index, int32_t field) {
     case ClangMacroText_kind: return fresh(macro->kind);
     case ClangMacroText_name: return fresh(macro->name);
     case ClangMacroText_body: return fresh(macro->body);
+    case ClangMacroText_scope: return fresh(macro->scope);
     default: return fresh("");
     }
 }
@@ -421,7 +425,8 @@ OC_EXPORT int32_t oc_macro_pos(void *unit, int32_t index, int32_t which, int32_t
                    : which == ClangMacroPos_first_operator ? &macro->first_operator
                    : which == ClangMacroPos_second_operator ? &macro->second_operator
                    : which == ClangMacroPos_stringize_paste ? &macro->stringize_paste
-                   : which == ClangMacroPos_splice_pos ? &macro->splice_pos : nullptr;
+                   : which == ClangMacroPos_splice_pos ? &macro->splice_pos
+                   : which == ClangMacroPos_argument_pos ? &macro->argument_pos : nullptr;
     if (pos == nullptr) {
         return -1;
     }

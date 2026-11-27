@@ -1,0 +1,66 @@
+# OC-0310 derived_handlers_first and OC-0315 macros_at_global_scope (catalogue in
+# Pymann/coding-rules), C++.  Read from RuleInformation: catch handlers with
+# IrNode.detail `shadowed` (an earlier handler catches a public, unambiguous base
+# class; the exception variable's type_pos is the class name) and IrMacro.scope.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: DerivedHandlersFirstRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 310, "safety.cpp98-.17.2.derived_handlers_first", "Handlers for derived exception types come before handlers for their bases", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^CXXCatchStmt$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^shadowed$", rec.detail] }, 0] }, { call: [info_has_decl, info, rec.ref_uid] }] }
+                      then:
+                        - decl: [caught, ref<IrDecl>, { at: [info.decls, rec.ref_uid] }]
+                        - decl: [where, IrPos, caught.type_pos]
+                        - if: { condition: { eq: [where.line, 0] }, then: [{ set: [where, { call: [written_pos, rec.pos] }] }] }
+                        - call: [out.push, { call: [pos_finding, unit, where, 310, "an earlier handler of a base class already catches this type; put the derived handler first"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: GlobalScopeMacrosRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 315, "style.cpp98-.12.2.macros_at_global_scope", "#define and #undef appear only at global scope", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^(define|undef)$", rec.kind] }, 0] }, { gt: [rec.scope.len, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 315, "#${rec.kind} inside a ${rec.scope}; macros ignore scopes, put it at global scope"] }]
+                  - set: [idx, { "+": [idx, 1] }]

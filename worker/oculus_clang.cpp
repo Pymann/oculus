@@ -172,6 +172,8 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("template_assign_no_copy", decl.template_assign_no_copy);
                     out.attribute("may_throw", decl.may_throw);
                     out.attribute("pure_overrides_impl", decl.pure_overrides_impl);
+                    out.attribute("enum_value", decl.enum_value);
+                    out.attribute("designated_array", decl.designated_array);
                     write_pos(out, "default_arg_pos", decl.default_arg_pos);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
@@ -206,6 +208,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("before", node.before);
                     out.attribute("macro_body", node.macro_body);
                     out.attribute("side_effect", node.side_effect);
+                    out.attribute("errno_write", node.errno_write);
                 });
             }
         });
@@ -227,6 +230,8 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     write_pos(out, "second_operator", macro.second_operator);
                     write_pos(out, "stringize_paste", macro.stringize_paste);
                     write_pos(out, "splice_pos", macro.splice_pos);
+                    out.attribute("scope", macro.scope);
+                    write_pos(out, "argument_pos", macro.argument_pos);
                     out.attribute("uses_call_site", macro.uses_call_site);
                     out.attribute("line_count", macro.line_count);
                     out.attribute("defined_file_uid", macro.defined_file_uid);

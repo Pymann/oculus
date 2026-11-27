@@ -26,6 +26,7 @@
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/Lexer.h"
+#include "clang/Lex/MacroArgs.h"
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
@@ -118,6 +119,9 @@ struct MacroRec {
     Pos splice_pos;             // define: the first backslash that continues the line
     int defined_file_uid = -1;  // undef: file of the definition it removes; -2 none in a file;
                                 // include: the file included; expansion: file of the definition
+    std::string scope;          // define, undef: function | class | namespace | "" (global)
+    Pos argument_pos;           // expansion of a one-argument macro: where its argument is spelled (body: the tokens)
+    SourceLocation loc;         // the name, while the AST is alive (not written out)
 };
 
 struct TypeRec {
@@ -229,6 +233,8 @@ struct DeclRec {
     bool may_throw = false;
     bool pure_overrides_impl = false;   // pure virtual, overriding a function that is not pure
     Pos default_arg_pos;                // overriders: a default argument the overridden function differs in
+    std::string enum_value;             // enumerators: the value, decimal ("" if dependent)
+    bool designated_array = false;      // variables: written `[]` size, initialised with array designators
     // alignment specifiers written on this declaration (alignas, _Alignas; not
     // inherited from an earlier one): how many, where the second one is, and
     // where an alignment that evaluates to zero is written
@@ -276,6 +282,9 @@ struct NodeRec {
     // sizeof and alignof of an expression: the operand has a side effect (calls
     // not counted) and is not evaluated, because its type is not variably modified
     bool side_effect = false;
+    // =, compound assignment, ++ and -- of errno with a value other than 0 or one
+    // saved from errno
+    bool errno_write = false;
 };
 
 // The tables of one TU, filled while the AST is alive.
@@ -671,9 +680,173 @@ public:
             QualType held = context_.getBaseElementType(local->getType());
             rec.special_local = rec.special_local || held->isRecordType() || held->isDependentType();
         }
+        if (const auto *constant = dyn_cast<EnumConstantDecl>(decl)) {
+            if (!constant->getDeclContext()->isDependentContext())
+                rec.enum_value = toString(constant->getInitVal(), 10);
+        }
+        if (const auto *var = dyn_cast<VarDecl>(decl)) rec.designated_array = designated_array(var);
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
         note_override_defaults(decl, rec);
+    }
+
+    // A variable written with `[]` whose initializer list uses array designators.
+    static bool designated_array(const VarDecl *var) {
+        const TypeSourceInfo *written = var->getTypeSourceInfo();
+        if (written == nullptr || !var->hasInit()) return false;
+        TypeLoc loc = written->getTypeLoc().getUnqualifiedLoc();
+        if (!loc.getAs<IncompleteArrayTypeLoc>()) return false;
+        const auto *list = dyn_cast<InitListExpr>(var->getInit()->IgnoreImplicit());
+        if (list == nullptr) return false;
+        if (list->isSemanticForm() && list->getSyntacticForm() != nullptr) list = list->getSyntacticForm();
+        for (const Expr *item : list->inits()) {
+            const auto *designated = dyn_cast_or_null<DesignatedInitExpr>(item);
+            if (designated == nullptr || designated->size() == 0) continue;
+            const DesignatedInitExpr::Designator *first = designated->getDesignator(0);
+            if (first->isArrayDesignator() || first->isArrayRangeDesignator()) return true;
+        }
+        return false;
+    }
+
+    // Is `loc` (or a macro it comes from) the expansion of the macro errno?
+    bool from_errno(SourceLocation loc) const {
+        while (loc.isMacroID()) {
+            if (Lexer::getImmediateMacroName(loc, sm_, context_.getLangOpts()) == "errno") return true;
+            loc = sm_.getImmediateMacroCallerLoc(loc);
+        }
+        return false;
+    }
+
+    bool is_errno(const Expr *expr) const {
+        return expr != nullptr && from_errno(expr->IgnoreParenImpCasts()->getBeginLoc()) &&
+               from_errno(expr->getBeginLoc());
+    }
+
+    // The writes of errno (NodeRec.errno_write); variables saved from errno are kept
+    // so that restoring them is no finding.
+    bool errno_write(const Stmt *stmt) {
+        if (const auto *declared = dyn_cast<DeclStmt>(stmt)) {
+            for (const Decl *one : declared->decls()) {
+                const auto *var = dyn_cast<VarDecl>(one);
+                if (var != nullptr && var->getInit() != nullptr && is_errno(var->getInit())) errno_saved_.insert(var);
+            }
+            return false;
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            return unary->isIncrementDecrementOp() && is_errno(unary->getSubExpr());
+        }
+        const auto *binary = dyn_cast<BinaryOperator>(stmt);
+        if (binary == nullptr || !binary->isAssignmentOp()) return false;
+        const Expr *value = binary->getRHS()->IgnoreParenImpCasts();
+        if (!is_errno(binary->getLHS())) {
+            const auto *target = dyn_cast<DeclRefExpr>(binary->getLHS()->IgnoreParenImpCasts());
+            if (binary->getOpcode() == BO_Assign && target != nullptr && is_errno(binary->getRHS())) {
+                if (const auto *var = dyn_cast<VarDecl>(target->getDecl())) errno_saved_.insert(var);
+            }
+            return false;
+        }
+        if (binary->isCompoundAssignmentOp()) return true;
+        if (value->isValueDependent() || is_errno(binary->getRHS())) return false;
+        Expr::EvalResult result;
+        if (value->EvaluateAsInt(result, context_) && result.Val.getInt() == 0) return false;
+        const auto *source = dyn_cast<DeclRefExpr>(value);
+        if (source != nullptr) {
+            const auto *var = dyn_cast<VarDecl>(source->getDecl());
+            if (var != nullptr && errno_saved_.count(var) > 0) return false;
+        }
+        return true;
+    }
+
+    // The class type a handler catches, or the class a caught pointer points to.
+    static const CXXRecordDecl *caught_class(QualType type, bool &pointer) {
+        if (type.isNull() || type->isDependentType()) return nullptr;
+        type = type.getNonReferenceType();
+        pointer = type->isPointerType();
+        if (pointer) type = type->getPointeeType();
+        const CXXRecordDecl *record = type->getAsCXXRecordDecl();
+        return record != nullptr && record->hasDefinition() ? record->getDefinition() : nullptr;
+    }
+
+    // The handlers of a try block that a former handler of a public, unambiguous
+    // base class makes unreachable.
+    void note_shadowed_handlers(const CXXTryStmt *attempt) {
+        for (unsigned later = 1; later < attempt->getNumHandlers(); ++later) {
+            bool later_pointer = false;
+            const CXXRecordDecl *derived = caught_class(attempt->getHandler(later)->getCaughtType(), later_pointer);
+            if (derived == nullptr) continue;
+            for (unsigned former = 0; former < later; ++former) {
+                bool former_pointer = false;
+                const CXXRecordDecl *base = caught_class(attempt->getHandler(former)->getCaughtType(), former_pointer);
+                if (base == nullptr || former_pointer != later_pointer || base == derived) continue;
+                CXXBasePaths paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true, /*DetectVirtual=*/false);
+                if (!derived->isDerivedFrom(base, paths)) continue;
+                if (paths.isAmbiguous(context_.getCanonicalType(context_.getRecordType(base)))) continue;
+                bool open = false;
+                for (const CXXBasePath &path : paths) open = open || path.Access == AS_public;
+                if (!open) continue;
+                shadowed_handlers_.insert(attempt->getHandler(later));
+                break;
+            }
+        }
+    }
+
+    // Where the class name of a caught type is written.
+    SourceLocation caught_name_loc(const VarDecl *caught) const {
+        const TypeSourceInfo *written = caught->getTypeSourceInfo();
+        if (written == nullptr) return SourceLocation();
+        TypeLoc loc = written->getTypeLoc();
+        while (true) {
+            if (auto qualified = loc.getAs<QualifiedTypeLoc>()) { loc = qualified.getUnqualifiedLoc(); continue; }
+            if (auto reference = loc.getAs<ReferenceTypeLoc>()) { loc = reference.getPointeeLoc(); continue; }
+            if (auto pointer = loc.getAs<PointerTypeLoc>()) { loc = pointer.getPointeeLoc(); continue; }
+            if (auto elaborated = loc.getAs<ElaboratedTypeLoc>()) { loc = elaborated.getNamedTypeLoc(); continue; }
+            break;
+        }
+        return loc.getBeginLoc();
+    }
+
+    // The scope a #define or #undef sits in: the innermost function body, class or
+    // namespace whose braces enclose it (expansion positions, one file).
+    void note_scope(const Decl *decl) {
+        SourceRange range;
+        const char *kind = nullptr;
+        if (decl->isImplicit()) return;
+        if (const auto *space = dyn_cast<NamespaceDecl>(decl)) {
+            range = SourceRange(space->getBeginLoc(), space->getRBraceLoc());
+            kind = "namespace";
+        } else if (const auto *record = dyn_cast<RecordDecl>(decl)) {
+            if (!record->isThisDeclarationADefinition()) return;
+            range = record->getBraceRange();
+            kind = "class";
+        } else if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            if (!fn->doesThisDeclarationHaveABody() || fn->getBody() == nullptr) return;
+            range = fn->getBody()->getSourceRange();
+            kind = "function";
+        } else {
+            return;
+        }
+        SourceLocation first = sm_.getExpansionLoc(range.getBegin());
+        SourceLocation last = sm_.getExpansionLoc(range.getEnd());
+        if (first.isInvalid() || last.isInvalid()) return;
+        std::pair<FileID, unsigned> from = sm_.getDecomposedLoc(first);
+        std::pair<FileID, unsigned> upto = sm_.getDecomposedLoc(last);
+        if (from.first != upto.first || upto.second <= from.second) return;
+        scopes_.push_back({from.first, from.second, upto.second, kind});
+    }
+
+    void finish_scopes() {
+        for (MacroRec &rec : macros) {
+            if ((rec.kind != "define" && rec.kind != "undef") || rec.loc.isInvalid()) continue;
+            std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(sm_.getExpansionLoc(rec.loc));
+            unsigned best = ~0u;
+            for (const ScopeRange &scope : scopes_) {
+                if (scope.fid != at.first || at.second <= scope.begin || at.second >= scope.end) continue;
+                if (scope.end - scope.begin < best) {
+                    best = scope.end - scope.begin;
+                    rec.scope = scope.kind;
+                }
+            }
+        }
     }
 
     // The alignas specifiers written on the declaration, in source order.
@@ -1087,7 +1260,8 @@ public:
     // A macro of a system header expanded in the user's code: pos is where its name
     // is spelled (in a macro body of the user: that body), name_pos the expansion in
     // the file.  Macros of the user are not recorded; there are too many.
-    void note_expansion(Preprocessor &pp, const Token &name, const MacroDefinition &definition) {
+    void note_expansion(Preprocessor &pp, const Token &name, const MacroDefinition &definition,
+                        const MacroArgs *args) {
         const MacroInfo *info = definition.getMacroInfo();
         if (info == nullptr) return;
         SourceLocation defined = info->getDefinitionLoc();
@@ -1102,6 +1276,14 @@ public:
         rec.name_pos = pos_of(sm_.getExpansionLoc(name.getLocation()));
         rec.function_like = info->isFunctionLike();
         rec.defined_file_uid = file_of(defined);
+        if (args != nullptr && info->getNumParams() == 1 && args->getNumMacroArguments() == 1) {
+            const Token *tok = args->getUnexpArgument(0);
+            if (tok != nullptr && tok->isNot(tok::eof)) rec.argument_pos = pos_of(sm_.getSpellingLoc(tok->getLocation()));
+            for (; tok != nullptr && tok->isNot(tok::eof); ++tok) {
+                if (!rec.body.empty()) rec.body += " ";
+                rec.body += pp.getSpelling(*tok);
+            }
+        }
         macros.push_back(rec);
     }
 
@@ -1408,6 +1590,8 @@ public:
             rec.spelling = literal_spelling(stmt);
         }
         if (isa<NullStmt>(stmt)) rec.before = char_before(stmt->getBeginLoc());
+        rec.errno_write = errno_write(stmt);
+        if (const auto *attempt = dyn_cast<CXXTryStmt>(stmt)) note_shadowed_handlers(attempt);
         SourceLocation key = stmt->getBeginLoc();
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) key = binary->getOperatorLoc();
         if (const auto *choice = dyn_cast<AbstractConditionalOperator>(stmt)) key = choice->getQuestionLoc();
@@ -1460,6 +1644,11 @@ public:
             if (const VarDecl *caught = handler->getExceptionDecl()) {
                 rec.ref_uid = decl_of(caught);
                 rec.type_uid = type_of(handler->getCaughtType());
+                if (shadowed_handlers_.count(handler) > 0) {
+                    rec.detail = "shadowed";
+                    SourceLocation name = caught_name_loc(caught);
+                    if (name.isValid()) decls[static_cast<size_t>(rec.ref_uid)].type_pos = pos_of(sm_.getExpansionLoc(name));
+                }
             }
         } else if (const auto *trait = dyn_cast<UnaryExprOrTypeTraitExpr>(stmt)) {
             if (trait->getKind() == UETT_SizeOf) rec.detail = trait->isArgumentType() ? "sizeof_type" : "sizeof";
@@ -1766,6 +1955,7 @@ private:
         rec.kind = kind;
         rec.name = pp.getSpelling(name);
         SourceLocation loc = name.getLocation();
+        rec.loc = loc;
         rec.name_pos = pos_of(loc);
         rec.pos = rec.name_pos;
         std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(loc);
@@ -2012,6 +2202,15 @@ private:
     std::map<const Stmt *, std::string> roles_;
     std::map<const Stmt *, std::string> default_order_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> skipped_;
+    std::set<const VarDecl *> errno_saved_;
+    std::set<const Stmt *> shadowed_handlers_;
+    struct ScopeRange {
+        FileID fid;
+        unsigned begin;
+        unsigned end;
+        const char *kind;
+    };
+    std::vector<ScopeRange> scopes_;
     std::set<std::string> call_site_macros_;
 };
 
@@ -2032,8 +2231,8 @@ public:
         tables_->note_undef(pp_, name, definition);
     }
     void MacroExpands(const Token &name, const MacroDefinition &definition, SourceRange,
-                      const MacroArgs *) override {
-        tables_->note_expansion(pp_, name, definition);
+                      const MacroArgs *args) override {
+        tables_->note_expansion(pp_, name, definition, args);
     }
     void PragmaDirective(SourceLocation loc, PragmaIntroducerKind) override {
         tables_->note_pragma(loc);
@@ -2064,6 +2263,7 @@ public:
             return true;   // added on demand, see Tables::decl_of
         }
         tables_.decl_of(decl);
+        tables_.note_scope(decl);
         return true;
     }
 
@@ -2240,6 +2440,7 @@ public:
         NodeCollector node_collector(tables, context.getSourceManager());
         node_collector.TraverseDecl(context.getTranslationUnitDecl());
         tables.finish_lines(lang);
+        tables.finish_scopes();
         result_.files = std::move(tables.files);
         result_.types = std::move(tables.types);
         result_.decls = std::move(tables.decls);

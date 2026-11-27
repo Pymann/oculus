@@ -1,0 +1,70 @@
+# OC-0057 unique_implicit_enum_value and OC-0064 sized_designated_array (catalogue
+# in Pymann/coding-rules).  Read from RuleInformation.decls: IrDecl.enum_value of
+# the enumerators (in source order), IrDecl.designated_array of variables.  An
+# implicit value is reported when an earlier enumerator of the same enum has it;
+# a later explicit alias (`LAST = C`) is written on purpose.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: UniqueImplicitEnumRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 57, "safety.c90-.6.5.unique_implicit_enum_value", "An implicitly valued enumerator does not repeat another enumerator's value", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - decl: [seen, map<string:i32>]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^EnumConstant$", rec.kind] }, 0] }, { gt: [rec.enum_value.len, 0] }] }
+                      then:
+                        - decl: [key, string, "${rec.parent_uid}:${rec.enum_value}"]
+                        - if:
+                            condition: { "&&": [{ eq: [rec.has_init, false] }, { call: [seen.has, key] }] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 57, "'${rec.name}' takes the value ${rec.enum_value} implicitly, which an earlier enumerator already has; give it an explicit value or reorder"] }]
+                        - if: { condition: { eq: [{ call: [seen.has, key] }, false] }, then: [{ call: [seen.set, key, rec.uid] }] }
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: SizedDesignatedArrayRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 64, "safety.c99-.7.2.sized_designated_array", "An array initialized with designators states its size", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.designated_array] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 64, "array '${rec.name}' is initialised with designators but its size is not written; state the size"] }]
+                  - set: [idx, { "+": [idx, 1] }]

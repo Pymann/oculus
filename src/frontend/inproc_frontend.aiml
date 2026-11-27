@@ -194,6 +194,8 @@
       - set: [rec.template_assign_no_copy, { call: [decl_flag, unit, index, ClangDeclNum.template_assign_no_copy] }]
       - set: [rec.may_throw, { call: [decl_flag, unit, index, ClangDeclNum.may_throw] }]
       - set: [rec.pure_overrides_impl, { call: [decl_flag, unit, index, ClangDeclNum.pure_overrides_impl] }]
+      - set: [rec.enum_value, { call: [oc_decl_text, unit, index, ClangDeclText.enum_value] }]
+      - set: [rec.designated_array, { call: [decl_flag, unit, index, ClangDeclNum.designated_array] }]
       - set: [rec.default_arg_pos, { call: [shim_pos, unit, index, ClangPosWhich.default_arg_pos] }]
       - return: rec
 
@@ -236,6 +238,7 @@
       - set: [rec.has_skipped_code, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.has_skipped_code] }, 1] }]
       - set: [rec.macro_body, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.macro_body] }, 1] }]
       - set: [rec.side_effect, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.side_effect] }, 1] }]
+      - set: [rec.errno_write, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.errno_write] }, 1] }]
       - return: rec
 
 - def:
@@ -263,6 +266,8 @@
       - set: [rec.name_pos, { call: [shim_macro_pos, unit, index, ClangMacroPos.name_pos] }]
       - set: [rec.first_operator, { call: [shim_macro_pos, unit, index, ClangMacroPos.first_operator] }]
       - set: [rec.splice_pos, { call: [shim_macro_pos, unit, index, ClangMacroPos.splice_pos] }]
+      - set: [rec.argument_pos, { call: [shim_macro_pos, unit, index, ClangMacroPos.argument_pos] }]
+      - set: [rec.scope, { call: [oc_macro_text, unit, index, ClangMacroText.scope] }]
       - set: [rec.second_operator, { call: [shim_macro_pos, unit, index, ClangMacroPos.second_operator] }]
       - set: [rec.stringize_paste, { call: [shim_macro_pos, unit, index, ClangMacroPos.stringize_paste] }]
       - set: [rec.function_like, { eq: [{ call: [oc_macro_num, unit, index, ClangMacroNum.function_like] }, 1] }]

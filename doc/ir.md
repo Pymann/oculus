@@ -510,6 +510,15 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `body_end` and `body_tokens` for function definitions (lambdas belong to their
   enclosing function), and `IrNode.macro_body` (the node's keyword or operator
   comes from a macro body, so it is not part of the source as written).
+- `IrDecl.enum_value` (enumerators, decimal, "" in a dependent context) and
+  `designated_array` (a variable written with `[]` and initialised with array
+  designators); `IrNode.errno_write` (`=`, compound assignment, `++` or `--` of
+  `errno`, unless the value is 0 or a variable saved from `errno` before); a
+  handler made unreachable by an earlier handler of a public, unambiguous base
+  class has `IrNode.detail` `shadowed`, its exception variable's `type_pos` is the
+  class name.  `IrMacro.scope` of a #define or #undef (`function`, `class`,
+  `namespace` or "" for global scope) and, for an expansion of a one-argument
+  system macro, `argument_pos` and the argument tokens in `body`.
 - `IrFile.lexical_marks`: what the raw tokens and characters of a user file show,
   as `code:line:col;` entries: `comment_open` (a `/*` inside a block comment),
   `comment_splice` (a line comment continued by a backslash), `trigraph`,

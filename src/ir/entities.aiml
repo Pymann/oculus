@@ -187,5 +187,7 @@
       - [may_throw, bool, false]
       # pure virtual functions overriding one that is not pure
       - [pure_overrides_impl, bool, false]
+      - [enum_value, string, ""]
+      - [designated_array, bool, false]
       # overriders: a default argument that differs from the overridden function's
       - [default_arg_pos, IrPos]
