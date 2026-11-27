@@ -504,6 +504,12 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   constructors and other functions.
 - `IrMacro.splice_pos`: the first backslash continuation of a #define; an
   include record's `name_pos` is its header name.
+- For the metric rules: `IrFile.line_classes` (one character per physical line,
+  `b` blank, `c` comment only, `x` code only, `m` both, from the raw tokens of the
+  file with comments kept; code in `#if 0` counts as code), `IrDecl.def_begin`,
+  `body_end` and `body_tokens` for function definitions (lambdas belong to their
+  enclosing function), and `IrNode.macro_body` (the node's keyword or operator
+  comes from a macro body, so it is not part of the source as written).
 
 ## 12. Notes on the AIML side
 

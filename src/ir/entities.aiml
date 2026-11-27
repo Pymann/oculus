@@ -21,6 +21,9 @@
       - [first_line, i32, 0]
       - [first_column, i32, 0]
       - [included_in_declaration, bool, false]
+      # source files and headers: one character per physical line, Oculus' own line
+      # counting: b blank, c comment only, x code only, m code and comment
+      - [line_classes, string, ""]
 
 # One type without qualifiers.  `sugar_uid` is the next step of the typedef or
 # alias chain (-1 at its end), `canonical_uid` the type with all sugar removed.
@@ -140,3 +143,9 @@
       - [restrict_pos, IrPos]
       # where the declarator starts: `*p` at the *, otherwise the name
       - [declarator_pos, IrPos]
+      # function definitions (not lambdas): the first token of the definition (the
+      # template head, if any) and the closing brace of the body, at the expansion;
+      # the preprocessing tokens of the body as written, braces included (-1 unknown)
+      - [def_begin, IrPos]
+      - [body_end, IrPos]
+      - [body_tokens, i32, -1]

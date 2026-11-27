@@ -30,6 +30,10 @@
       - [enabled, bool, true]
       - [severity, string, ""]
       - [limit, i32, 0]
+      # OC-0388: the share of comment lines in percent, and the code lines a file
+      # needs to be measured at all
+      - [percent, i32, 0]
+      - [minimum, i32, 0]
 
 - interface:
     name: Rule

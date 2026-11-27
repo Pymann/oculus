@@ -86,6 +86,9 @@ struct FileRec {
     // headers: the #include sits inside a declaration (an enum, an initializer, a
     // namespace): a data or X-macro file, meant to be included more than once
     bool included_in_declaration = false;
+    // source files and headers: one character per physical line, as Oculus' own
+    // line counting sees it: b blank, c comment only, x code only, m code and comment
+    std::string line_classes;
 };
 
 // One #define, #undef or #pragma (or _Pragma) outside system headers, in source
@@ -185,6 +188,13 @@ struct DeclRec {
     Pos type_pos;                   // where the written type starts (functions: the return type)
     Pos restrict_pos;               // the first restrict keyword of the declarator
     Pos declarator_pos;             // where the declarator starts: `*p` at the *, else the name
+    // function definitions (not lambdas): the first token of the definition (its
+    // template head, if any) and the closing brace of the body, both at the
+    // expansion (a function made by a macro lies on the macro call), and the
+    // preprocessing tokens of the body as written, braces included (-1 if unknown)
+    Pos def_begin;
+    Pos body_end;
+    int body_tokens = -1;
     int group_uid = -1;         // a variable or field: uid of the first declarator of its declaration
     int field_index = -1;       // position in its list: field in the record,
                                 // enumerator in the enum, parameter in the function
@@ -220,6 +230,9 @@ struct NodeRec {
     std::string spelling;           // literals: the characters as written (spelling file)
     std::string role;               // then | else | body: the sub-statement of its parent
     std::string before;             // NullStmt: the character before it on its line, "" if none
+    // its key token (the keyword, a binary operator, the ? of ?:) is written in a
+    // macro body, not in the source or a macro argument
+    bool macro_body = false;
 };
 
 // The tables of one TU, filled while the AST is alive.
@@ -575,10 +588,45 @@ public:
             rec.min_args = static_cast<int>(fn->getMinRequiredArguments());
             if (const auto *ctor = dyn_cast<CXXConstructorDecl>(fn)) rec.is_explicit = ctor->isExplicit();
             if (const auto *conv = dyn_cast<CXXConversionDecl>(fn)) rec.is_explicit = conv->isExplicit();
+            if (fn->doesThisDeclarationHaveABody() && fn->getBody() != nullptr && !(isa<CXXMethodDecl>(fn) && cast<CXXMethodDecl>(fn)->getParent()->isLambda())) {
+                measure_body(fn, rec);
+            }
         }
         if (const auto *var = dyn_cast<VarDecl>(decl)) {
             rec.paren_declarator = paren_declarator(var);
         }
+    }
+
+    // Where a function definition starts and ends, and the tokens of its body as
+    // written (the source text between the braces, macros not expanded).
+    void measure_body(const FunctionDecl *fn, DeclRec &rec) {
+        SourceLocation begin = fn->getOuterLocStart();
+        if (const FunctionTemplateDecl *pattern = fn->getDescribedFunctionTemplate()) {
+            if (pattern->getBeginLoc().isValid()) begin = pattern->getBeginLoc();
+        }
+        const Stmt *body = fn->getBody();
+        SourceLocation open = sm_.getExpansionLoc(body->getBeginLoc());
+        SourceLocation close = sm_.getExpansionRange(body->getEndLoc()).getEnd();
+        rec.def_begin = pos_of(sm_.getExpansionLoc(begin));
+        rec.body_end = pos_of(close);
+        if (open.isInvalid() || close.isInvalid()) return;
+        std::pair<FileID, unsigned> first = sm_.getDecomposedLoc(open);
+        std::pair<FileID, unsigned> last = sm_.getDecomposedLoc(close);
+        if (first.first != last.first || first.second > last.second) return;
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(first.first, &invalid);
+        if (invalid) return;
+        Lexer lexer(sm_.getLocForStartOfFile(first.first), context_.getLangOpts(), buffer.begin(),
+                    buffer.begin() + first.second, buffer.end());
+        int count = 0;
+        Token tok;
+        while (true) {
+            lexer.LexFromRawLexer(tok);
+            if (tok.is(tok::eof)) break;
+            if (sm_.getFileOffset(tok.getLocation()) > last.second) break;
+            ++count;
+        }
+        rec.body_tokens = count;
     }
 
     // A definition that every translation unit including it would repeat: external
@@ -1061,6 +1109,47 @@ public:
         }
     }
 
+    // The line classes of every user file seen, after all records are in.
+    void finish_lines(const LangOptions &lang) {
+        for (const auto &entry : file_ids_) {
+            FileRec &rec = files[static_cast<size_t>(entry.second)];
+            if (rec.kind == "system_header" || !sm_.getFileEntryRefForID(entry.first)) continue;
+            rec.line_classes = line_classes(entry.first, lang);
+        }
+    }
+
+    // Oculus' line counting: the raw tokens of the file, comments kept; a line
+    // touched by a comment token is a comment line, by any other token a code
+    // line, by both a mixed line, by none a blank line.  Code in #if 0 counts.
+    std::string line_classes(FileID fid, const LangOptions &lang) const {
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(fid, &invalid);
+        if (invalid) return "";
+        size_t lines = static_cast<size_t>(buffer.count('\n'));
+        if (!buffer.empty() && buffer.back() != '\n') ++lines;
+        std::vector<unsigned char> marks(lines, 0);
+        Lexer lexer(fid, sm_.getBufferOrFake(fid), sm_, lang);
+        lexer.SetCommentRetentionState(true);
+        Token tok;
+        while (true) {
+            lexer.LexFromRawLexer(tok);
+            if (tok.is(tok::eof)) break;
+            if (tok.getLength() == 0) continue;
+            unsigned offset = sm_.getFileOffset(tok.getLocation());
+            unsigned first = sm_.getLineNumber(fid, offset);
+            unsigned last = sm_.getLineNumber(fid, offset + tok.getLength() - 1);
+            unsigned char bit = tok.is(tok::comment) ? 2 : 1;
+            for (unsigned line = first; line <= last && line >= 1 && line <= lines; ++line) {
+                marks[line - 1] |= bit;
+            }
+        }
+        std::string classes(lines, 'b');
+        for (size_t at = 0; at < lines; ++at) {
+            classes[at] = marks[at] == 1 ? 'x' : marks[at] == 2 ? 'c' : marks[at] == 3 ? 'm' : 'b';
+        }
+        return classes;
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -1080,6 +1169,10 @@ public:
             rec.spelling = literal_spelling(stmt);
         }
         if (isa<NullStmt>(stmt)) rec.before = char_before(stmt->getBeginLoc());
+        SourceLocation key = stmt->getBeginLoc();
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) key = binary->getOperatorLoc();
+        if (const auto *choice = dyn_cast<AbstractConditionalOperator>(stmt)) key = choice->getQuestionLoc();
+        rec.macro_body = in_macro_body(key);
         for (const Stmt *child : stmt->children()) {
             if (child != nullptr) ++rec.child_count;
         }
@@ -1155,6 +1248,16 @@ public:
             }
         }
         return rec.uid;
+    }
+
+    // The token at `loc` comes from a macro body (also of a macro called in a macro
+    // argument), not from the file or from an argument written there.
+    bool in_macro_body(SourceLocation loc) const {
+        while (loc.isMacroID()) {
+            if (!sm_.isMacroArgExpansion(loc)) return true;
+            loc = sm_.getImmediateSpellingLoc(loc);
+        }
+        return loc.isValid() && sm_.isWrittenInScratchSpace(loc);
     }
 
     // The labels of a switch: how many, how many clauses (a top-level label of the
@@ -1573,6 +1676,7 @@ public:
         collector.TraverseDecl(context.getTranslationUnitDecl());
         NodeCollector node_collector(tables, context.getSourceManager());
         node_collector.TraverseDecl(context.getTranslationUnitDecl());
+        tables.finish_lines(lang);
         result_.files = std::move(tables.files);
         result_.types = std::move(tables.types);
         result_.decls = std::move(tables.decls);

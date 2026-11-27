@@ -53,6 +53,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("first_line", static_cast<int64_t>(file.first_line));
                     out.attribute("first_column", static_cast<int64_t>(file.first_column));
                     out.attribute("included_in_declaration", file.included_in_declaration);
+                    out.attribute("line_classes", file.line_classes);
                 });
             }
         });
@@ -148,6 +149,9 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("is_deleted", decl.is_deleted);
                     out.attribute("is_defaulted", decl.is_defaulted);
                     out.attribute("min_args", decl.min_args);
+                    out.attribute("body_tokens", decl.body_tokens);
+                    write_pos(out, "def_begin", decl.def_begin);
+                    write_pos(out, "body_end", decl.body_end);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);
@@ -179,6 +183,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("spelling", node.spelling);
                     out.attribute("role", node.role);
                     out.attribute("before", node.before);
+                    out.attribute("macro_body", node.macro_body);
                 });
             }
         });

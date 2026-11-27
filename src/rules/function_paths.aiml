@@ -1,0 +1,176 @@
+# OC-0382 cyclomatic_complexity and OC-0383 nesting_depth (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: the statements and operators of
+# each function body with their parents.  Both count the source as written: a
+# keyword or operator from a macro body does not count, one in a macro argument
+# does.  A lambda is measured on its own.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/function_size.aiml"
+
+# A decision of McCabe's count: if, the loops, a case label, a handler, ?: and the
+# logical operators.
+- def:
+    name: decision_node
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { "||": [rec.macro_body, { eq: [{ call: [user_node, rec] }, false] }, { lt: [rec.function_uid, 0] }] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^(IfStmt|ForStmt|CXXForRangeStmt|WhileStmt|DoStmt|CaseStmt|CXXCatchStmt|ConditionalOperator|BinaryConditionalOperator)$", rec.kind] }, 0] }, then: [{ return: true }] }
+      - return: { "&&": [{ eq: [{ call: [regex.search, "^BinaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(&&|\\|\\|)$", rec.detail] }, 0] }] }
+
+# Whose count a node adds to: the nearest enclosing lambda ("L<uid>"), else its
+# function ("F<uid>").
+- def:
+    name: decision_owner
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: string
+    body:
+      - decl: [cur, i32, rec.parent_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^LambdaExpr$", upper.kind] }, 0] }, then: [{ return: "L${cur}" }] }
+            - set: [cur, upper.parent_uid]
+      - return: "F${rec.function_uid}"
+
+# A control statement that opens a nesting level.  A function-try-block is the body
+# itself, not a statement in it.
+- def:
+    name: nesting_node
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { "||": [rec.macro_body, { eq: [{ call: [user_node, rec] }, false] }, { lt: [rec.function_uid, 0] }] }, then: [{ return: false }] }
+      - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^CXXTryStmt$", rec.kind] }, 0] }, { lt: [rec.parent_uid, 0] }] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [regex.search, "^(IfStmt|SwitchStmt|ForStmt|CXXForRangeStmt|WhileStmt|DoStmt|CXXTryStmt)$", rec.kind] }, 0] }
+
+# The `if` of an `else if`: the same level as the `if` it continues.
+- def:
+    name: else_if_link
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^IfStmt$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^else$", rec.role] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [info_has_node, info, rec.parent_uid] }, false] }, then: [{ return: false }] }
+      - decl: [upper, ref<IrNode>, { at: [info.nodes, rec.parent_uid] }]
+      - return: { eq: [{ call: [regex.search, "^IfStmt$", upper.kind] }, 0] }
+
+# The nesting depth of a control statement: the levels from it up to its function
+# body or lambda body, itself included.
+- def:
+    name: nesting_depth
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: i32
+    body:
+      - decl: [depth, i32, 0]
+      - decl: [cur, i32, node_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^LambdaExpr$", upper.kind] }, 0] }, then: [{ return: depth }] }
+            - if:
+                condition: { "&&": [{ call: [nesting_node, upper] }, { eq: [{ call: [else_if_link, info, upper] }, false] }] }
+                then:
+                  - set: [depth, { "+": [depth, 1] }]
+            - set: [cur, upper.parent_uid]
+      - return: depth
+
+- class:
+    name: CyclomaticComplexityRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 382, "metric.c90-.19.2.cyclomatic_complexity", "A function does not exceed the configured cyclomatic complexity", "info", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [limit, i32, setting.limit]
+            - if: { condition: { lte: [limit, 0] }, then: [{ set: [limit, 10] }] }
+            - decl: [counts, map<string:i32>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { call: [decision_node, rec] }
+                      then:
+                        - decl: [owner, string, { call: [decision_owner, info, rec] }]
+                        - call: [counts.set, owner, { "+": [{ call: [counts.get, owner, 0] }, 1] }]
+                  - set: [idx, { "+": [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { call: [measured_function, rec] }
+                      then:
+                        - decl: [value, i32, { "+": [{ call: [counts.get, "F${idx}", 0] }, 1] }]
+                        - if:
+                            condition: { gt: [value, limit] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 382, "function '${rec.name}' has a cyclomatic complexity of ${value}, more than the limit of ${limit}"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^LambdaExpr$", rec.kind] }, 0] }, { call: [user_node, rec] }, { eq: [rec.macro_body, false] }] }
+                      then:
+                        - decl: [value, i32, { "+": [{ call: [counts.get, "L${idx}", 0] }, 1] }]
+                        - if:
+                            condition: { gt: [value, limit] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 382, "this lambda has a cyclomatic complexity of ${value}, more than the limit of ${limit}"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NestingDepthRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 383, "metric.c90-.19.2.nesting_depth", "Control statements are not nested deeper than the configured limit", "info", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [limit, i32, setting.limit]
+            - if: { condition: { lte: [limit, 0] }, then: [{ set: [limit, 4] }] }
+            - decl: [words, map<string:string>, { IfStmt: "if", SwitchStmt: "switch", ForStmt: "for", CXXForRangeStmt: "for", WhileStmt: "while", DoStmt: "do", CXXTryStmt: "try" }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [nesting_node, rec] }, { eq: [{ call: [else_if_link, info, rec] }, false] }] }
+                      then:
+                        - decl: [depth, i32, { call: [nesting_depth, info, idx] }]
+                        - if:
+                            condition: { eq: [depth, { "+": [limit, 1] }] }
+                            then:
+                              - decl: [word, string, { call: [words.get, rec.kind, "statement"] }]
+                              - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 383, "this ${word} is nested ${depth} levels deep, more than the limit of ${limit}"] }]
+                  - set: [idx, { "+": [idx, 1] }]

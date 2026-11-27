@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 12
+      - version: 13
 
 - enum:
     name: ClangUnitText
@@ -50,6 +50,7 @@
     values:
       - path
       - kind
+      - line_classes
 
 - enum:
     name: ClangFileNum
@@ -153,6 +154,7 @@
       - is_deleted
       - is_defaulted
       - min_args
+      - body_tokens
 
 - enum:
     name: ClangNodeText
@@ -180,6 +182,7 @@
       - label_count
       - clause_count
       - has_skipped_code
+      - macro_body
 
 - enum:
     name: ClangMacroText
@@ -226,6 +229,8 @@
       - type_pos
       - restrict_pos
       - declarator_pos
+      - def_begin
+      - body_end
 
 - enum:
     name: ClangPosPart

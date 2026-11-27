@@ -39,6 +39,9 @@
 - import: "src/rules/constructors.aiml"
 - import: "src/rules/cxx_casts_operators.aiml"
 - import: "src/rules/macro_shapes.aiml"
+- import: "src/rules/function_size.aiml"
+- import: "src/rules/function_paths.aiml"
+- import: "src/rules/file_lines.aiml"
 
 - class:
     name: RuleRegistry
@@ -234,6 +237,18 @@
             - call: [<.rules.push, reserved_macro]
             - decl: [no_varargs, ptr<Rule>, { new: NoVarargsRule }]
             - call: [<.rules.push, no_varargs]
+            - decl: [function_length, ptr<Rule>, { new: FunctionLengthRule }]
+            - call: [<.rules.push, function_length]
+            - decl: [cyclomatic, ptr<Rule>, { new: CyclomaticComplexityRule }]
+            - call: [<.rules.push, cyclomatic]
+            - decl: [nesting, ptr<Rule>, { new: NestingDepthRule }]
+            - call: [<.rules.push, nesting]
+            - decl: [code_lines, ptr<Rule>, { new: FileCodeLinesRule }]
+            - call: [<.rules.push, code_lines]
+            - decl: [comment_density, ptr<Rule>, { new: CommentDensityRule }]
+            - call: [<.rules.push, comment_density]
+            - decl: [token_count, ptr<Rule>, { new: FunctionTokenCountRule }]
+            - call: [<.rules.push, token_count]
       - def:
           name: rule_count
           args: []

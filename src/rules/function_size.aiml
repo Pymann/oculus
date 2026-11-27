@@ -1,0 +1,91 @@
+# OC-0381 function_length and OC-0389 function_token_count (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: where a function definition
+# starts and where its body ends, and the tokens of the body as written.  Lambdas
+# belong to their enclosing function; a function made by a macro is measured on
+# the macro call.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# A function definition the user wrote, with a body that the frontend measured.
+- def:
+    name: measured_function
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [user_decl, rec] }, false] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^(Function|CXXMethod|CXXConstructor|CXXDestructor|CXXConversion|CXXDeductionGuide)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "||": [rec.is_defaulted, rec.is_deleted] }, then: [{ return: false }] }
+      - return: { "&&": [{ gte: [rec.def_begin.file_uid, 0] }, { eq: [rec.def_begin.file_uid, rec.body_end.file_uid] }] }
+
+# The physical lines of a definition, from its first token to the closing brace.
+- def:
+    name: function_lines
+    args: [[rec, ref<IrDecl>]]
+    return: i32
+    body:
+      - return: { "+": [{ "-": [rec.body_end.line, rec.def_begin.line] }, 1] }
+
+- class:
+    name: FunctionLengthRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 381, "metric.c90-.19.1.function_length", "A function does not exceed the configured number of lines", "info", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [limit, i32, setting.limit]
+            - if: { condition: { lte: [limit, 0] }, then: [{ set: [limit, 100] }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { call: [measured_function, rec] }
+                      then:
+                        - decl: [lines, i32, { call: [function_lines, rec] }]
+                        - if:
+                            condition: { gt: [lines, limit] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 381, "function '${rec.name}' spans ${lines} lines, more than the limit of ${limit}"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: FunctionTokenCountRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 389, "metric.c90-.19.2.function_token_count", "A function body does not exceed the configured number of tokens", "info", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [limit, i32, setting.limit]
+            - if: { condition: { lte: [limit, 0] }, then: [{ set: [limit, 1000] }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [measured_function, rec] }, { gt: [rec.body_tokens, limit] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 389, "the body of function '${rec.name}' has ${rec.body_tokens} tokens, more than the limit of ${limit}"] }]
+                  - set: [idx, { "+": [idx, 1] }]

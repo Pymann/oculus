@@ -72,6 +72,7 @@
       - set: [file.first_line, { call: [oc_file_num, unit, index, ClangFileNum.first_line] }]
       - set: [file.first_column, { call: [oc_file_num, unit, index, ClangFileNum.first_column] }]
       - set: [file.included_in_declaration, { eq: [{ call: [oc_file_num, unit, index, ClangFileNum.included_in_declaration] }, 1] }]
+      - set: [file.line_classes, { call: [oc_file_text, unit, index, ClangFileText.line_classes] }]
       - return: file
 
 - def:
@@ -170,6 +171,9 @@
       - set: [rec.type_pos, { call: [shim_pos, unit, index, ClangPosWhich.type_pos] }]
       - set: [rec.restrict_pos, { call: [shim_pos, unit, index, ClangPosWhich.restrict_pos] }]
       - set: [rec.declarator_pos, { call: [shim_pos, unit, index, ClangPosWhich.declarator_pos] }]
+      - set: [rec.def_begin, { call: [shim_pos, unit, index, ClangPosWhich.def_begin] }]
+      - set: [rec.body_end, { call: [shim_pos, unit, index, ClangPosWhich.body_end] }]
+      - set: [rec.body_tokens, { call: [oc_decl_num, unit, index, ClangDeclNum.body_tokens] }]
       - return: rec
 
 - def:
@@ -209,6 +213,7 @@
       - set: [rec.label_count, { call: [oc_node_num, unit, index, ClangNodeNum.label_count] }]
       - set: [rec.clause_count, { call: [oc_node_num, unit, index, ClangNodeNum.clause_count] }]
       - set: [rec.has_skipped_code, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.has_skipped_code] }, 1] }]
+      - set: [rec.macro_body, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.macro_body] }, 1] }]
       - return: rec
 
 - def:

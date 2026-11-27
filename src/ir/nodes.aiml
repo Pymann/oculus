@@ -46,3 +46,6 @@
       - [role, string, ""]
       # NullStmt: the character before it on its line ("" if it starts the line)
       - [before, string, ""]
+      # the key token (keyword, binary operator, the ? of ?:) is written in a macro
+      # body, not in the file or in a macro argument
+      - [macro_body, bool, false]

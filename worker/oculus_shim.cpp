@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 12;
+constexpr int32_t OC_SHIM_ABI = 13;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -71,6 +71,8 @@ const Pos *pos_at(const DeclRec &decl, int32_t which) {
     case ClangPosWhich_type_pos: return &decl.type_pos;
     case ClangPosWhich_restrict_pos: return &decl.restrict_pos;
     case ClangPosWhich_declarator_pos: return &decl.declarator_pos;
+    case ClangPosWhich_def_begin: return &decl.def_begin;
+    case ClangPosWhich_body_end: return &decl.body_end;
     default: return nullptr;
     }
 }
@@ -140,6 +142,7 @@ OC_EXPORT char *oc_file_text(void *unit, int32_t index, int32_t field) {
     switch (field) {
     case ClangFileText_path: return fresh(file->path);
     case ClangFileText_kind: return fresh(file->kind);
+    case ClangFileText_line_classes: return fresh(file->line_classes);
     default: return fresh("");
     }
 }
@@ -273,6 +276,7 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_is_deleted: return flag(decl->is_deleted);
     case ClangDeclNum_is_defaulted: return flag(decl->is_defaulted);
     case ClangDeclNum_min_args: return decl->min_args;
+    case ClangDeclNum_body_tokens: return decl->body_tokens;
     default: return -1;
     }
 }
@@ -327,6 +331,7 @@ OC_EXPORT int32_t oc_node_num(void *unit, int32_t index, int32_t field) {
     case ClangNodeNum_label_count: return node->label_count;
     case ClangNodeNum_clause_count: return node->clause_count;
     case ClangNodeNum_has_skipped_code: return flag(node->has_skipped_code);
+    case ClangNodeNum_macro_body: return flag(node->macro_body);
     default: return -1;
     }
 }

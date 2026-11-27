@@ -1,0 +1,128 @@
+# OC-0387 file_code_lines and OC-0388 comment_density (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: the line classes of each user
+# file (IrFile.line_classes: b blank, c comment, x code, m code and comment).  A
+# header is measured in every unit that includes it; the scanner reports a finding
+# once.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# A source file or header of the user's that the frontend classified.
+- def:
+    name: measured_file
+    args: [[file, ref<IrFile>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^(source|header)$", file.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^<", file.path] }, 0] }, then: [{ return: false }] }
+      - return: { gt: [file.line_classes.len, 0] }
+
+# The lines of the classes `first` and `second`.
+- def:
+    name: class_lines
+    args: [[classes, string], [first, string], [second, string]]
+    return: i32
+    body:
+      - decl: [rest, string, { call: [classes.replace, first, ""] }]
+      - set: [rest, { call: [rest.replace, second, ""] }]
+      - return: { "-": [classes.len, rest.len] }
+
+# The line number of the code line number `wanted` (1-based), 0 if there is none.
+- def:
+    name: nth_code_line
+    args: [[classes, string], [wanted, i32]]
+    return: i32
+    body:
+      - decl: [seen, i32, 0]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, classes.len] }
+          body:
+            - decl: [one, string, { call: [classes.substr, idx, 1] }]
+            - if:
+                condition: { eq: [{ call: [regex.search, "^[xm]$", one] }, 0] }
+                then:
+                  - set: [seen, { "+": [seen, 1] }]
+                  - if: { condition: { eq: [seen, wanted] }, then: [{ return: { "+": [idx, 1] } }] }
+            - set: [idx, { "+": [idx, 1] }]
+      - return: 0
+
+- class:
+    name: FileCodeLinesRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 387, "metric.c90-.19.1.file_code_lines", "A source file does not exceed the configured number of code lines (blank and comment lines not counted)", "info", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [limit, i32, setting.limit]
+            - if: { condition: { lte: [limit, 0] }, then: [{ set: [limit, 750] }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.files.len] }
+                body:
+                  - decl: [file, ref<IrFile>, { at: [info.files, idx] }]
+                  - if:
+                      condition: { call: [measured_file, file] }
+                      then:
+                        - decl: [code, i32, { call: [class_lines, file.line_classes, "x", "m"] }]
+                        - if:
+                            condition: { gt: [code, limit] }
+                            then:
+                              - decl: [where, IrPos]
+                              - set: [where.file_uid, idx]
+                              - set: [where.line, { call: [nth_code_line, file.line_classes, { "+": [limit, 1] }] }]
+                              - set: [where.column, 1]
+                              - call: [out.push, { call: [pos_finding, unit, where, 387, "file has ${code} code lines, more than the limit of ${limit}"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: CommentDensityRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 388, "metric.c90-.19.1.comment_density", "A source file has at least the configured share of comment lines", "info", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [percent, i32, setting.percent]
+            - if: { condition: { lte: [percent, 0] }, then: [{ set: [percent, 10] }] }
+            - decl: [minimum, i32, setting.minimum]
+            - if: { condition: { lte: [minimum, 0] }, then: [{ set: [minimum, 20] }] }
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.files.len] }
+                body:
+                  - decl: [file, ref<IrFile>, { at: [info.files, idx] }]
+                  - if:
+                      condition: { call: [measured_file, file] }
+                      then:
+                        - decl: [code, i32, { call: [class_lines, file.line_classes, "x", "m"] }]
+                        - decl: [comment, i32, { call: [class_lines, file.line_classes, "c", "m"] }]
+                        - if:
+                            condition: { "&&": [{ gte: [code, minimum] }, { lt: [{ "*": [comment, 100] }, { "*": [percent, { "+": [comment, code] }] }] }] }
+                            then:
+                              - decl: [share, i32, { "/": [{ "*": [comment, 100] }, { "+": [comment, code] }] }]
+                              - decl: [where, IrPos]
+                              - set: [where.file_uid, idx]
+                              - set: [where.line, 1]
+                              - set: [where.column, 1]
+                              - call: [out.push, { call: [pos_finding, unit, where, 388, "${share}% of the comment and code lines are comments, less than the required ${percent}%"] }]
+                  - set: [idx, { "+": [idx, 1] }]
