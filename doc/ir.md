@@ -500,8 +500,10 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `IrNode.role` (`then`, `else` or `body` under an if, loop or switch; an omitted
   implicit cast passes its role to its operand) and `IrNode.before` (for an empty
   statement, the character before it on its line).
-- `IrDecl.is_explicit`, `is_deleted` and `min_args` for constructors and other
-  functions.
+- `IrDecl.is_explicit`, `is_deleted`, `is_defaulted` and `min_args` for
+  constructors and other functions.
+- `IrMacro.splice_pos`: the first backslash continuation of a #define; an
+  include record's `name_pos` is its header name.
 
 ## 12. Notes on the AIML side
 

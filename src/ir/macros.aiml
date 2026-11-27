@@ -40,4 +40,6 @@
       - [stringize_paste, IrPos]
       - [uses_call_site, bool, false]
       - [line_count, i32, 1]
+      # define over several lines: the first backslash that continues a line
+      - [splice_pos, IrPos]
       - [defined_file_uid, i32, -1]

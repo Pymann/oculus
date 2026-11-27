@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 11;
+constexpr int32_t OC_SHIM_ABI = 12;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -271,6 +271,7 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_paren_declarator: return flag(decl->paren_declarator);
     case ClangDeclNum_is_explicit: return flag(decl->is_explicit);
     case ClangDeclNum_is_deleted: return flag(decl->is_deleted);
+    case ClangDeclNum_is_defaulted: return flag(decl->is_defaulted);
     case ClangDeclNum_min_args: return decl->min_args;
     default: return -1;
     }
@@ -392,7 +393,8 @@ OC_EXPORT int32_t oc_macro_pos(void *unit, int32_t index, int32_t which, int32_t
                    : which == ClangMacroPos_name_pos ? &macro->name_pos
                    : which == ClangMacroPos_first_operator ? &macro->first_operator
                    : which == ClangMacroPos_second_operator ? &macro->second_operator
-                   : which == ClangMacroPos_stringize_paste ? &macro->stringize_paste : nullptr;
+                   : which == ClangMacroPos_stringize_paste ? &macro->stringize_paste
+                   : which == ClangMacroPos_splice_pos ? &macro->splice_pos : nullptr;
     if (pos == nullptr) {
         return -1;
     }

@@ -130,6 +130,8 @@
       - [is_explicit, bool, false]
       # functions defined as deleted
       - [is_deleted, bool, false]
+      # functions defined as defaulted (written, or implied for special members)
+      - [is_defaulted, bool, false]
       # functions: the arguments a call needs, default arguments not counted
       - [min_args, i32, -1]
       # where the written type starts (functions: the return type)

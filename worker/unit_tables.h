@@ -107,6 +107,7 @@ struct MacroRec {
     Pos stringize_paste;        // a ## right after `#param`
     bool uses_call_site = false;  // __FILE__, __LINE__, __func__ ... or a macro that does
     int line_count = 1;         // lines of the definition (backslash continuations)
+    Pos splice_pos;             // define: the first backslash that continues the line
     int defined_file_uid = -1;  // undef: file of the definition it removes; -2 none in a file;
                                 // include: the file included; expansion: file of the definition
 };
@@ -179,6 +180,7 @@ struct DeclRec {
     bool paren_declarator = false;  // a local `T (name);`: the name alone in parentheses, no initializer
     bool is_explicit = false;       // constructors and conversion functions: explicit (also explicit(true))
     bool is_deleted = false;        // functions: = delete
+    bool is_defaulted = false;      // functions: = default (written or implied)
     int min_args = -1;              // functions: arguments a call needs (default arguments not counted)
     Pos type_pos;                   // where the written type starts (functions: the return type)
     Pos restrict_pos;               // the first restrict keyword of the declarator
@@ -569,6 +571,7 @@ public:
         rec.odr_definition = odr_definition(decl);
         if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
             rec.is_deleted = fn->isDeleted();
+            rec.is_defaulted = fn->isDefaulted();
             rec.min_args = static_cast<int>(fn->getMinRequiredArguments());
             if (const auto *ctor = dyn_cast<CXXConstructorDecl>(fn)) rec.is_explicit = ctor->isExplicit();
             if (const auto *conv = dyn_cast<CXXConversionDecl>(fn)) rec.is_explicit = conv->isExplicit();
@@ -644,6 +647,23 @@ public:
         } else if (const auto *choice = dyn_cast<SwitchStmt>(stmt)) {
             mark(choice->getBody(), "body");
         }
+    }
+
+    // The first backslash-newline after `from` on the same logical line.
+    Pos first_splice(SourceLocation from) {
+        std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(from);
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(at.first, &invalid);
+        if (invalid) return Pos();
+        for (unsigned offset = at.second; offset < buffer.size(); ++offset) {
+            char ch = buffer[offset];
+            if (ch == '\n') break;
+            if (ch != '\\') continue;
+            unsigned next = offset + 1;
+            while (next < buffer.size() && (buffer[next] == ' ' || buffer[next] == '\t' || buffer[next] == '\r')) ++next;
+            if (next < buffer.size() && buffer[next] == '\n') return pos_of(sm_.getComposedLoc(at.first, offset));
+        }
+        return Pos();
     }
 
     // A literal as written: the characters from its first to its last token in the
@@ -874,7 +894,7 @@ public:
     }
 
     // An #include written by the user: name and body hold the header name as
-    // written (`setjmp.h`, `<setjmp.h>`), pos the #, defined_file_uid the file
+    // written (`setjmp.h`, `<setjmp.h>`), pos the #, name_pos the < or ", defined_file_uid the file
     // entered.  A header name made by a macro is not recorded.
     void note_include(SourceLocation entered) {
         SourceLocation include = sm_.getIncludeLoc(sm_.getFileID(entered));
@@ -903,7 +923,7 @@ public:
         rec.name = rest.substr(1, stop - 1).str();
         rec.body = rest.substr(0, stop + 1).str();
         rec.pos = pos_of(sm_.getComposedLoc(at.first, start + static_cast<unsigned>(hash)));
-        rec.name_pos = rec.pos;
+        rec.name_pos = pos_of(sm_.getComposedLoc(at.first, static_cast<unsigned>(rest.data() - buffer.data())));
         rec.defined_file_uid = file_of(entered);
         macros.push_back(rec);
     }
@@ -947,6 +967,7 @@ public:
         rec.param_count = static_cast<int>(info->getNumParams());
         rec.line_count = static_cast<int>(sm_.getSpellingLineNumber(info->getDefinitionEndLoc()) -
                                           sm_.getSpellingLineNumber(info->getDefinitionLoc())) + 1;
+        if (rec.line_count > 1) rec.splice_pos = first_splice(info->getDefinitionLoc());
         llvm::ArrayRef<Token> tokens = info->tokens();
         int operators = 0;
         for (size_t at = 0; at < tokens.size(); ++at) {

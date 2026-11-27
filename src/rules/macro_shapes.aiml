@@ -1,0 +1,74 @@
+# OC-0143 no_spliced_macro and OC-0160 no_reserved_macro (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: #define and #undef records with
+# their name, the number of lines and the first backslash continuation.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# A reserved name (underscore and upper case, two underscores) or the name of a
+# standard library macro, object or function; the feature-test and library
+# configuration macros are meant to be defined by the user.
+- def:
+    name: reserved_macro_name
+    args: [[name, string]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [regex.search, "^(_GNU_SOURCE|_POSIX_C_SOURCE|_POSIX_SOURCE|_XOPEN_SOURCE|_XOPEN_SOURCE_EXTENDED|_DEFAULT_SOURCE|_BSD_SOURCE|_SVID_SOURCE|_ISOC99_SOURCE|_ISOC11_SOURCE|_ISOC2X_SOURCE|_ISOC23_SOURCE|_LARGEFILE_SOURCE|_LARGE_FILE|_LARGE_FILES|_LARGEFILE64_SOURCE|_FILE_OFFSET_BITS|_TIME_BITS|_REENTRANT|_THREAD_SAFE|_ALL_SOURCE|_NETBSD_SOURCE|_DARWIN_C_SOURCE|_FORTIFY_SOURCE|_CRT_SECURE_NO_WARNINGS|_CRT_SECURE_NO_DEPRECATE|_CRT_NONSTDC_NO_DEPRECATE|_CRT_NONSTDC_NO_WARNINGS|_CRT_RAND_S|_WIN32_WINNT|_WIN32_IE|_USE_MATH_DEFINES|_HAS_EXCEPTIONS|_ITERATOR_DEBUG_LEVEL|_LIBCPP_[A-Z0-9_]+|_GLIBCXX_[A-Z0-9_]+|__STDC_WANT_[A-Z0-9_]+__|__STDC_FORMAT_MACROS|__STDC_LIMIT_MACROS|__STDC_CONSTANT_MACROS|__EXTENSIONS__|__USE_MINGW_ANSI_STDIO)$", name] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^_[A-Z_]", name] }, 0] }, then: [{ return: true }] }
+      - return: { eq: [{ call: [regex.search, "^(defined|assert|errno|NULL|EOF|offsetof|setjmp|longjmp|va_arg|va_start|va_end|va_copy|stdin|stdout|stderr|malloc|calloc|realloc|free|abort|exit|atexit|memcpy|memmove|memset|memcmp|memchr|strlen|strcpy|strncpy|strcat|strncat|strcmp|strncmp|strchr|strrchr|strstr|printf|fprintf|sprintf|snprintf|puts|putchar|getchar|fopen|fclose|CHAR_BIT|SCHAR_MAX|SCHAR_MIN|UCHAR_MAX|CHAR_MAX|CHAR_MIN|SHRT_MAX|SHRT_MIN|USHRT_MAX|INT_MAX|INT_MIN|UINT_MAX|LONG_MAX|LONG_MIN|ULONG_MAX|LLONG_MAX|LLONG_MIN|ULLONG_MAX|SIZE_MAX|PTRDIFF_MAX|INT8_MAX|INT16_MAX|INT32_MAX|INT64_MAX|UINT8_MAX|UINT16_MAX|UINT32_MAX|UINT64_MAX|EXIT_SUCCESS|EXIT_FAILURE|RAND_MAX|BUFSIZ|FILENAME_MAX|SEEK_SET|SEEK_CUR|SEEK_END)$", name] }, 0] }
+
+- class:
+    name: NoSplicedMacroRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 143, "style.c90-.12.2.no_spliced_macro", "A macro definition is written on one line", "warn", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^define$", rec.kind] }, 0] }, { gt: [rec.line_count, 1] }, { gt: [rec.splice_pos.line, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.splice_pos, 143, "this macro continues over several lines; write it on one line or as a function"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoReservedMacroRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 160, "safety.c90-.13.1.no_reserved_macro", "Reserved names are not defined or undefined as macros", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^(define|undef)$", rec.kind] }, 0] }, { call: [reserved_macro_name, rec.name] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 160, "${rec.name} is a reserved or standard library name; choose a name of the project"] }]
+                  - set: [idx, { "+": [idx, 1] }]

@@ -37,6 +37,8 @@
 - import: "src/rules/literals.aiml"
 - import: "src/rules/statement_shapes.aiml"
 - import: "src/rules/constructors.aiml"
+- import: "src/rules/cxx_casts_operators.aiml"
+- import: "src/rules/macro_shapes.aiml"
 
 - class:
     name: RuleRegistry
@@ -220,6 +222,18 @@
             - call: [<.rules.push, null_alone]
             - decl: [explicit_ctor, ptr<Rule>, { new: ExplicitSingleArgConstructorRule }]
             - call: [<.rules.push, explicit_ctor]
+            - decl: [c_style_cast_rule, ptr<Rule>, { new: NoCStyleCastRule }]
+            - call: [<.rules.push, c_style_cast_rule]
+            - decl: [float_equality, ptr<Rule>, { new: NoFloatEqualityRule }]
+            - call: [<.rules.push, float_equality]
+            - decl: [symmetric_operator, ptr<Rule>, { new: SymmetricOperatorNonMemberRule }]
+            - call: [<.rules.push, symmetric_operator]
+            - decl: [spliced_macro, ptr<Rule>, { new: NoSplicedMacroRule }]
+            - call: [<.rules.push, spliced_macro]
+            - decl: [reserved_macro, ptr<Rule>, { new: NoReservedMacroRule }]
+            - call: [<.rules.push, reserved_macro]
+            - decl: [no_varargs, ptr<Rule>, { new: NoVarargsRule }]
+            - call: [<.rules.push, no_varargs]
       - def:
           name: rule_count
           args: []

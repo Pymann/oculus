@@ -146,6 +146,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("paren_declarator", decl.paren_declarator);
                     out.attribute("is_explicit", decl.is_explicit);
                     out.attribute("is_deleted", decl.is_deleted);
+                    out.attribute("is_defaulted", decl.is_defaulted);
                     out.attribute("min_args", decl.min_args);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
@@ -198,6 +199,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     write_pos(out, "first_operator", macro.first_operator);
                     write_pos(out, "second_operator", macro.second_operator);
                     write_pos(out, "stringize_paste", macro.stringize_paste);
+                    write_pos(out, "splice_pos", macro.splice_pos);
                     out.attribute("uses_call_site", macro.uses_call_site);
                     out.attribute("line_count", macro.line_count);
                     out.attribute("defined_file_uid", macro.defined_file_uid);

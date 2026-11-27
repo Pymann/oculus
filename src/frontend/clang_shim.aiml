@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 11
+      - version: 12
 
 - enum:
     name: ClangUnitText
@@ -151,6 +151,7 @@
       - paren_declarator
       - is_explicit
       - is_deleted
+      - is_defaulted
       - min_args
 
 - enum:
@@ -211,6 +212,7 @@
       - first_operator
       - second_operator
       - stringize_paste
+      - splice_pos
 
 # Which position of a declaration, and which part of it.
 - enum:
