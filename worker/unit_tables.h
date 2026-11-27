@@ -19,6 +19,7 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Analysis/Analyses/ExprMutationAnalyzer.h"
+#include "clang/Basic/Builtins.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
@@ -1028,6 +1029,85 @@ public:
         pending_shape_[ref] = "float_loop_counter";
     }
 
+    // C library functions whose result may be ignored: printf to stdout (the
+    // catalogue reports fprintf) and the functions that return their first
+    // argument.
+    static bool ignorable_result(const FunctionDecl *callee, const SourceManager &sm) {
+        if (callee->getIdentifier() == nullptr) return false;
+        const DeclContext *owner = callee->getDeclContext()->getRedeclContext();
+        if (!owner->isTranslationUnit() && !callee->isInStdNamespace()) return false;
+        SourceLocation spelled = sm.getSpellingLoc(callee->getFirstDecl()->getLocation());
+        if (spelled.isInvalid() || !sm.isInSystemHeader(spelled)) return false;
+        static const char *const names[] = {
+            "printf", "vprintf", "wprintf", "vwprintf",
+            "memcpy", "memmove", "memset", "strcpy", "strncpy", "strcat", "strncat", "wmemcpy",
+            "wmemmove", "wmemset", "wcscpy", "wcsncpy", "wcscat", "wcsncat"};
+        StringRef name = callee->getName();
+        for (const char *known : names) {
+            if (name == known) return true;
+        }
+        return false;
+    }
+
+    // A call whose non-void result is thrown away: the call is an expression
+    // statement (also as the body of if, while, for, case, a label, and the
+    // first clause of a for header; not the third clause, not the last
+    // statement of a GNU statement expression).  Overloaded operators, the
+    // ignorable C library functions and builtins that are no library functions
+    // are left out.
+    bool unused_result(const CallExpr *call) {
+        if (isa<CXXOperatorCallExpr>(call) || isa<UserDefinedLiteral>(call) || call->isTypeDependent()) return false;
+        if (call->getType().isNull() || call->getType()->isVoidType()) return false;
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee != nullptr) {
+            unsigned builtin = callee->getBuiltinID();
+            if (builtin != 0 && !context_.BuiltinInfo.isLibFunction(builtin) && !context_.BuiltinInfo.isPredefinedLibFunction(builtin)) return false;
+            if (ignorable_result(callee, sm_)) return false;
+            // The C++ standard library: only what it marks [[nodiscard]] (empty(),
+            // not erase()).
+            SourceLocation declared = sm_.getSpellingLoc(callee->getFirstDecl()->getLocation());
+            bool library = declared.isValid() && sm_.isInSystemHeader(declared);
+            const DeclContext *owner = callee->getDeclContext();
+            bool cxx_library = library && context_.getLangOpts().CPlusPlus &&
+                               (callee->isInStdNamespace() || isa<CXXMethodDecl>(callee) ||
+                                !owner->getRedeclContext()->isTranslationUnit());
+            if (cxx_library && !callee->hasAttr<WarnUnusedResultAttr>() &&
+                (!isa<CXXMethodDecl>(callee) || !cast<CXXMethodDecl>(callee)->getParent()->hasAttr<WarnUnusedResultAttr>())) {
+                return false;
+            }
+        }
+        DynTypedNode node = DynTypedNode::create(*static_cast<const Stmt *>(call));
+        for (int depth = 0; depth < 8; ++depth) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return false;
+            const Stmt *parent = parents[0].get<Stmt>();
+            const Stmt *self = node.get<Stmt>();
+            if (parent == nullptr || self == nullptr) return false;
+            if (isa<ParenExpr>(parent) || isa<ExprWithCleanups>(parent) || isa<CXXBindTemporaryExpr>(parent) ||
+                isa<MaterializeTemporaryExpr>(parent) || isa<ConstantExpr>(parent)) {
+                node = parents[0];
+                continue;
+            }
+            if (const auto *block = dyn_cast<CompoundStmt>(parent)) {
+                auto above = context_.getParents(*block);
+                bool value_of_block = above.size() == 1 && above[0].get<StmtExpr>() != nullptr &&
+                                      !block->body_empty() && block->body_back() == self;
+                return !value_of_block;
+            }
+            if (const auto *branch = dyn_cast<IfStmt>(parent)) return branch->getThen() == self || branch->getElse() == self;
+            if (const auto *loop = dyn_cast<WhileStmt>(parent)) return loop->getBody() == self;
+            if (const auto *loop = dyn_cast<DoStmt>(parent)) return loop->getBody() == self;
+            if (const auto *loop = dyn_cast<ForStmt>(parent)) return loop->getBody() == self || loop->getInit() == self;
+            if (const auto *loop = dyn_cast<CXXForRangeStmt>(parent)) return loop->getBody() == self;
+            if (const auto *label = dyn_cast<CaseStmt>(parent)) return label->getSubStmt() == self;
+            if (const auto *label = dyn_cast<DefaultStmt>(parent)) return label->getSubStmt() == self;
+            if (const auto *label = dyn_cast<LabelStmt>(parent)) return label->getSubStmt() == self;
+            if (const auto *attributed = dyn_cast<AttributedStmt>(parent)) return attributed->getSubStmt() == self;
+            return false;
+        }
+        return false;
+    }
+
     // Shapes of one node are a comma-separated list.
     static void add_shape(NodeRec &rec, const std::string &shape) {
         if (shape.empty()) return;
@@ -1214,11 +1294,23 @@ public:
         std::string text = buffer.substr(at.second, end - at.second).str();
         Lexer raw(sm_.getExpansionLoc(condition.getBegin()), pp.getLangOpts(), text.c_str(), text.c_str(),
                   text.c_str() + text.size());
+        raw.SetCommentRetentionState(false);
+        std::vector<Token> tokens;
         Token tok;
-        int after_defined = 0;
         while (true) {
             raw.LexFromRawLexer(tok);
             if (tok.is(tok::eof)) break;
+            tokens.push_back(tok);
+        }
+        note_defined_macro(pp, tokens);
+        note_undefined_identifier(pp, tokens);
+        note_number_condition(pp, tokens);
+    }
+
+    // A macro used in the condition that expands to `defined` (kind condition).
+    void note_defined_macro(Preprocessor &pp, const std::vector<Token> &tokens) {
+        int after_defined = 0;
+        for (const Token &tok : tokens) {
             if (tok.is(tok::raw_identifier)) {
                 llvm::StringRef word = tok.getRawIdentifier();
                 if (word == "defined") { after_defined = 2; continue; }
@@ -1238,6 +1330,107 @@ public:
             }
             after_defined = tok.is(tok::l_paren) && after_defined == 2 ? 1 : 0;
         }
+    }
+
+    static bool operator_word(llvm::StringRef word, const LangOptions &lang) {
+        if (lang.CPlusPlus || lang.C23) {
+            if (word == "true" || word == "false") return true;
+        }
+        if (!lang.CPlusPlus) return false;
+        static const char *const words[] = {"and", "and_eq", "bitand", "bitor", "compl", "not",
+                                            "not_eq", "or", "or_eq", "xor", "xor_eq"};
+        for (const char *known : words) {
+            if (word == known) return true;
+        }
+        return false;
+    }
+
+    // An identifier of the condition that is no macro and not the operand of
+    // `defined` (kind undefined_condition, the first one).  Conditions with &&, ||
+    // or ?: are left alone: their short circuit may never evaluate it.  The
+    // arguments of anything called (__has_include, __has_attribute, a
+    // function-like macro) are skipped.
+    void note_undefined_identifier(Preprocessor &pp, const std::vector<Token> &tokens) {
+        const LangOptions &lang = pp.getLangOpts();
+        for (const Token &tok : tokens) {
+            if (tok.isOneOf(tok::ampamp, tok::pipepipe, tok::question)) return;
+            if (tok.is(tok::raw_identifier)) {
+                llvm::StringRef word = tok.getRawIdentifier();
+                if (lang.CPlusPlus && (word == "and" || word == "or")) return;
+            }
+        }
+        for (size_t idx = 0; idx < tokens.size(); ++idx) {
+            const Token &tok = tokens[idx];
+            if (!tok.is(tok::raw_identifier)) continue;
+            llvm::StringRef word = tok.getRawIdentifier();
+            if (word == "defined") {
+                ++idx;
+                if (idx < tokens.size() && tokens[idx].is(tok::l_paren)) ++idx;
+                continue;
+            }
+            if (idx + 1 < tokens.size() && tokens[idx + 1].is(tok::l_paren)) {
+                int depth = 0;
+                for (++idx; idx < tokens.size(); ++idx) {
+                    if (tokens[idx].is(tok::l_paren)) ++depth;
+                    if (tokens[idx].is(tok::r_paren) && --depth == 0) break;
+                }
+                continue;
+            }
+            if (operator_word(word, lang) || pp.isMacroDefined(word)) continue;
+            MacroRec rec = directive_rec("undefined_condition", pp, tok);
+            rec.name = word.str();
+            rec.loc = SourceLocation();
+            macros.push_back(rec);
+            return;
+        }
+    }
+
+    // The value of an integer literal token, -1 if it is not one.
+    static long long literal_value(llvm::StringRef text) {
+        while (!text.empty() && std::strchr("uUlL", text.back()) != nullptr) text = text.drop_back();
+        unsigned long long value = 0;
+        if (text.empty() || text.getAsInteger(0, value) || value > (1ULL << 62)) return -1;
+        return static_cast<long long>(value);
+    }
+
+    // A condition that is one integer literal, or one object-like macro whose
+    // replacement is (through other such macros) one integer literal, with a
+    // value other than 0 or 1 (kind number_condition, name the literal).
+    void note_number_condition(Preprocessor &pp, const std::vector<Token> &tokens) {
+        size_t first = 0;
+        size_t last = tokens.size();
+        while (last >= first + 3 && tokens[first].is(tok::l_paren) && tokens[last - 1].is(tok::r_paren)) {
+            ++first;
+            --last;
+        }
+        if (last != first + 1) return;
+        const Token &only = tokens[first];
+        std::string spelled;
+        if (only.is(tok::numeric_constant)) {
+            spelled = std::string(only.getLiteralData(), only.getLength());
+        } else if (only.is(tok::raw_identifier)) {
+            const IdentifierInfo *name = pp.getIdentifierInfo(only.getRawIdentifier());
+            for (int depth = 0; depth < 8 && spelled.empty(); ++depth) {
+                const MacroInfo *info = name == nullptr ? nullptr : pp.getMacroInfo(name);
+                if (info == nullptr || info->isFunctionLike() || info->getNumTokens() != 1) return;
+                const Token &body = info->getReplacementToken(0);
+                if (body.is(tok::numeric_constant)) {
+                    spelled = pp.getSpelling(body);
+                } else if (body.is(tok::identifier)) {
+                    name = body.getIdentifierInfo();
+                } else {
+                    return;
+                }
+            }
+        } else {
+            return;
+        }
+        long long value = literal_value(spelled);
+        if (value < 0 || value == 0 || value == 1) return;
+        MacroRec rec = directive_rec("number_condition", pp, only);
+        rec.name = spelled;
+        rec.loc = SourceLocation();
+        macros.push_back(rec);
     }
 
     // Is `loc` (or a macro it comes from) the expansion of the macro errno?
@@ -2082,6 +2275,42 @@ public:
         }
     }
 
+    // The argument list of a function-like macro written in a file (the name to
+    // the closing parenthesis), for directive_in_args.
+    void note_argument_range(const MacroDefinition &definition, SourceRange range) {
+        const MacroInfo *info = definition.getMacroInfo();
+        if (info == nullptr || !info->isFunctionLike()) return;
+        SourceLocation begin = range.getBegin();
+        SourceLocation end = range.getEnd();
+        if (!begin.isFileID() || !end.isFileID()) return;
+        std::pair<FileID, unsigned> from = sm_.getDecomposedLoc(begin);
+        std::pair<FileID, unsigned> upto = sm_.getDecomposedLoc(end);
+        if (from.first != upto.first || upto.second <= from.second) return;
+        argument_ranges_[from.first].push_back({from.second, upto.second});
+    }
+
+    // The index of the argument range of the file that holds `offset`, -1 if none.
+    int argument_range_of(FileID fid, unsigned offset) const {
+        auto found = argument_ranges_.find(fid);
+        if (found == argument_ranges_.end()) return -1;
+        for (size_t idx = 0; idx < found->second.size(); ++idx) {
+            const auto &range = found->second[idx];
+            if (offset > range.first && offset < range.second) return static_cast<int>(idx);
+        }
+        return -1;
+    }
+
+    static bool known_directive(llvm::StringRef name) {
+        static const char *const names[] = {"if", "ifdef", "ifndef", "elif", "elifdef", "elifndef", "else",
+                                            "endif", "define", "undef", "include", "include_next", "import",
+                                            "line", "error", "warning", "pragma", "ident", "sccs", "assert",
+                                            "unassert", "embed"};
+        for (const char *known : names) {
+            if (name == known) return true;
+        }
+        return false;
+    }
+
     // The lexical marks of a file (FileRec.lexical_marks).  The raw tokens, comments
     // kept; literals in skipped code and on #include, #error and #warning lines
     // are not looked at.
@@ -2102,6 +2331,8 @@ public:
         Token tok;
         bool directive_quiet = false;
         bool after_hash = false;
+        unsigned hash_offset = 0;
+        std::set<int> reported_ranges;
         unsigned digraph_end = ~0u;
         while (true) {
             lexer.LexFromRawLexer(tok);
@@ -2123,12 +2354,20 @@ public:
             if (tok.isAtStartOfLine()) {
                 directive_quiet = false;
                 after_hash = tok.is(tok::hash);
+                if (after_hash) {
+                    hash_offset = offset;
+                    int range = argument_range_of(fid, offset);
+                    if (range >= 0 && reported_ranges.insert(range).second) add_mark(out, "directive_in_args", fid, offset);
+                }
             } else if (after_hash) {
                 after_hash = false;
                 if (tok.is(tok::raw_identifier)) {
                     llvm::StringRef name = tok.getRawIdentifier();
                     directive_quiet = name == "include" || name == "include_next" || name == "import" ||
                                       name == "error" || name == "warning";
+                    if (!known_directive(name)) add_mark(out, "invalid_directive", fid, hash_offset);
+                } else if (!tok.isOneOf(tok::numeric_constant, tok::comment)) {
+                    add_mark(out, "invalid_directive", fid, hash_offset);
                 }
             }
             if (tok.is(tok::comment)) {
@@ -2220,6 +2459,7 @@ public:
         if (const auto *call = dyn_cast<CallExpr>(stmt)) {
             note_move(call);
             note_array_decay(call);
+            if (unused_result(call)) add_shape(rec, "unused_result");
         }
         note_float_counter(stmt);
         if (isa<IntegerLiteral>(stmt) || isa<GNUNullExpr>(stmt)) {
@@ -2844,6 +3084,7 @@ private:
     std::set<const VarDecl *> errno_saved_;
     std::set<const Stmt *> shadowed_handlers_;
     std::map<const Stmt *, std::string> pending_shape_;
+    std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> argument_ranges_;
     struct ScopeRange {
         FileID fid;
         unsigned begin;
@@ -2870,9 +3111,10 @@ public:
                         const MacroDirective *) override {
         tables_->note_undef(pp_, name, definition);
     }
-    void MacroExpands(const Token &name, const MacroDefinition &definition, SourceRange,
+    void MacroExpands(const Token &name, const MacroDefinition &definition, SourceRange range,
                       const MacroArgs *args) override {
         tables_->note_expansion(pp_, name, definition, args);
+        tables_->note_argument_range(definition, range);
     }
     void PragmaDirective(SourceLocation loc, PragmaIntroducerKind) override {
         tables_->note_pragma(loc);

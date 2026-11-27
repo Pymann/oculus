@@ -1,0 +1,43 @@
+# OC-0146 no_directive_in_macro_args and OC-0153 valid_directive, catalogue in
+# Pymann/coding-rules.  Read from IrFile.lexical_marks (doc/ir.md):
+# directive_in_args, invalid_directive.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: DirectiveInArgumentsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 146, "safety.c90-.12.2.no_directive_in_macro_args", "Macro arguments contain nothing that looks like a directive", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "directive_in_args", 146, "a directive inside the arguments of a macro call is undefined; move it outside the call", out]
+
+- class:
+    name: ValidDirectiveRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 153, "safety.c90-.12.1.valid_directive", "A line starting with # is a valid directive", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "invalid_directive", 153, "this line starts with # but is no preprocessing directive", out]

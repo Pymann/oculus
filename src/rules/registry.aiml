@@ -69,6 +69,8 @@
 - import: "src/rules/pointer_casts.aiml"
 - import: "src/rules/pointer_conversions.aiml"
 - import: "src/rules/qualifier_casts.aiml"
+- import: "src/rules/pp_conditions.aiml"
+- import: "src/rules/pp_lines.aiml"
 
 - class:
     name: RuleRegistry
@@ -416,6 +418,16 @@
             - call: [<.rules.push, void_arith]
             - decl: [keep_cv, ptr<Rule>, { new: KeepQualifiersRule }]
             - call: [<.rules.push, keep_cv]
+            - decl: [bool_condition, ptr<Rule>, { new: BooleanConditionRule }]
+            - call: [<.rules.push, bool_condition]
+            - decl: [defined_ident, ptr<Rule>, { new: DefinedConditionIdentifierRule }]
+            - call: [<.rules.push, defined_ident]
+            - decl: [use_result, ptr<Rule>, { new: UseReturnValueRule }]
+            - call: [<.rules.push, use_result]
+            - decl: [args_directive, ptr<Rule>, { new: DirectiveInArgumentsRule }]
+            - call: [<.rules.push, args_directive]
+            - decl: [valid_directive, ptr<Rule>, { new: ValidDirectiveRule }]
+            - call: [<.rules.push, valid_directive]
       - def:
           name: rule_count
           args: []

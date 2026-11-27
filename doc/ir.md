@@ -544,6 +544,12 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `void_to_object` (C, not of malloc, calloc or realloc) and `drop_qualifier`.
   An implicit void-to-object pointer conversion in C marks its operand
   `void_to_object`. Null pointer constants carry none of these.
+  `unused_result` on a call whose non-void result is discarded as a statement
+  (see OC-0126 in doc/open_points.md for what is left out).
+  `IrMacro` kinds `number_condition` (name: the literal) and
+  `undefined_condition` (name: the identifier), at the `#` of `#if`/`#elif`;
+  `IrFile.lexical_marks` codes `directive_in_args` (the first `#` line inside
+  the arguments of a function-like macro call) and `invalid_directive`.
   `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
   the for header, `exposed_data` on a named public or protected field of a C++
   class that is not an aggregate and has a user-provided constructor or

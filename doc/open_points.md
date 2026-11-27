@@ -30,6 +30,8 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   catalog/not_implemented.txt; 0329 is not listed yet.)
 - **OC-0189** (_Atomic void): only a compile-error example. Same reason.
 - **OC-0084** no_pointer_float_cast: only a compile-error example. Same reason.
+- **OC-0122** no_implicit_declaration and **OC-0154** conditional_in_one_file:
+  only compile-error examples. Same reason.
 - **OC-0142** include_form: an `#include` of anything but `<name>` or `"name"`
   does not compile either.
 
@@ -89,6 +91,22 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   header. In C++ only `uintptr_t` is allowed. For OC-0082 no function is marked as
   a callback, and only `malloc`, `calloc` and `realloc` are exempt, not wrappers
   such as `sqlite3_malloc`.
+- **OC-0126** use_return_value: the ignorable list of the rule text is not a
+  configuration key yet. Built in: `printf`, `vprintf`, `wprintf`, `vwprintf`
+  (the catalogue reports `fprintf`) and the C functions that return their first
+  argument (`memcpy`, `strcpy` and the like). Members and functions of the C++
+  standard library count only when marked `[[nodiscard]]` (the catalogue reports
+  `empty()` but not `erase()`). A discarded `?:` or comma operand is not checked.
+- **OC-0148**: only conditions that are one integer literal or one object-like
+  macro whose replacement (through other such macros) is one integer literal.
+  Arithmetic conditions such as `#if A + B` are not evaluated.
+- **OC-0149**: conditions with `&&`, `||` or `?:` are not checked (their short
+  circuit may skip the identifier), nor are the arguments of anything called
+  (`__has_include`, `__has_attribute`, function-like macros) or identifiers
+  that only a macro of the condition expands to.
+- **OC-0153**: GNU line markers (`# 12 "file"`) and the extension directives
+  Clang accepts (`#include_next`, `#import`, `#ident`, `#sccs`, `#assert`,
+  `#unassert`) count as valid.
 - **OC-0369** constant assert: only arguments made of literals, `true`, `false`,
   `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen. An
   assert written in a macro body is reported once, at the definition.

@@ -1,0 +1,80 @@
+# OC-0148 boolean_pp_condition (C), OC-0149 defined_pp_identifiers and
+# OC-0126 use_return_value, catalogue in Pymann/coding-rules.  0148 and 0149 read
+# IrMacro kinds number_condition and undefined_condition (doc/ir.md), 0126 the
+# node shape unused_result.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: BooleanConditionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 148, "safety.c90-.12.3.boolean_pp_condition", "#if and #elif conditions evaluate to 0 or 1", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { eq: [{ call: [regex.search, "^number_condition$", rec.kind] }, 0] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 148, "this condition is the number ${rec.name}, not 0 or 1; compare it or test it with defined"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: DefinedConditionIdentifierRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 149, "safety.c90-.12.3.defined_pp_identifiers", "Identifiers in #if and #elif are defined before they are evaluated", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { eq: [{ call: [regex.search, "^undefined_condition$", rec.kind] }, 0] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 149, "'${rec.name}' is not a macro here and evaluates to 0; define it or test it with defined"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: UseReturnValueRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 126, "safety.c90-.11.3.use_return_value", "The result of a non-void function call is used or explicitly discarded", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "unused_result", 126, "the result of this call is ignored; use it or cast the call to void", out]
