@@ -26,6 +26,9 @@
 - import: "src/rules/library_cxx.aiml"
 - import: "src/rules/overloads.aiml"
 - import: "src/rules/decl_layout.aiml"
+- import: "src/rules/header_contents.aiml"
+- import: "src/rules/cxx_scope.aiml"
+- import: "src/rules/library_locale.aiml"
 
 - class:
     name: RuleRegistry
@@ -157,6 +160,20 @@
             - call: [<.rules.push, single_declarator]
             - decl: [no_decl_first_case, ptr<Rule>, { new: NoDeclBeforeFirstCaseRule }]
             - call: [<.rules.push, no_decl_first_case]
+            - decl: [unnamed_ns_header, ptr<Rule>, { new: NoUnnamedNamespaceInHeaderRule }]
+            - call: [<.rules.push, unnamed_ns_header]
+            - decl: [using_header, ptr<Rule>, { new: NoUsingInHeaderRule }]
+            - call: [<.rules.push, using_header]
+            - decl: [external_def_header, ptr<Rule>, { new: NoExternalDefinitionInHeaderRule }]
+            - call: [<.rules.push, external_def_header]
+            - decl: [global_ns, ptr<Rule>, { new: GlobalNamespaceContentsRule }]
+            - call: [<.rules.push, global_ns]
+            - decl: [cast_statement, ptr<Rule>, { new: NoCastStatementRule }]
+            - call: [<.rules.push, cast_statement]
+            - decl: [c_arrays, ptr<Rule>, { new: NoCArraysRule }]
+            - call: [<.rules.push, c_arrays]
+            - decl: [set_locale, ptr<Rule>, { new: NoSetlocaleRule }]
+            - call: [<.rules.push, set_locale]
       - def:
           name: rule_count
           args: []

@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 8
+      - version: 9
 
 - enum:
     name: ClangUnitText
@@ -147,6 +147,8 @@
       - internal_linkage
       - first_decl_static
       - group_uid
+      - odr_definition
+      - paren_declarator
 
 - enum:
     name: ClangNodeText

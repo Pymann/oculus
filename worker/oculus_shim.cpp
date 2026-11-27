@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 8;
+constexpr int32_t OC_SHIM_ABI = 9;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -267,6 +267,8 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_external_linkage: return flag(decl->external_linkage);
     case ClangDeclNum_internal_linkage: return flag(decl->internal_linkage);
     case ClangDeclNum_first_decl_static: return flag(decl->first_decl_static);
+    case ClangDeclNum_odr_definition: return flag(decl->odr_definition);
+    case ClangDeclNum_paren_declarator: return flag(decl->paren_declarator);
     default: return -1;
     }
 }

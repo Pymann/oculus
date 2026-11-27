@@ -121,6 +121,11 @@
       # declaration says static
       - [internal_linkage, bool, false]
       - [first_decl_static, bool, false]
+      # a function or variable definition with external linkage that every unit
+      # including it repeats (not inline, templated, weak or tentative)
+      - [odr_definition, bool, false]
+      # a local `T (name);`: the name alone in parentheses, no initializer
+      - [paren_declarator, bool, false]
       # where the written type starts (functions: the return type)
       - [type_pos, IrPos]
       # the first restrict keyword of the declarator (has_restrict)

@@ -132,3 +132,23 @@
     body:
       - if: { condition: { "&&": [pos.from_macro, { gte: [pos.spelling.file_uid, 0] }] }, then: [{ return: pos.spelling }] }
       - return: pos.expansion
+
+# A header by its name.  Files included under other names (.inc, .def, .x ...) are
+# data or X-macro files that are meant to be included more than once.
+- def:
+    name: header_name
+    args: [[path, string]]
+    return: bool
+    body:
+      - return: { gte: [{ call: [regex.search, "\\.(h|hh|hpp|hxx|h\\+\\+|H)$", path] }, 0] }
+
+# The position is in a user header: a header by kind and by name (a `.c` or `.inc`
+# file included somewhere is not a header).
+- def:
+    name: in_header
+    args: [[info, RuleInformation], [pos, IrPos]]
+    return: bool
+    body:
+      - if: { condition: { "||": [{ lt: [pos.file_uid, 0] }, { gte: [pos.file_uid, info.files.len] }] }, then: [{ return: false }] }
+      - decl: [file, ref<IrFile>, { at: [info.files, pos.file_uid] }]
+      - return: { "&&": [{ eq: [{ call: [regex.search, "^header$", file.kind] }, 0] }, { call: [header_name, file.path] }] }

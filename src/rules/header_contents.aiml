@@ -1,0 +1,102 @@
+# OC-0264 no_unnamed_namespace_in_header, OC-0267 no_using_in_header and OC-0331
+# no_external_definition_in_header (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation: namespace and using declarations with their scope, the
+# odr_definition flag of functions and variables, and the kind and name of the file
+# each is written in (a header is a header by kind and by name).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# A using-directive or using-declaration at namespace scope (not in a class or a
+# function).
+- def:
+    name: namespace_scope
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_decl, info, rec.parent_uid] }, false] }, then: [{ return: true }] }
+      - decl: [scope, ref<IrDecl>, { at: [info.decls, rec.parent_uid] }]
+      - return: { eq: [{ call: [regex.search, "^Namespace$", scope.kind] }, 0] }
+
+- class:
+    name: NoUnnamedNamespaceInHeaderRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 264, "style.cpp98-.6.9.no_unnamed_namespace_in_header", "Headers contain no unnamed namespace", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^Namespace$", rec.kind] }, 0] }, { eq: [rec.name.len, 0] }, { call: [in_header, info, { call: [written_pos, rec.pos] }] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 264, "an unnamed namespace in a header gives every including file its own copy; use a named namespace"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoUsingInHeaderRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 267, "style.cpp98-.6.9.no_using_in_header", "Headers contain no namespace-scope using-directive or using-declaration", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(UsingDirective|Using|UsingEnum)$", rec.kind] }, 0] }, { call: [namespace_scope, info, rec] }, { call: [in_header, info, { call: [written_pos, rec.pos] }] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 267, "this using at namespace scope in a header changes name lookup in every including file; qualify the names or move it into a function or source file"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoExternalDefinitionInHeaderRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 331, "safety.c90-.6.3.no_external_definition_in_header", "Headers define no non-inline function or object with external linkage", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.odr_definition, { call: [in_header, info, rec.name_pos] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 331, "${rec.name} is defined with external linkage in a header; every including file defines it again; declare it here and define it in one source file"] }]
+                  - set: [idx, { "+": [idx, 1] }]

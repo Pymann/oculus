@@ -481,6 +481,14 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `int a, b;` as separate declarations with one begin location; the group compares
   that location raw, so two declarations made by two expansions of one macro stay
   apart, which source positions alone cannot do.
+- `IrDecl.odr_definition`: a function or variable definition with external linkage
+  that every including file would repeat. Clang decides inline (also implicit:
+  in-class members, constexpr), templated, deleted, defaulted, weak, tentative and
+  specialized; the rule only adds "written in a header".
+- `IrDecl.paren_declarator`: a local `T (name);`, which Clang parses as a
+  declaration of `name` although it reads as a conversion.
+- `IrDecl.in_extern_c` also holds for a tag first named inside an `extern "C"`
+  block (`typedef struct x x;`), whose semantic scope is the enclosing namespace.
 
 ## 12. Notes on the AIML side
 

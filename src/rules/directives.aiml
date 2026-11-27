@@ -18,15 +18,6 @@
     body:
       - return: { eq: [{ call: [regex.search, "^(#[ \\t]*pragma[ \\t]+once\\b|_Pragma[ \\t]*\\([ \\t]*\"once\")", rec.body] }, 0] }
 
-# A header by its name.  Files included under other names (.inc, .def, .x ...) are
-# data or X-macro files that are meant to be included more than once.
-- def:
-    name: header_name
-    args: [[path, string]]
-    return: bool
-    body:
-      - return: { gte: [{ call: [regex.search, "\\.(h|hh|hpp|hxx|h\\+\\+|H)$", path] }, 0] }
-
 - class:
     name: NoPragmaRule
     implements: [Rule]

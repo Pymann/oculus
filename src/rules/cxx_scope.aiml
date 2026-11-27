@@ -1,0 +1,176 @@
+# OC-0262 global_namespace_contents, OC-0344 no_cast_statement and OC-0351
+# no_c_arrays (catalogue in Pymann/coding-rules), C++.  Read from RuleInformation:
+# declarations with their scope, kind, linkage block and type; the paren_declarator
+# flag of locals (`T (name);` declares `name` although it reads as a conversion);
+# cast and temporary-object nodes with the statement around them.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# A definition in the global namespace that is neither main, a namespace, an
+# extern "C" declaration nor a replaceable operator new or delete.  Declarations
+# without a definition are left out: they may name what C or the system defines
+# (`struct stat;`), and the definition is reported where it is.  Template
+# patterns are seen through their templated declaration; unnamed records are left
+# to the variables they declare.
+- def:
+    name: global_entity
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^(Function|Var|CXXRecord|Record|Enum|Typedef|TypeAlias|Concept)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { call: [info_has_decl, info, rec.parent_uid] }, then: [{ return: false }] }
+      - if: { condition: { "||": [rec.in_extern_c, rec.is_main, { eq: [rec.name.len, 0] }] }, then: [{ return: false }] }
+      - if: { condition: { "&&": [{ eq: [rec.is_definition, false] }, { neq: [{ call: [regex.search, "^(Typedef|TypeAlias|Concept)$", rec.kind] }, 0] }] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^operator (new|delete)", rec.name] }, 0] }, then: [{ return: false }] }
+      - return: { gt: [rec.pos.expansion.line, 0] }
+
+# The statement a node stands for, past the wrappers Clang adds around a temporary.
+- def:
+    name: statement_parent
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: i32
+    body:
+      - decl: [cursor, i32, rec.parent_uid]
+      - decl: [depth, i32, 0]
+      - while:
+          condition: { "&&": [{ call: [info_has_node, info, cursor] }, { lt: [depth, 8] }] }
+          body:
+            - decl: [step, ref<IrNode>, { at: [info.nodes, cursor] }]
+            - if: { condition: { neq: [{ call: [regex.search, "^(ExprWithCleanups|CXXBindTemporaryExpr|MaterializeTemporaryExpr|ParenExpr)$", step.kind] }, 0] }, then: [{ return: cursor }] }
+            - set: [cursor, step.parent_uid]
+            - set: [depth, { "+": [depth, 1] }]
+      - return: -1
+
+- def:
+    name: void_type
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_type, info, type_uid] }, false] }, then: [{ return: false }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, declared.canonical_uid] }, false] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, declared.canonical_uid] }]
+      - return: { eq: [{ call: [regex.search, "^void$", canon.name] }, 0] }
+
+# An explicit conversion or temporary object that is a whole statement of a block.
+- def:
+    name: cast_statement
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^(CXXFunctionalCastExpr|CStyleCastExpr|CXXStaticCastExpr|CXXReinterpretCastExpr|CXXConstCastExpr|CXXDynamicCastExpr|CXXTemporaryObjectExpr|CXXUnresolvedConstructExpr)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { call: [void_type, info, rec.type_uid] }, then: [{ return: false }] }
+      # a macro that takes an expression and makes it a statement (EXPECT_THROW) means it
+      - if: { condition: rec.from_macro, then: [{ return: false }] }
+      - decl: [owner, i32, { call: [statement_parent, info, rec] }]
+      - if: { condition: { eq: [{ call: [info_has_node, info, owner] }, false] }, then: [{ return: false }] }
+      - decl: [block, ref<IrNode>, { at: [info.nodes, owner] }]
+      - return: { eq: [{ call: [regex.search, "^CompoundStmt$", block.kind] }, 0] }
+
+# A variable or member of built-in array type, typedefs seen through.
+- def:
+    name: builtin_array
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^(Var|Field)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "||": [rec.in_extern_c, { eq: [rec.is_first_decl, false] }] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [info_has_type, info, rec.type_uid] }, false] }, then: [{ return: false }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, rec.type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, declared.canonical_uid] }, false] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, declared.canonical_uid] }]
+      - return: { gt: [canon.array_kind.len, 0] }
+
+- class:
+    name: GlobalNamespaceContentsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 262, "style.cpp98-.6.9.global_namespace_contents", "The global namespace holds only main, namespaces and extern \"C\" declarations", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [global_entity, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 262, "${rec.name} is declared in the global namespace; put it into a named namespace"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoCastStatementRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 344, "safety.cpp98-.9.3.no_cast_statement", "An explicit type conversion is not used as a statement of its own", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [cast_statement, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 344, "this conversion is a statement of its own and its result is dropped; use the value, cast to void or name the object"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+            - set: [idx, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [named, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, named] }, named.paren_declarator] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, named.pos] }, 344, "this reads as a conversion of ${named.name} but declares a new variable ${named.name}; give the object its own name"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoCArraysRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 351, "style.cpp11-.6.2.no_c_arrays", "Variables of built-in array type are not declared", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [builtin_array, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 351, "${rec.name} has a built-in array type; use std::array or a container"] }]
+                  - set: [idx, { "+": [idx, 1] }]

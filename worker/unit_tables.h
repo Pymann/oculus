@@ -174,6 +174,8 @@ struct DeclRec {
     bool external_linkage = false;  // functions and variables
     bool internal_linkage = false;  // functions and variables
     bool first_decl_static = false; // the first declaration of the entity says static
+    bool odr_definition = false;    // a definition with external linkage that each includer repeats
+    bool paren_declarator = false;  // a local `T (name);`: the name alone in parentheses, no initializer
     Pos type_pos;                   // where the written type starts (functions: the return type)
     Pos restrict_pos;               // the first restrict keyword of the declarator
     Pos declarator_pos;             // where the declarator starts: `*p` at the *, else the name
@@ -427,7 +429,10 @@ public:
         rec.in_instantiation = inside_instantiation(decl);
         const DeclContext *lexical = decl->getLexicalDeclContext();
         rec.is_local = lexical != nullptr && lexical->isFunctionOrMethod();
-        rec.in_extern_c = decl->getDeclContext() != nullptr && decl->getDeclContext()->isExternCContext();
+        // a tag first named inside an extern "C" block (`typedef struct x x;`) belongs
+        // to the enclosing namespace semantically, but is written in the block
+        rec.in_extern_c = (decl->getDeclContext() != nullptr && decl->getDeclContext()->isExternCContext()) ||
+                          (decl->getLexicalDeclContext() != nullptr && decl->getLexicalDeclContext()->isExternCContext());
         if (const auto *tag = dyn_cast<TagDecl>(decl)) {
             rec.tag = tag->getKindName().str();
         }
@@ -554,6 +559,54 @@ public:
             auto known = groups_.emplace(key, rec.uid).first;
             rec.group_uid = known->second;
         }
+        rec.odr_definition = odr_definition(decl);
+        if (const auto *var = dyn_cast<VarDecl>(decl)) {
+            rec.paren_declarator = paren_declarator(var);
+        }
+    }
+
+    // A definition that every translation unit including it would repeat: external
+    // linkage, not inline, not a template or inside one, not deleted or defaulted,
+    // not weak, not a C tentative definition, not a template specialization.
+    static bool odr_definition(const NamedDecl *decl) {
+        if (decl->isTemplated() || decl->hasAttr<WeakAttr>() || decl->hasAttr<SelectAnyAttr>()) return false;
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            if (!fn->isThisDeclarationADefinition() || fn->isInlined() || fn->isDeleted() || fn->isDefaulted()) return false;
+            if (fn->getTemplateSpecializationKind() != TSK_Undeclared || isa<CXXDeductionGuideDecl>(fn)) return false;
+            if (fn->hasAttr<GNUInlineAttr>()) return false;
+            return fn->hasExternalFormalLinkage();
+        }
+        if (const auto *var = dyn_cast<VarDecl>(decl)) {
+            if (isa<ParmVarDecl>(var) || var->isLocalVarDeclOrParm()) return false;
+            if (var->isThisDeclarationADefinition() != VarDecl::Definition) return false;
+            if (var->isInline() || var->isConstexpr()) return false;
+            if (var->getTemplateSpecializationKind() != TSK_Undeclared) return false;
+            return var->hasExternalFormalLinkage();
+        }
+        return false;
+    }
+
+    // `T (name);` in a function: parsed as a declaration of `name`, although it
+    // reads as a conversion of `name` to T.
+    static bool paren_declarator(const VarDecl *var) {
+        if (isa<ParmVarDecl>(var) || !var->isLocalVarDecl()) return false;
+        TypeSourceInfo *info = var->getTypeSourceInfo();
+        if (info == nullptr) return false;
+        TypeLoc loc = info->getTypeLoc();
+        if (auto qualified = loc.getAs<QualifiedTypeLoc>()) loc = qualified.getUnqualifiedLoc();
+        auto paren = loc.getAs<ParenTypeLoc>();
+        if (!paren) return false;
+        TypeLoc inner = paren.getInnerLoc();
+        if (auto qualified = inner.getAs<QualifiedTypeLoc>()) inner = qualified.getUnqualifiedLoc();
+        if (inner.getAs<PointerTypeLoc>() || inner.getAs<ReferenceTypeLoc>() || inner.getAs<MemberPointerTypeLoc>() ||
+            inner.getAs<ParenTypeLoc>() || inner.getAs<ArrayTypeLoc>() || inner.getAs<FunctionTypeLoc>() ||
+            inner.getAs<BlockPointerTypeLoc>()) {
+            return false;
+        }
+        const Expr *init = var->getInit();
+        if (init == nullptr) return true;
+        const auto *construct = dyn_cast<CXXConstructExpr>(init);
+        return construct != nullptr && construct->getNumArgs() == 0 && construct->getParenOrBraceRange().isInvalid();
     }
 
     // The leftmost token of the declarator: the first *, &, ( or the name.

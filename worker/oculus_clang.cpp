@@ -142,6 +142,8 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("external_linkage", decl.external_linkage);
                     out.attribute("internal_linkage", decl.internal_linkage);
                     out.attribute("first_decl_static", decl.first_decl_static);
+                    out.attribute("odr_definition", decl.odr_definition);
+                    out.attribute("paren_declarator", decl.paren_declarator);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);
