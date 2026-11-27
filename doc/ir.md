@@ -475,6 +475,12 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   several). Code in a skipped `#if` does not count, a header of directives only is
   harmless. `included_in_declaration` marks data and X-macro files included in the
   middle of an enum, an initializer or a namespace.
+- `IrDecl.declarator_pos` and `IrDecl.group_uid` for variables and fields: where the
+  declarator starts (the first `*`, `&` or `(`, else the name), and the uid of the
+  first declarator of the same declaration. Clang keeps the declarators of
+  `int a, b;` as separate declarations with one begin location; the group compares
+  that location raw, so two declarations made by two expansions of one macro stay
+  apart, which source positions alone cannot do.
 
 ## 12. Notes on the AIML side
 

@@ -22,6 +22,10 @@
 - import: "src/rules/library_time.aiml"
 - import: "src/rules/goto_targets.aiml"
 - import: "src/rules/linkage.aiml"
+- import: "src/rules/library_unsafe.aiml"
+- import: "src/rules/library_cxx.aiml"
+- import: "src/rules/overloads.aiml"
+- import: "src/rules/decl_layout.aiml"
 
 - class:
     name: RuleRegistry
@@ -131,6 +135,28 @@
             - call: [<.rules.push, case_placement]
             - decl: [static_internal, ptr<Rule>, { new: StaticOnInternalDeclsRule }]
             - call: [<.rules.push, static_internal]
+            - decl: [no_system, ptr<Rule>, { new: NoSystemRule }]
+            - call: [<.rules.push, no_system]
+            - decl: [no_rand, ptr<Rule>, { new: NoRandRule }]
+            - call: [<.rules.push, no_rand]
+            - decl: [no_unbounded, ptr<Rule>, { new: NoUnboundedStringFunctionsRule }]
+            - call: [<.rules.push, no_unbounded]
+            - decl: [no_c_string, ptr<Rule>, { new: NoCStringFunctionsRule }]
+            - call: [<.rules.push, no_c_string]
+            - decl: [no_ctype, ptr<Rule>, { new: NoCtypeFunctionsRule }]
+            - call: [<.rules.push, no_ctype]
+            - decl: [no_mem, ptr<Rule>, { new: NoMemFunctionsRule }]
+            - call: [<.rules.push, no_mem]
+            - decl: [no_address_of, ptr<Rule>, { new: NoOverloadedAddressOfRule }]
+            - call: [<.rules.push, no_address_of]
+            - decl: [no_logical_overload, ptr<Rule>, { new: NoOverloadedLogicalOrCommaRule }]
+            - call: [<.rules.push, no_logical_overload]
+            - decl: [no_asm, ptr<Rule>, { new: NoAsmRule }]
+            - call: [<.rules.push, no_asm]
+            - decl: [single_declarator, ptr<Rule>, { new: SingleDeclaratorRule }]
+            - call: [<.rules.push, single_declarator]
+            - decl: [no_decl_first_case, ptr<Rule>, { new: NoDeclBeforeFirstCaseRule }]
+            - call: [<.rules.push, no_decl_first_case]
       - def:
           name: rule_count
           args: []

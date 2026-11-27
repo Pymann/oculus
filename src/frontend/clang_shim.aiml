@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 6
+      - version: 8
 
 - enum:
     name: ClangUnitText
@@ -146,6 +146,7 @@
       - external_linkage
       - internal_linkage
       - first_decl_static
+      - group_uid
 
 - enum:
     name: ClangNodeText
@@ -214,6 +215,7 @@
       - instantiation_pos
       - type_pos
       - restrict_pos
+      - declarator_pos
 
 - enum:
     name: ClangPosPart

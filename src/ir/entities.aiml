@@ -97,6 +97,7 @@
       - [in_extern_c, bool, false]
       - [is_main, bool, false]
       # position in its list: field, enumerator or parameter
+      - [group_uid, i32, -1]
       - [field_index, i32, -1]
       - [field_count, i32, -1]
       # using directive: the nominated namespace (qualified)
@@ -124,3 +125,5 @@
       - [type_pos, IrPos]
       # the first restrict keyword of the declarator (has_restrict)
       - [restrict_pos, IrPos]
+      # where the declarator starts: `*p` at the *, otherwise the name
+      - [declarator_pos, IrPos]

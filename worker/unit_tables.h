@@ -176,6 +176,8 @@ struct DeclRec {
     bool first_decl_static = false; // the first declaration of the entity says static
     Pos type_pos;                   // where the written type starts (functions: the return type)
     Pos restrict_pos;               // the first restrict keyword of the declarator
+    Pos declarator_pos;             // where the declarator starts: `*p` at the *, else the name
+    int group_uid = -1;         // a variable or field: uid of the first declarator of its declaration
     int field_index = -1;       // position in its list: field in the record,
                                 // enumerator in the enum, parameter in the function
     int field_count = -1;       // records: number of fields
@@ -544,6 +546,53 @@ public:
         if (rec.has_restrict) {
             rec.restrict_pos = restrict_token(decl);
         }
+        if (const auto *declarator = dyn_cast<DeclaratorDecl>(decl)) {
+            rec.declarator_pos = pos_of(sm_.getExpansionLoc(declarator_start(declarator)));
+            // The declarators of one declaration share its begin location; every
+            // macro expansion has its own locations, so separate expansions differ.
+            auto key = std::make_pair(static_cast<const void *>(decl->getDeclContext()), decl->getBeginLoc().getRawEncoding());
+            auto known = groups_.emplace(key, rec.uid).first;
+            rec.group_uid = known->second;
+        }
+    }
+
+    // The leftmost token of the declarator: the first *, &, ( or the name.
+    SourceLocation declarator_start(const DeclaratorDecl *decl) const {
+        SourceLocation start = decl->getLocation();
+        TypeSourceInfo *info = decl->getTypeSourceInfo();
+        if (info == nullptr || start.isInvalid()) return start;
+        auto earlier = [&](SourceLocation loc) {
+            if (loc.isValid() && loc.isFileID() == start.isFileID() &&
+                sm_.isBeforeInTranslationUnit(loc, start) &&
+                sm_.isBeforeInTranslationUnit(decl->getBeginLoc(), loc)) {
+                start = loc;
+            }
+        };
+        TypeLoc loc = info->getTypeLoc();
+        for (int depth = 0; depth < 32 && !loc.isNull(); ++depth) {
+            if (auto qualified = loc.getAs<QualifiedTypeLoc>()) {
+                loc = qualified.getUnqualifiedLoc();
+            } else if (auto pointer = loc.getAs<PointerTypeLoc>()) {
+                earlier(pointer.getStarLoc());
+                loc = pointer.getPointeeLoc();
+            } else if (auto reference = loc.getAs<ReferenceTypeLoc>()) {
+                earlier(reference.getSigilLoc());
+                loc = reference.getPointeeLoc();
+            } else if (auto member = loc.getAs<MemberPointerTypeLoc>()) {
+                earlier(member.getStarLoc());
+                loc = member.getPointeeLoc();
+            } else if (auto paren = loc.getAs<ParenTypeLoc>()) {
+                earlier(paren.getLParenLoc());
+                loc = paren.getInnerLoc();
+            } else if (auto array = loc.getAs<ArrayTypeLoc>()) {
+                loc = array.getElementLoc();
+            } else if (auto function = loc.getAs<FunctionTypeLoc>()) {
+                loc = function.getReturnLoc();
+            } else {
+                break;
+            }
+        }
+        return start;
     }
 
     // The first `restrict` (or __restrict, __restrict__) written in the declaration,
@@ -1078,6 +1127,7 @@ private:
     std::map<FileID, int> file_ids_;
     std::map<const Type *, int> type_ids_;
     std::map<const NamedDecl *, int> decl_ids_;
+    std::map<std::pair<const void *, unsigned>, int> groups_;
     std::map<const Stmt *, std::string> default_order_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> skipped_;
     std::set<std::string> call_site_macros_;

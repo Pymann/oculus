@@ -1,0 +1,4 @@
+bool is_digit(char value)
+{
+    return (value >= '0') && (value <= '9');
+}

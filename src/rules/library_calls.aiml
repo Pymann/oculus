@@ -23,6 +23,7 @@
       - decl: [callee, ref<IrDecl>, { at: [info.decls, rec.ref_uid] }]
       - if: { condition: { neq: [{ call: [regex.search, "^Function$", callee.kind] }, 0] }, then: [{ return: false }] }
       - if: { condition: { eq: [callee.origin.in_system_header, false] }, then: [{ return: false }] }
+      - if: { condition: { "||": [callee.origin.instantiated, callee.in_instantiation] }, then: [{ return: false }] }
       - decl: [in_std, bool, false]
       - if:
           condition: { call: [info_has_decl, info, callee.parent_uid] }

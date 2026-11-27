@@ -1,0 +1,71 @@
+# OC-0256 no_overloaded_address_of and OC-0358 no_overloaded_logical_or_comma
+# (catalogue in Pymann/coding-rules), C++.  Read from RuleInformation.decls: the
+# operator functions by name and parameter count (a member has one less).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- def:
+    name: unary_address_of
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^operator&$", rec.name] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^CXXMethod$", rec.kind] }, 0] }, then: [{ return: { eq: [rec.param_count, 0] } }] }
+      - return: { "&&": [{ eq: [{ call: [regex.search, "^Function$", rec.kind] }, 0] }, { eq: [rec.param_count, 1] }] }
+
+- class:
+    name: NoOverloadedAddressOfRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 256, "safety.cpp98-.15.4.no_overloaded_address_of", "The unary & operator is not overloaded", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [unary_address_of, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 256, "unary operator& is overloaded; taking an address should not do something else"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoOverloadedLogicalOrCommaRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 358, "safety.cpp98-.15.4.no_overloaded_logical_or_comma", "The comma, && and || operators are not overloaded", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Function|CXXMethod)$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^operator(&&|\\|\\||,)$", rec.name] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 358, "'${rec.name}' is overloaded; it loses the order of evaluation and the short circuit of the built-in operator"] }]
+                  - set: [idx, { "+": [idx, 1] }]

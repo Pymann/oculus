@@ -129,6 +129,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("has_restrict", decl.has_restrict);
                     out.attribute("in_extern_c", decl.in_extern_c);
                     out.attribute("is_main", decl.is_main);
+                    out.attribute("group_uid", decl.group_uid);
                     out.attribute("field_index", decl.field_index);
                     out.attribute("field_count", decl.field_count);
                     out.attribute("target", decl.target);
@@ -143,6 +144,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("first_decl_static", decl.first_decl_static);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
+                    write_pos(out, "declarator_pos", decl.declarator_pos);
                 });
             }
         });

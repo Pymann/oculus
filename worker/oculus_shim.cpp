@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 6;
+constexpr int32_t OC_SHIM_ABI = 8;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -70,6 +70,7 @@ const Pos *pos_at(const DeclRec &decl, int32_t which) {
     case ClangPosWhich_instantiation_pos: return &decl.instantiation_pos;
     case ClangPosWhich_type_pos: return &decl.type_pos;
     case ClangPosWhich_restrict_pos: return &decl.restrict_pos;
+    case ClangPosWhich_declarator_pos: return &decl.declarator_pos;
     default: return nullptr;
     }
 }
@@ -254,6 +255,7 @@ OC_EXPORT int32_t oc_decl_num(void *unit, int32_t index, int32_t field) {
     case ClangDeclNum_has_restrict: return flag(decl->has_restrict);
     case ClangDeclNum_in_extern_c: return flag(decl->in_extern_c);
     case ClangDeclNum_is_main: return flag(decl->is_main);
+    case ClangDeclNum_group_uid: return decl->group_uid;
     case ClangDeclNum_field_index: return decl->field_index;
     case ClangDeclNum_field_count: return decl->field_count;
     case ClangDeclNum_in_instantiation: return flag(decl->in_instantiation);

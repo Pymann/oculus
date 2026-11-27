@@ -149,6 +149,7 @@
       - set: [rec.param_count, { call: [oc_decl_num, unit, index, ClangDeclNum.param_count] }]
       - set: [rec.virtual_bases, { call: [oc_decl_num, unit, index, ClangDeclNum.virtual_bases] }]
       - set: [rec.overrides, { call: [oc_decl_num, unit, index, ClangDeclNum.overrides] }]
+      - set: [rec.group_uid, { call: [oc_decl_num, unit, index, ClangDeclNum.group_uid] }]
       - set: [rec.field_index, { call: [oc_decl_num, unit, index, ClangDeclNum.field_index] }]
       - set: [rec.field_count, { call: [oc_decl_num, unit, index, ClangDeclNum.field_count] }]
       - set: [rec.in_instantiation, { call: [decl_flag, unit, index, ClangDeclNum.in_instantiation] }]
@@ -162,6 +163,7 @@
       - set: [rec.first_decl_static, { call: [decl_flag, unit, index, ClangDeclNum.first_decl_static] }]
       - set: [rec.type_pos, { call: [shim_pos, unit, index, ClangPosWhich.type_pos] }]
       - set: [rec.restrict_pos, { call: [shim_pos, unit, index, ClangPosWhich.restrict_pos] }]
+      - set: [rec.declarator_pos, { call: [shim_pos, unit, index, ClangPosWhich.declarator_pos] }]
       - return: rec
 
 - def:

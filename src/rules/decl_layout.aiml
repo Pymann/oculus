@@ -1,0 +1,236 @@
+# OC-0350 no_asm, OC-0346 single_declarator and OC-0417 no_decl_before_first_case
+# (catalogue in Pymann/coding-rules).  Read from RuleInformation: asm statement
+# nodes; variables and fields with the declaration they belong to (one
+# declaration, several declarators share it); DeclStmt nodes in a switch body and
+# the first case or default label there.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The key that the declarators of one declaration share.
+- def:
+    name: declaration_key
+    args: [[rec, ref<IrDecl>]]
+    return: string
+    body:
+      - return: "${rec.group_uid}"
+
+- def:
+    name: one_object
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^(Var|Field)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [rec.name.len, 0] }, then: [{ return: false }] }
+      - return: { "&&": [{ gt: [rec.pos.expansion.line, 0] }, { gte: [rec.group_uid, 0] }] }
+
+# How many declarators each declaration has, by declaration_key.
+- def:
+    name: declarator_counts
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [counts, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.decls.len] }
+          body:
+            - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+            - if:
+                condition: { "&&": [{ call: [user_decl, rec] }, { call: [one_object, rec] }] }
+                then:
+                  - decl: [key, string, { call: [declaration_key, rec] }]
+                  - call: [counts.set, key, { "+": [{ call: [counts.get, key, 0] }, 1] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: counts
+
+# The first case or default label directly in each switch body, by the body's uid.
+- def:
+    name: first_labels
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [found, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.nodes.len] }
+          body:
+            - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+            - if:
+                condition: { "&&": [{ eq: [{ call: [regex.search, "^(CaseStmt|DefaultStmt)$", rec.kind] }, 0] }, { eq: [{ call: [found.has, "${rec.parent_uid}"] }, false] }] }
+                then: [{ call: [found.set, "${rec.parent_uid}", rec.uid] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: found
+
+# A declaration written in a macro body: it starts in a macro and its name comes
+# from the same expansion.  `bool a, b;` with `bool` a macro is written in place.
+- def:
+    name: in_macro_body
+    args: [[rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [rec.pos.from_macro, false] }, then: [{ return: false }] }
+      - decl: [expanded, IrPos, rec.pos.expansion]
+      - decl: [named, IrPos, rec.name_pos]
+      - return: { "&&": [{ eq: [named.file_uid, expanded.file_uid] }, { eq: [named.line, expanded.line] }, { eq: [named.column, expanded.column] }] }
+
+# The key under which a declaration is reported once: a declaration written in a
+# macro body is reported once at the body, not at every expansion.
+- def:
+    name: report_key
+    args: [[rec, ref<IrDecl>]]
+    return: string
+    body:
+      - decl: [spelled, IrPos, rec.pos.spelling]
+      - if: { condition: { call: [in_macro_body, rec] }, then: [{ return: "macro:${spelled.file_uid}:${spelled.line}:${spelled.column}" }] }
+      - return: { call: [declaration_key, rec] }
+
+# Where a declaration with several declarators is reported.
+- def:
+    name: declarator_place
+    args: [[rec, ref<IrDecl>]]
+    return: IrPos
+    body:
+      - if: { condition: { call: [in_macro_body, rec] }, then: [{ return: { call: [written_pos, rec.pos] } }] }
+      - return: rec.declarator_pos
+
+# The message of a declaration with several declarators; marks it as reported.
+- def:
+    name: declarator_message
+    args: [[rec, ref<IrDecl>], [seen, map<string:i32>]]
+    return: string
+    body:
+      - call: [seen.set, { call: [report_key, rec] }, 1]
+      - return: "this declaration declares several objects, starting with '${rec.name}'; declare one per declaration"
+
+# A declaration statement in a switch body before its first label.
+- def:
+    name: before_first_case
+    args: [[info, RuleInformation], [labels, map<string:i32>], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_node, info, rec.parent_uid] }, false] }, then: [{ return: false }] }
+      - decl: [body, ref<IrNode>, { at: [info.nodes, rec.parent_uid] }]
+      - if: { condition: { neq: [{ call: [regex.search, "^CompoundStmt$", body.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [info_has_node, info, body.parent_uid] }, false] }, then: [{ return: false }] }
+      - decl: [choice, ref<IrNode>, { at: [info.nodes, body.parent_uid] }]
+      - if: { condition: { neq: [{ call: [regex.search, "^SwitchStmt$", choice.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: choice.has_skipped_code, then: [{ return: false }] }
+      - decl: [first, i32, { call: [labels.get, "${body.uid}", -1] }]
+      - return: { "&&": [{ gte: [first, 0] }, { lt: [rec.uid, first] }] }
+
+- class:
+    name: NoAsmRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 350, "style.c90-.1.4.no_asm", "Inline assembly is not used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^(GCCAsmStmt|MSAsmStmt)$", rec.kind] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 350, "inline assembly is used; put assembly into its own source file"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: SingleDeclaratorRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 346, "style.c90-.6.2.single_declarator", "Each declaration declares one variable or member", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [counts, map<string:i32>, { call: [declarator_counts, info] }]
+            - decl: [seen, map<string:i32>]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [one_object, rec] }, { gt: [{ call: [counts.get, { call: [declaration_key, rec] }, 0] }, 1] }, { eq: [{ call: [seen.has, { call: [report_key, rec] }] }, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [declarator_place, rec] }, 346, { call: [declarator_message, rec, seen] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+# The start of a declaration, spelled and expanded, without its scope.
+- def:
+    name: start_key
+    args: [[where, IrSrcPos]]
+    return: string
+    body:
+      - decl: [spelled, IrPos, where.spelling]
+      - decl: [expanded, IrPos, where.expansion]
+      - return: "${spelled.file_uid}:${spelled.line}:${spelled.column}:${expanded.file_uid}:${expanded.line}:${expanded.column}"
+
+# The declaration statements in a switch body before its first label, by start_key.
+- def:
+    name: early_statements
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [labels, map<string:i32>, { call: [first_labels, info] }]
+      - decl: [found, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.nodes.len] }
+          body:
+            - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+            - if:
+                condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^DeclStmt$", rec.kind] }, 0] }, { call: [before_first_case, info, labels, rec] }] }
+                then: [{ call: [found.set, { call: [start_key, rec.pos] }, 1] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: found
+
+- class:
+    name: NoDeclBeforeFirstCaseRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 417, "safety.c90-.4.5.no_decl_before_first_case", "No object is declared in a switch body before the first case label", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [early, map<string:i32>, { call: [early_statements, info] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.is_local, { eq: [{ call: [regex.search, "^Var$", rec.kind] }, 0] }, { eq: [{ call: [early.get, { call: [start_key, rec.pos] }, 0] }, 1] }] }
+                      then:
+                        - call: [early.set, { call: [start_key, rec.pos] }, 0]
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 417, "this object is declared in the switch body before the first label, where control never passes; declare it before the switch or inside a case"] }]
+                  - set: [idx, { "+": [idx, 1] }]

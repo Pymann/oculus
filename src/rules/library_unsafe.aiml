@@ -1,0 +1,90 @@
+# OC-0207 no_system, OC-0210 no_rand and OC-0323 no_unbounded_string_functions
+# (catalogue in Pymann/coding-rules); the library check is the one of
+# library_calls.aiml.  (scanf with an unbounded %s is not checked yet.)
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/library_calls.aiml"
+
+- class:
+    name: NoSystemRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 207, "security.c90-.13.3.no_system", "system is not called", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^system$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 207, { call: [library_message, info, rec, "it runs a command interpreter that depends on the environment"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoRandRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 210, "security.c90-.13.3.no_rand", "rand and srand are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(rand|srand)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 210, { call: [library_message, info, rec, "the quality of its generator is unspecified"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoUnboundedStringFunctionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 323, "security.c90-.13.3.no_unbounded_string_functions", "String functions without a length bound are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(strcpy|strcat|sprintf|vsprintf|gets)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 323, { call: [library_message, info, rec, "it writes without a length bound; use the bounded form"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]

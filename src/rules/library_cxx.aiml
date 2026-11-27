@@ -1,0 +1,102 @@
+# OC-0364 no_c_string_functions, OC-0372 no_ctype_functions and OC-0373
+# no_mem_functions (catalogue in Pymann/coding-rules), C++; the library check is
+# the one of library_calls.aiml (the locale overloads of std::isdigit and friends
+# are templates and do not count).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/library_calls.aiml"
+
+# Code in a function with C language linkage (an extern "C" block of a header
+# shared with C) cannot use the C++ replacements; it is left out.
+- def:
+    name: cxx_only_call
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_decl, info, rec.function_uid] }, false] }, then: [{ return: true }] }
+      - decl: [owner, ref<IrDecl>, { at: [info.decls, rec.function_uid] }]
+      - return: { eq: [owner.in_extern_c, false] }
+
+- class:
+    name: NoCStringFunctionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 364, "security.cpp98-.13.3.no_c_string_functions", "The C string handling functions are not used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [cxx_only_call, info, rec] }, { call: [library_function, info, rec, "^(str(cpy|ncpy|cat|ncat|cmp|ncmp|coll|xfrm|len|chr|rchr|spn|cspn|pbrk|str|tok|error|tol|toll|toul|toull|tof|tod|told|toimax|toumax)|wcs[a-z]*|wcstoimax|wcstoumax)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 364, { call: [library_message, info, rec, "use std::string, std::string_view or std::from_chars"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoCtypeFunctionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 372, "safety.cpp98-.13.3.no_ctype_functions", "The character classification functions are not used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [cxx_only_call, info, rec] }, { call: [library_function, info, rec, "^(is(alnum|alpha|blank|cntrl|digit|graph|lower|print|punct|space|upper|xdigit)|to(lower|upper)|isw(alnum|alpha|blank|cntrl|digit|graph|lower|print|punct|space|upper|xdigit|ctype)|tow(lower|upper|ctrans)|wctype|wctrans)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 372, { call: [library_message, info, rec, "its argument rules are easy to break and it depends on the locale"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoMemFunctionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 373, "safety.cpp98-.13.3.no_mem_functions", "memcpy, memmove and memcmp are not used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [cxx_only_call, info, rec] }, { call: [library_function, info, rec, "^(memcpy|memmove|memcmp)$", "^$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 373, { call: [library_message, info, rec, "it ignores object semantics; use assignment, std::copy, std::equal or std::bit_cast"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
