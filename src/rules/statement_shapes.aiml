@@ -15,7 +15,7 @@
     args: [[rec, ref<IrNode>]]
     return: bool
     body:
-      - if: { condition: { "||": [{ eq: [rec.role.len, 0] }, rec.from_macro] }, then: [{ return: false }] }
+      - if: { condition: { "||": [{ neq: [{ call: [regex.search, "^(then|else|body)$", rec.role] }, 0] }, rec.from_macro] }, then: [{ return: false }] }
       - if: { condition: { eq: [{ call: [regex.search, "^(CompoundStmt|AttributedStmt)$", rec.kind] }, 0] }, then: [{ return: false }] }
       - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^else$", rec.role] }, 0] }, { eq: [{ call: [regex.search, "^IfStmt$", rec.kind] }, 0] }] }, then: [{ return: false }] }
       - return: true

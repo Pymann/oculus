@@ -154,6 +154,10 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     write_pos(out, "body_end", decl.body_end);
                     out.attribute("array_param", decl.array_param);
                     write_pos(out, "static_array_pos", decl.static_array_pos);
+                    out.attribute("copy_or_move", decl.copy_or_move);
+                    out.attribute("align_count", decl.align_count);
+                    write_pos(out, "second_align_pos", decl.second_align_pos);
+                    write_pos(out, "zero_align_pos", decl.zero_align_pos);
                     write_pos(out, "type_pos", decl.type_pos);
                     write_pos(out, "restrict_pos", decl.restrict_pos);
                     write_pos(out, "declarator_pos", decl.declarator_pos);

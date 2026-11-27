@@ -1,0 +1,64 @@
+# OC-0229 generic_non_default and OC-0234 generic_default_position (catalogue in
+# Pymann/coding-rules), C11.  Read from RuleInformation: a _Generic with only a
+# default association (detail "default_only") and the marker node at a default
+# between other associations.  Findings go where the _Generic is written, the
+# #define for one in a macro.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: GenericNonDefaultRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 229, "style.c11-.9.5.generic_non_default", "A _Generic has at least one association besides default", "warn", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^GenericSelectionExpr$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^default_only$", rec.detail] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 229, "this _Generic has only a default association and selects nothing; use the expression directly"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: GenericDefaultPositionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 234, "style.c11-.9.5.generic_default_position", "The default association of a _Generic is first or last", "warn", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^GenericDefaultMiddle$", rec.kind] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 234, "the default association stands between others; put it first or last"] }]
+                  - set: [idx, { "+": [idx, 1] }]

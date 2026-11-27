@@ -42,7 +42,8 @@
       # literals: the characters as written in the file that spells them ("" when
       # the pieces come from different places or from ##)
       - [spelling, string, ""]
-      # then | else | body: this node is that sub-statement of its parent
+      # then | else | body: this node is that sub-statement of its parent; init
+      # (the init statement of for, if, switch) and step (the increment of for)
       - [role, string, ""]
       # NullStmt: the character before it on its line ("" if it starts the line)
       - [before, string, ""]

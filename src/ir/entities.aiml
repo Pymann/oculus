@@ -152,3 +152,10 @@
       # parameters: written with array syntax, and the `static` in its brackets
       - [array_param, bool, false]
       - [static_array_pos, IrPos]
+      # constructors: a copy or move constructor
+      - [copy_or_move, bool, false]
+      # alignas specifiers written here (not inherited): how many, the second one,
+      # and an alignment that evaluates to zero
+      - [align_count, i32, 0]
+      - [second_align_pos, IrPos]
+      - [zero_align_pos, IrPos]

@@ -1,0 +1,140 @@
+# OC-0097 no_assignment_result and OC-0127 no_parameter_modification (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: built-in assignments and
+# increments with their parents and operands (nodes in source order, so the first
+# operand of a node is the node after it).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/cxx_scope.aiml"
+
+- def:
+    name: assignment_node
+    args: [[rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^(BinaryOperator|CompoundAssignOperator)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [regex.search, "^(=|\\*=|/=|%=|\\+=|-=|<<=|>>=|&=|\\^=|\\|=)$", rec.detail] }, 0] }
+
+# The node whose value the assignment `node_uid` gives, after parentheses, full
+# expressions and the right operand of a comma; -1 when the value is dropped: an
+# expression statement, the init or step of a loop, the left operand of a comma, a
+# cast to void.
+- def:
+    name: assignment_use
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: i32
+    body:
+      - decl: [cur, i32, node_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^(then|else|body|init|step)$", here.role] }, 0] }, then: [{ return: -1 }] }
+            - if: { condition: { eq: [{ call: [info_has_node, info, here.parent_uid] }, false] }, then: [{ return: cur }] }
+            - decl: [upper, ref<IrNode>, { at: [info.nodes, here.parent_uid] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^(CompoundStmt|LabelStmt|CaseStmt|DefaultStmt|AttributedStmt)$", upper.kind] }, 0] }, then: [{ return: -1 }] }
+            - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^(CStyleCastExpr|CXXFunctionalCastExpr|CXXStaticCastExpr)$", upper.kind] }, 0] }, { call: [void_type, info, upper.type_uid] }] }, then: [{ return: -1 }] }
+            - decl: [climb, bool, { eq: [{ call: [regex.search, "^(ParenExpr|ExprWithCleanups|ConstantExpr)$", upper.kind] }, 0] }]
+            - if:
+                condition: { "&&": [{ eq: [{ call: [regex.search, "^BinaryOperator$", upper.kind] }, 0] }, { eq: [{ call: [regex.search, "^,$", upper.detail] }, 0] }] }
+                then:
+                  - if: { condition: { eq: [cur, { "+": [here.parent_uid, 1] }] }, then: [{ return: -1 }] }
+                  - set: [climb, true]
+            - if: { condition: { eq: [climb, false] }, then: [{ return: cur }] }
+            - set: [cur, here.parent_uid]
+      - return: -1
+
+- class:
+    name: NoAssignmentResultRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 97, "safety.c90-.9.3.no_assignment_result", "The value of an assignment is not used further", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [assignment_node, rec] }] }
+                      then:
+                        - decl: [used, i32, { call: [assignment_use, info, idx] }]
+                        - if:
+                            condition: { gte: [used, 0] }
+                            then:
+                              - decl: [user, ref<IrNode>, { at: [info.nodes, used] }]
+                              - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, user.pos] }, 97, "the value of this assignment is used further; assign in a statement of its own"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+# The parameter that the first operand of node `node_uid` names, through
+# parentheses (-1 if it names no parameter); the operand node itself in `found`.
+- def:
+    name: operand_parameter
+    args: [[info, RuleInformation], [node_uid, i32]]
+    return: i32
+    body:
+      - decl: [cur, i32, { "+": [node_uid, 1] }]
+      - decl: [parent, i32, node_uid]
+      - while:
+          condition: { call: [info_has_node, info, cur] }
+          body:
+            - decl: [here, ref<IrNode>, { at: [info.nodes, cur] }]
+            - if: { condition: { neq: [here.parent_uid, parent] }, then: [{ return: -1 }] }
+            - if:
+                condition: { eq: [{ call: [regex.search, "^DeclRefExpr$", here.kind] }, 0] }
+                then:
+                  - if: { condition: { eq: [{ call: [info_has_decl, info, here.ref_uid] }, false] }, then: [{ return: -1 }] }
+                  - decl: [named, ref<IrDecl>, { at: [info.decls, here.ref_uid] }]
+                  - if: { condition: { eq: [{ call: [regex.search, "^ParmVar$", named.kind] }, 0] }, then: [{ return: cur }] }
+                  - return: -1
+            - if: { condition: { neq: [{ call: [regex.search, "^ParenExpr$", here.kind] }, 0] }, then: [{ return: -1 }] }
+            - set: [parent, cur]
+            - set: [cur, { "+": [cur, 1] }]
+      - return: -1
+
+- class:
+    name: NoParameterModificationRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 127, "style.c90-.11.1.no_parameter_modification", "Parameters are not assigned inside the function", "warn", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - decl: [changes, bool, { call: [assignment_node, rec] }]
+                  - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^UnaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(\\+\\+|--)$", rec.detail] }, 0] }] }, then: [{ set: [changes, true] }] }
+                  - if:
+                      condition: { "&&": [changes, { call: [user_node, rec] }] }
+                      then:
+                        - decl: [operand, i32, { call: [operand_parameter, info, idx] }]
+                        - if:
+                            condition: { gte: [operand, 0] }
+                            then:
+                              - decl: [target, ref<IrNode>, { at: [info.nodes, operand] }]
+                              - decl: [param, ref<IrDecl>, { at: [info.decls, target.ref_uid] }]
+                              - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, target.pos] }, 127, "parameter '${param.name}' is modified; copy it into a local variable instead"] }]
+                  - set: [idx, { "+": [idx, 1] }]

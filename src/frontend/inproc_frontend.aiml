@@ -176,6 +176,10 @@
       - set: [rec.body_tokens, { call: [oc_decl_num, unit, index, ClangDeclNum.body_tokens] }]
       - set: [rec.array_param, { call: [decl_flag, unit, index, ClangDeclNum.array_param] }]
       - set: [rec.static_array_pos, { call: [shim_pos, unit, index, ClangPosWhich.static_array_pos] }]
+      - set: [rec.copy_or_move, { call: [decl_flag, unit, index, ClangDeclNum.copy_or_move] }]
+      - set: [rec.align_count, { call: [oc_decl_num, unit, index, ClangDeclNum.align_count] }]
+      - set: [rec.second_align_pos, { call: [shim_pos, unit, index, ClangPosWhich.second_align_pos] }]
+      - set: [rec.zero_align_pos, { call: [shim_pos, unit, index, ClangPosWhich.zero_align_pos] }]
       - return: rec
 
 - def:

@@ -514,6 +514,11 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`
   (`type`, `expr` or `polymorphic`, the evaluated form) and of `delete`
   (`incomplete` when it destroys an incomplete class).
+- `IrDecl.copy_or_move`, `align_count`, `second_align_pos` and
+  `zero_align_pos`; `IrNode.role` also `init` and `step` (the init statement
+  of for, if and switch, the increment of for); a `_Generic` with only a
+  default association has detail `default_only`, a default between other
+  associations gets a marker node `GenericDefaultMiddle` at `default`.
 
 ## 12. Notes on the AIML side
 

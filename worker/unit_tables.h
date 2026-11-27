@@ -199,6 +199,13 @@ struct DeclRec {
     // inside its brackets (`int items[static 16]`; invalid when there is none)
     bool array_param = false;
     Pos static_array_pos;
+    bool copy_or_move = false;      // constructors: a copy or move constructor
+    // alignment specifiers written on this declaration (alignas, _Alignas; not
+    // inherited from an earlier one): how many, where the second one is, and
+    // where an alignment that evaluates to zero is written
+    int align_count = 0;
+    Pos second_align_pos;
+    Pos zero_align_pos;
     int group_uid = -1;         // a variable or field: uid of the first declarator of its declaration
     int field_index = -1;       // position in its list: field in the record,
                                 // enumerator in the enum, parameter in the function
@@ -591,7 +598,10 @@ public:
             rec.is_deleted = fn->isDeleted();
             rec.is_defaulted = fn->isDefaulted();
             rec.min_args = static_cast<int>(fn->getMinRequiredArguments());
-            if (const auto *ctor = dyn_cast<CXXConstructorDecl>(fn)) rec.is_explicit = ctor->isExplicit();
+            if (const auto *ctor = dyn_cast<CXXConstructorDecl>(fn)) {
+                rec.is_explicit = ctor->isExplicit();
+                rec.copy_or_move = ctor->isCopyOrMoveConstructor();
+            }
             if (const auto *conv = dyn_cast<CXXConversionDecl>(fn)) rec.is_explicit = conv->isExplicit();
             if (fn->doesThisDeclarationHaveABody() && fn->getBody() != nullptr && !(isa<CXXMethodDecl>(fn) && cast<CXXMethodDecl>(fn)->getParent()->isLambda())) {
                 measure_body(fn, rec);
@@ -599,6 +609,31 @@ public:
         }
         if (const auto *var = dyn_cast<VarDecl>(decl)) {
             rec.paren_declarator = paren_declarator(var);
+        }
+        note_alignment(decl, rec);
+    }
+
+    // The alignas specifiers written on the declaration, in source order.
+    void note_alignment(const NamedDecl *decl, DeclRec &rec) {
+        std::vector<const AlignedAttr *> written;
+        for (const auto *attr : decl->specific_attrs<AlignedAttr>()) {
+            if (attr->isInherited() || attr->isImplicit() || !attr->isAlignas()) continue;
+            written.push_back(attr);
+        }
+        std::sort(written.begin(), written.end(), [this](const AlignedAttr *left, const AlignedAttr *right) {
+            return sm_.isBeforeInTranslationUnit(left->getLocation(), right->getLocation());
+        });
+        rec.align_count = static_cast<int>(written.size());
+        if (written.size() > 1) rec.second_align_pos = pos_of(sm_.getExpansionLoc(written[1]->getLocation()));
+        for (const AlignedAttr *attr : written) {
+            if (!attr->isAlignmentExpr() || attr->getAlignmentExpr() == nullptr) continue;
+            const Expr *value = attr->getAlignmentExpr();
+            if (value->isValueDependent()) continue;
+            std::optional<llvm::APSInt> known = value->getIntegerConstantExpr(context_);
+            if (known && known->isZero()) {
+                rec.zero_align_pos = pos_of(sm_.getExpansionLoc(value->getBeginLoc()));
+                break;
+            }
         }
     }
 
@@ -695,11 +730,16 @@ public:
             mark(loop->getBody(), "body");
         } else if (const auto *loop = dyn_cast<ForStmt>(stmt)) {
             mark(loop->getBody(), "body");
+            mark(loop->getInit(), "init");
+            mark(loop->getInc(), "step");
         } else if (const auto *loop = dyn_cast<CXXForRangeStmt>(stmt)) {
             mark(loop->getBody(), "body");
+            mark(loop->getInit(), "init");
         } else if (const auto *choice = dyn_cast<SwitchStmt>(stmt)) {
             mark(choice->getBody(), "body");
+            mark(choice->getInit(), "init");
         }
+        if (const auto *branch = dyn_cast<IfStmt>(stmt)) mark(branch->getInit(), "init");
     }
 
     // The first backslash-newline after `from` on the same logical line.
@@ -1244,7 +1284,28 @@ public:
             rec.type_uid = type_of(expr->getType());
             rec.is_dependent = expr->isTypeDependent() || expr->isValueDependent();
         }
+        if (const auto *generic = dyn_cast<GenericSelectionExpr>(stmt)) {
+            rec.detail = generic->getNumAssocs() == 1 && generic->getAssociation(0).getTypeSourceInfo() == nullptr ? "default_only" : "";
+        }
         nodes.push_back(rec);
+        // A default association between others: a marker node at `default`
+        // (OC-0234 generic_default_position).
+        if (const auto *generic = dyn_cast<GenericSelectionExpr>(stmt)) {
+            unsigned count = generic->getNumAssocs();
+            for (unsigned at = 1; at + 1 < count; ++at) {
+                if (generic->getAssociation(at).getTypeSourceInfo() != nullptr) continue;
+                NodeRec middle;
+                middle.uid = static_cast<int>(nodes.size());
+                middle.kind = "GenericDefaultMiddle";
+                middle.pos = src_pos_of(generic->getDefaultLoc());
+                middle.from_macro = generic->getDefaultLoc().isMacroID();
+                middle.in_system_header = rec.in_system_header;
+                middle.parent_uid = rec.uid;
+                middle.function_uid = function_uid;
+                nodes.push_back(middle);
+            }
+            return rec.uid;
+        }
         // An `else if` whose `if` has no `else`: the chain is open.  A marker node at
         // the `else` keyword of the outer if (OC-0110 final_else).
         if (const auto *branch = dyn_cast<IfStmt>(stmt)) {

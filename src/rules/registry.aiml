@@ -45,6 +45,9 @@
 - import: "src/rules/exits.aiml"
 - import: "src/rules/array_params.aiml"
 - import: "src/rules/cxx_operands.aiml"
+- import: "src/rules/assignments.aiml"
+- import: "src/rules/alignment.aiml"
+- import: "src/rules/generic_selection.aiml"
 
 - class:
     name: RuleRegistry
@@ -264,6 +267,20 @@
             - call: [<.rules.push, typeid_poly]
             - decl: [delete_incomplete, ptr<Rule>, { new: NoDeleteIncompleteRule }]
             - call: [<.rules.push, delete_incomplete]
+            - decl: [assignment_result, ptr<Rule>, { new: NoAssignmentResultRule }]
+            - call: [<.rules.push, assignment_result]
+            - decl: [param_change, ptr<Rule>, { new: NoParameterModificationRule }]
+            - call: [<.rules.push, param_change]
+            - decl: [sole_init_list, ptr<Rule>, { new: SoleInitListConstructorRule }]
+            - call: [<.rules.push, sole_init_list]
+            - decl: [zero_align, ptr<Rule>, { new: NoZeroAlignmentRule }]
+            - call: [<.rules.push, zero_align]
+            - decl: [single_align, ptr<Rule>, { new: SingleAlignmentSpecifierRule }]
+            - call: [<.rules.push, single_align]
+            - decl: [generic_default_only, ptr<Rule>, { new: GenericNonDefaultRule }]
+            - call: [<.rules.push, generic_default_only]
+            - decl: [generic_default_pos, ptr<Rule>, { new: GenericDefaultPositionRule }]
+            - call: [<.rules.push, generic_default_pos]
       - def:
           name: rule_count
           args: []
