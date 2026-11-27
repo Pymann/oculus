@@ -19,6 +19,8 @@
 # offsetof ...); `pos` where its name is spelled (in a macro body of the user: that
 # body), `name_pos` the expansion in the file, `defined_file_uid` the header; a
 # one-argument macro has its argument tokens in `body` and `argument_pos`.
+# condition: a #if or #elif that uses a macro expanding to `defined`; `name` the
+# macro, `name_pos` its use, `pos` the #.
 # define and undef: `scope` the innermost function body, class or namespace around
 # the directive (function, class, namespace; "" at global scope).
 

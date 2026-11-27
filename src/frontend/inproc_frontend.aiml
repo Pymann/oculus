@@ -196,6 +196,7 @@
       - set: [rec.pure_overrides_impl, { call: [decl_flag, unit, index, ClangDeclNum.pure_overrides_impl] }]
       - set: [rec.enum_value, { call: [oc_decl_text, unit, index, ClangDeclText.enum_value] }]
       - set: [rec.designated_array, { call: [decl_flag, unit, index, ClangDeclNum.designated_array] }]
+      - set: [rec.missing_base_init, { call: [decl_flag, unit, index, ClangDeclNum.missing_base_init] }]
       - set: [rec.default_arg_pos, { call: [shim_pos, unit, index, ClangPosWhich.default_arg_pos] }]
       - return: rec
 
@@ -222,6 +223,7 @@
       - set: [rec.spelling, { call: [oc_node_text, unit, index, ClangNodeText.spelling] }]
       - set: [rec.role, { call: [oc_node_text, unit, index, ClangNodeText.role] }]
       - set: [rec.before, { call: [oc_node_text, unit, index, ClangNodeText.before] }]
+      - set: [rec.shape, { call: [oc_node_text, unit, index, ClangNodeText.shape] }]
       - set: [rec.pos.spelling, { call: [shim_node_pos, unit, index, ClangPosWhich.spelling] }]
       - set: [rec.pos.expansion, { call: [shim_node_pos, unit, index, ClangPosWhich.expansion] }]
       - set: [rec.pos.from_macro, { eq: [{ call: [oc_node_num, unit, index, ClangNodeNum.pos_from_macro] }, 1] }]

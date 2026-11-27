@@ -519,6 +519,17 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   class name.  `IrMacro.scope` of a #define or #undef (`function`, `class`,
   `namespace` or "" for global scope) and, for an expansion of a one-argument
   system macro, `argument_pos` and the argument tokens in `body`.
+- `IrNode.shape` of initializer lists and their elements: `partial` (an array
+  list with fewer elements than the array, no designators, not a zero list such
+  as `{0}`), `override` (a designated element that initialises an element of an
+  earlier one again; lists with only designated elements and no ranges),
+  `undesignated` (a positional element in a list with a chained designator);
+  of the argument of a one-argument `std::move`: `move_const`, `move_rvalue` (a
+  temporary).  `IrDecl.missing_base_init`: a user-provided, non-delegating
+  constructor of a non-dependent class does not name a direct or virtual base
+  that has data members (its own or inherited; a vtable pointer does not count).  `IrMacro` kind `condition`: a `#if` or `#elif` whose condition
+  uses a macro that expands to `defined` (`name` the macro, `name_pos` where it is
+  used).
 - `IrFile.lexical_marks`: what the raw tokens and characters of a user file show,
   as `code:line:col;` entries: `comment_open` (a `/*` inside a block comment),
   `comment_splice` (a line comment continued by a backslash), `trigraph`,

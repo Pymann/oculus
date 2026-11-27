@@ -1,0 +1,67 @@
+# OC-0377 move_non_const_lvalue and OC-0286 explicit_base_construction (catalogue
+# in Pymann/coding-rules), C++.  Read from RuleInformation: IrNode.shape of the
+# argument of std::move (move_const, move_rvalue) and IrDecl.missing_base_init of
+# constructors (bases without data members, interfaces with only a vtable among
+# them, delegating and implicit constructors and classes with dependent bases are
+# not counted).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: MoveNonConstLvalueRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 377, "safety.cpp11-.13.6.move_non_const_lvalue", "std::move is applied only to non-const lvalues", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^move_(const|rvalue)$", rec.shape] }, 0] }] }
+                      then:
+                        - decl: [what, string, "a const object; it is copied, not moved"]
+                        - if: { condition: { eq: [{ call: [regex.search, "^move_rvalue$", rec.shape] }, 0] }, then: [{ set: [what, "a temporary, which is an rvalue already"] }] }
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 377, "std::move of ${what}"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: ExplicitBaseConstructionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 286, "style.cpp98-.15.3.explicit_base_construction", "Constructors explicitly initialise all direct and virtual bases", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, rec.missing_base_init] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 286, "constructor '${rec.name}' does not name every base with data in its initialiser list; initialise the bases explicitly"] }]
+                  - set: [idx, { "+": [idx, 1] }]

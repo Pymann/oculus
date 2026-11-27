@@ -54,3 +54,4 @@
       # not counted) and is not evaluated
       - [side_effect, bool, false]
       - [errno_write, bool, false]
+      - [shape, string, ""]

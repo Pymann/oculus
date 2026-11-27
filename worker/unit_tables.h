@@ -101,7 +101,7 @@ struct FileRec {
 // order.  Recorded while the preprocessor runs; only directives of active code.
 struct MacroRec {
     int uid = 0;
-    std::string kind;           // define | undef | pragma | include | expansion
+    std::string kind;           // define | undef | pragma | include | expansion | condition
     std::string name;           // the macro; for a pragma ""
     std::string body;           // define: replacement tokens, spaced; pragma: its text
     Pos pos;                    // the # of the directive (pragma: # or _Pragma)
@@ -235,6 +235,7 @@ struct DeclRec {
     Pos default_arg_pos;                // overriders: a default argument the overridden function differs in
     std::string enum_value;             // enumerators: the value, decimal ("" if dependent)
     bool designated_array = false;      // variables: written `[]` size, initialised with array designators
+    bool missing_base_init = false;     // user-provided constructors: a non-empty base not in the init list
     // alignment specifiers written on this declaration (alignas, _Alignas; not
     // inherited from an earlier one): how many, where the second one is, and
     // where an alignment that evaluates to zero is written
@@ -285,6 +286,11 @@ struct NodeRec {
     // =, compound assignment, ++ and -- of errno with a value other than 0 or one
     // saved from errno
     bool errno_write = false;
+    // initializers: partial (InitListExpr of an array with fewer elements and no
+    // designators, not {0}), override (a DesignatedInitExpr that initialises an
+    // element again), undesignated (a positional element of a list with chained
+    // designators); the argument of std::move: move_const, move_rvalue
+    std::string shape;
 };
 
 // The tables of one TU, filled while the AST is alive.
@@ -685,6 +691,7 @@ public:
                 rec.enum_value = toString(constant->getInitVal(), 10);
         }
         if (const auto *var = dyn_cast<VarDecl>(decl)) rec.designated_array = designated_array(var);
+        if (const auto *ctor = dyn_cast<CXXConstructorDecl>(decl)) rec.missing_base_init = missing_base_init(ctor);
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
         note_override_defaults(decl, rec);
@@ -706,6 +713,205 @@ public:
             if (first->isArrayDesignator() || first->isArrayRangeDesignator()) return true;
         }
         return false;
+    }
+
+    // Does the class or one of its bases have a non-static data member (a vtable
+    // pointer does not count: interfaces have no data)?
+    static bool has_data(const CXXRecordDecl *record) {
+        if (record == nullptr || !record->hasDefinition()) return false;
+        record = record->getDefinition();
+        if (!record->field_empty()) return true;
+        for (const CXXBaseSpecifier &base : record->bases()) {
+            if (has_data(base.getType()->getAsCXXRecordDecl())) return true;
+        }
+        return false;
+    }
+
+    // A user-provided, non-delegating constructor definition that leaves a direct or
+    // virtual base with data out of its member initialiser list.
+    static bool missing_base_init(const CXXConstructorDecl *ctor) {
+        if (!ctor->isThisDeclarationADefinition() || !ctor->isUserProvided() || ctor->isDelegatingConstructor() ||
+            ctor->isImplicit() || ctor->getParent()->isDependentContext() || ctor->isDependentContext()) {
+            return false;
+        }
+        const CXXRecordDecl *owner = ctor->getParent();
+        std::vector<const CXXRecordDecl *> bases;
+        auto want = [&bases](const CXXBaseSpecifier &base) {
+            const CXXRecordDecl *record = base.getType()->getAsCXXRecordDecl();
+            if (record == nullptr || !record->hasDefinition()) return false;
+            record = record->getDefinition();
+            if (has_data(record)) bases.push_back(record);
+            return true;
+        };
+        for (const CXXBaseSpecifier &base : owner->bases()) {
+            if (base.getType()->isDependentType() || !want(base)) return false;
+        }
+        for (const CXXBaseSpecifier &base : owner->vbases()) {
+            if (!want(base)) return false;
+        }
+        for (const CXXRecordDecl *base : bases) {
+            bool named = false;
+            for (const CXXCtorInitializer *init : ctor->inits()) {
+                if (!init->isWritten() || !init->isBaseInitializer()) continue;
+                const CXXRecordDecl *record = init->getBaseClass()->getAsCXXRecordDecl();
+                named = named || (record != nullptr && record->getCanonicalDecl() == base->getCanonicalDecl());
+            }
+            if (!named) return true;
+        }
+        return false;
+    }
+
+    static const Expr *without_implicit_casts(const Expr *expr) {
+        while (const auto *cast = dyn_cast_or_null<ImplicitCastExpr>(expr)) expr = cast->getSubExpr();
+        return expr;
+    }
+
+    // {0}, {{0}}, {} and the like: the zero initializer.
+    bool zero_init(const Expr *expr) const {
+        expr = without_implicit_casts(expr);
+        if (const auto *list = dyn_cast<InitListExpr>(expr)) {
+            if (list->getNumInits() == 0) return true;
+            return list->getNumInits() == 1 && zero_init(list->getInit(0));
+        }
+        if (expr->isValueDependent()) return false;
+        if (expr->isNullPointerConstant(context_, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull) return true;
+        Expr::EvalResult result;
+        if (!expr->EvaluateAsRValue(result, context_)) return false;
+        if (result.Val.isInt()) return result.Val.getInt() == 0;
+        if (result.Val.isFloat()) return result.Val.getFloat().isZero();
+        return false;
+    }
+
+    // The shapes of a written initializer list (NodeRec.shape): partial array lists,
+    // elements initialised twice, positional elements next to chained designators.
+    // The traversal records the semantic form and walks the written elements.
+    void note_init_list(const InitListExpr *semantic, NodeRec &rec) {
+        const InitListExpr *list = semantic;
+        if (list->isSemanticForm() && list->getSyntacticForm() != nullptr) list = list->getSyntacticForm();
+        if (semantic->getType().isNull() || semantic->getType()->isDependentType()) return;
+        bool designated = false, chained = false, ranged = false;
+        for (const Expr *item : list->inits()) {
+            const auto *one = dyn_cast_or_null<DesignatedInitExpr>(item);
+            if (one == nullptr) continue;
+            designated = true;
+            chained = chained || one->size() > 1;
+            for (const DesignatedInitExpr::Designator &part : one->designators()) ranged = ranged || part.isArrayRangeDesignator();
+        }
+        if (const auto *array = context_.getAsConstantArrayType(semantic->getType())) {
+            uint64_t size = array->getSize().getZExtValue();
+            unsigned count = list->getNumInits();
+            bool text = count == 1 && isa<StringLiteral>(without_implicit_casts(list->getInit(0)));
+            if (!designated && count > 0 && count < size && !text && !zero_init(list)) rec.shape = "partial";
+        }
+        if (chained) {
+            for (const Expr *item : list->inits()) {
+                if (item != nullptr && !isa<DesignatedInitExpr>(item)) pending_shape_[without_implicit_casts(item)] = "undesignated";
+            }
+        }
+        if (!designated || ranged) return;
+        std::vector<std::string> keys;
+        for (const Expr *item : list->inits()) {
+            const auto *one = dyn_cast_or_null<DesignatedInitExpr>(item);
+            if (one == nullptr) return;
+            std::string key;
+            for (unsigned at = 0; at < one->size(); ++at) {
+                const DesignatedInitExpr::Designator *part = one->getDesignator(at);
+                if (part->isFieldDesignator()) {
+                    const IdentifierInfo *name = part->getFieldName();
+                    if (name == nullptr) return;
+                    key += "." + name->getName().str();
+                } else {
+                    const Expr *index = one->getArrayIndex(*part);
+                    Expr::EvalResult value;
+                    if (index == nullptr || index->isValueDependent() || !index->EvaluateAsInt(value, context_)) return;
+                    key += "[" + toString(value.Val.getInt(), 10) + "]";
+                }
+            }
+            keys.push_back(key);
+        }
+        auto covers = [](const std::string &outer, const std::string &inner) {
+            return inner.compare(0, outer.size(), outer) == 0 &&
+                   (inner.size() == outer.size() || inner[outer.size()] == '.' || inner[outer.size()] == '[');
+        };
+        for (size_t later = 1; later < keys.size(); ++later) {
+            for (size_t former = 0; former < later; ++former) {
+                if (covers(keys[former], keys[later]) || covers(keys[later], keys[former])) {
+                    pending_shape_[list->getInit(static_cast<unsigned>(later))] = "override";
+                    break;
+                }
+            }
+        }
+    }
+
+    // std::move (one argument) of a const object or of a temporary.
+    void note_move(const CallExpr *call) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || call->getNumArgs() != 1 || callee->getIdentifier() == nullptr ||
+            callee->getName() != "move" || !callee->isInStdNamespace()) {
+            return;
+        }
+        const Expr *arg = call->getArg(0);
+        if (arg->isTypeDependent()) return;
+        const Expr *inner = without_implicit_casts(arg);
+        if (isa<MaterializeTemporaryExpr>(inner)) {
+            pending_shape_[inner] = "move_rvalue";
+        } else if (arg->getType().isConstQualified()) {
+            pending_shape_[inner] = "move_const";
+        }
+    }
+
+    // A #if or #elif whose condition uses a macro that expands to `defined`
+    // (MacroRec kind condition).
+    bool expands_to_defined(Preprocessor &pp, const IdentifierInfo *name, int depth,
+                            std::set<const IdentifierInfo *> &seen) const {
+        if (name == nullptr || depth > 16 || !seen.insert(name).second) return false;
+        const MacroInfo *info = pp.getMacroInfo(name);
+        if (info == nullptr) return false;
+        for (const Token &tok : info->tokens()) {
+            const IdentifierInfo *word = tok.getIdentifierInfo();
+            if (word == nullptr) continue;
+            if (word->getName() == "defined") return true;
+            if (expands_to_defined(pp, word, depth + 1, seen)) return true;
+        }
+        return false;
+    }
+
+    void note_condition(Preprocessor &pp, SourceLocation loc, SourceRange condition) {
+        if (!user_file_loc(loc) || condition.isInvalid()) return;
+        std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(sm_.getExpansionLoc(condition.getBegin()));
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(at.first, &invalid);
+        if (invalid || at.second > buffer.size()) return;
+        size_t end = at.second;
+        while (end < buffer.size() && (buffer[end] != '\n' || (end > 0 && buffer[end - 1] == '\\'))) ++end;
+        // The raw lexer needs a NUL after its end: lex a copy, placed at the condition.
+        std::string text = buffer.substr(at.second, end - at.second).str();
+        Lexer raw(sm_.getExpansionLoc(condition.getBegin()), pp.getLangOpts(), text.c_str(), text.c_str(),
+                  text.c_str() + text.size());
+        Token tok;
+        int after_defined = 0;
+        while (true) {
+            raw.LexFromRawLexer(tok);
+            if (tok.is(tok::eof)) break;
+            if (tok.is(tok::raw_identifier)) {
+                llvm::StringRef word = tok.getRawIdentifier();
+                if (word == "defined") { after_defined = 2; continue; }
+                if (after_defined == 0) {
+                    std::set<const IdentifierInfo *> seen;
+                    const IdentifierInfo *name = pp.getIdentifierInfo(word);
+                    if (expands_to_defined(pp, name, 0, seen)) {
+                        MacroRec rec = directive_rec("condition", pp, tok);
+                        rec.name = word.str();
+                        rec.loc = SourceLocation();
+                        macros.push_back(rec);
+                        return;
+                    }
+                }
+                after_defined = 0;
+                continue;
+            }
+            after_defined = tok.is(tok::l_paren) && after_defined == 2 ? 1 : 0;
+        }
     }
 
     // Is `loc` (or a macro it comes from) the expansion of the macro errno?
@@ -1591,6 +1797,10 @@ public:
         }
         if (isa<NullStmt>(stmt)) rec.before = char_before(stmt->getBeginLoc());
         rec.errno_write = errno_write(stmt);
+        if (const auto *list = dyn_cast<InitListExpr>(stmt)) note_init_list(list, rec);
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) note_move(call);
+        auto shaped = pending_shape_.find(stmt);
+        if (shaped != pending_shape_.end()) rec.shape = shaped->second;
         if (const auto *attempt = dyn_cast<CXXTryStmt>(stmt)) note_shadowed_handlers(attempt);
         SourceLocation key = stmt->getBeginLoc();
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) key = binary->getOperatorLoc();
@@ -2204,6 +2414,7 @@ private:
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> skipped_;
     std::set<const VarDecl *> errno_saved_;
     std::set<const Stmt *> shadowed_handlers_;
+    std::map<const Stmt *, std::string> pending_shape_;
     struct ScopeRange {
         FileID fid;
         unsigned begin;
@@ -2239,6 +2450,12 @@ public:
     }
     void SourceRangeSkipped(SourceRange range, SourceLocation) override {
         tables_->note_skipped(range);
+    }
+    void If(SourceLocation loc, SourceRange condition, ConditionValueKind value) override {
+        if (value != CVK_NotEvaluated) tables_->note_condition(pp_, loc, condition);
+    }
+    void Elif(SourceLocation loc, SourceRange condition, ConditionValueKind value, SourceLocation) override {
+        if (value != CVK_NotEvaluated) tables_->note_condition(pp_, loc, condition);
     }
 
 private:

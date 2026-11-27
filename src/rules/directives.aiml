@@ -1,4 +1,6 @@
-# OC-0363 no_pragma and OC-0319 include_guards (catalogue in Pymann/coding-rules).
+# OC-0363 no_pragma, OC-0319 include_guards and OC-0317 defined_standard_form
+# (catalogue in Pymann/coding-rules).  OC-0317 reads the condition records of
+# `macros` (a #if or #elif using a macro that expands to `defined`).
 # Read from RuleInformation: the pragma records of `macros` (the text of the
 # directive), and for every header the frontend's include-guard verdict: Clang's
 # multiple-include optimisation recognises `#ifndef X` / `#define X` / ... `#endif`
@@ -74,4 +76,31 @@
                         - set: [pos.line, file.first_line]
                         - set: [pos.column, file.first_column]
                         - call: [out.push, { call: [pos_finding, unit, pos, 319, "this header has no include guard (#ifndef/#define/#endif around all of it, or #pragma once)"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: DefinedStandardFormRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 317, "safety.c90-.12.3.defined_standard_form", "The defined operator is used only as defined(X) or defined X", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { eq: [{ call: [regex.search, "^condition$", rec.kind] }, 0] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 317, "the condition uses '${rec.name}', which expands to defined; write defined(NAME) in the directive itself"] }]
                   - set: [idx, { "+": [idx, 1] }]

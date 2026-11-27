@@ -1,0 +1,92 @@
+# OC-0062 no_partial_array_init, OC-0063 no_double_init and OC-0187
+# chained_designators_complete (catalogue in Pymann/coding-rules), C.  Read from
+# RuleInformation: IrNode.shape of the written initializer lists and their
+# elements (partial, override, undesignated; doc/ir.md).  Brace elision only adds
+# elements, so a complete list is never partial; lists with a designator range
+# or mixed positional and designated elements are not checked for overrides.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: NoPartialArrayInitRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 62, "safety.c90-.7.2.no_partial_array_init", "An array initializer covers every element or only uses {0}", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^partial$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 62, "the initializer gives fewer values than the array has elements; give all of them, or use {0}"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoDoubleInitRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 63, "safety.c99-.7.2.no_double_init", "No element is initialized twice in one initializer", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^override$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 63, "this designator initialises an element that an earlier one in the list already initialises"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: ChainedDesignatorsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 187, "safety.c99-.7.2.chained_designators_complete", "With chained designators every initializer has a designator", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { eq: [{ call: [regex.search, "^undesignated$", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 187, "positional value in a list with chained designators; give it a designator"] }]
+                  - set: [idx, { "+": [idx, 1] }]

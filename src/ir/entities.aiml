@@ -189,5 +189,6 @@
       - [pure_overrides_impl, bool, false]
       - [enum_value, string, ""]
       - [designated_array, bool, false]
+      - [missing_base_init, bool, false]
       # overriders: a default argument that differs from the overridden function's
       - [default_arg_pos, IrPos]

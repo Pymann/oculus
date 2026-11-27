@@ -29,6 +29,8 @@ waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   compile is reported as such and is not checked. (0386 is listed in
   catalog/not_implemented.txt; 0329 is not listed yet.)
 - **OC-0189** (_Atomic void): only a compile-error example. Same reason.
+- **OC-0142** include_form: an `#include` of anything but `<name>` or `"name"`
+  does not compile either.
 
 ## Deferred: needs more frontend or IR
 
@@ -50,6 +52,12 @@ waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   address is not taken in the unit. Others may be callbacks defined elsewhere.
 - **OC-0057** implicit enum values: reported only when an *earlier* enumerator
   has the value. A later explicit alias (`LAST = C`) counts as intended.
+- **OC-0063** double initialisation: only lists whose elements are all designated
+  and have no ranges. Lists that mix positional and designated elements are not
+  checked yet.
+- **OC-0286** explicit base construction: classes with dependent bases (templates)
+  are not checked, and a base with no data members (an interface that has only a
+  vtable) does not count.
 - **OC-0369** constant assert: only arguments made of literals, `true`, `false`,
   `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen. An
   assert written in a macro body is reported once, at the definition.

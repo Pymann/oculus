@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 21
+      - version: 22
 
 - enum:
     name: ClangUnitText
@@ -173,6 +173,7 @@
       - may_throw
       - pure_overrides_impl
       - designated_array
+      - missing_base_init
 
 - enum:
     name: ClangNodeText
@@ -183,6 +184,7 @@
       - spelling
       - role
       - before
+      - shape
 
 - enum:
     name: ClangNodeNum

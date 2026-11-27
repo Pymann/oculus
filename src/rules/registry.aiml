@@ -59,6 +59,8 @@
 - import: "src/rules/enum_values.aiml"
 - import: "src/rules/library_macros.aiml"
 - import: "src/rules/scopes.aiml"
+- import: "src/rules/initializers.aiml"
+- import: "src/rules/cxx_construction.aiml"
 - import: "src/rules/override_shapes.aiml"
 
 - class:
@@ -341,6 +343,18 @@
             - call: [<.rules.push, derived_handlers]
             - decl: [global_macros, ptr<Rule>, { new: GlobalScopeMacrosRule }]
             - call: [<.rules.push, global_macros]
+            - decl: [partial_init, ptr<Rule>, { new: NoPartialArrayInitRule }]
+            - call: [<.rules.push, partial_init]
+            - decl: [double_init, ptr<Rule>, { new: NoDoubleInitRule }]
+            - call: [<.rules.push, double_init]
+            - decl: [chained_designators, ptr<Rule>, { new: ChainedDesignatorsRule }]
+            - call: [<.rules.push, chained_designators]
+            - decl: [move_lvalue, ptr<Rule>, { new: MoveNonConstLvalueRule }]
+            - call: [<.rules.push, move_lvalue]
+            - decl: [base_construction, ptr<Rule>, { new: ExplicitBaseConstructionRule }]
+            - call: [<.rules.push, base_construction]
+            - decl: [defined_form, ptr<Rule>, { new: DefinedStandardFormRule }]
+            - call: [<.rules.push, defined_form]
             - decl: [abstract_copy, ptr<Rule>, { new: AbstractCopyAssignmentRule }]
             - call: [<.rules.push, abstract_copy]
             - decl: [template_ctor, ptr<Rule>, { new: TemplateCtorCopyRule }]
