@@ -1,0 +1,61 @@
+# OC-0324 no_offsetof and OC-0325 no_errno (catalogue in Pymann/coding-rules), C++.
+# Read from RuleInformation: the expansions of system macros in the user's code.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: NoOffsetofRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 324, "safety.cpp98-.13.2.no_offsetof", "offsetof is not used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^expansion$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^offsetof$", rec.name] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 324, "offsetof is used; use a pointer to member"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoErrnoRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 325, "safety.cpp98-.13.5.no_errno", "errno is not used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^expansion$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^errno$", rec.name] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 325, "errno is used; report errors through return values, std::error_code or exceptions"] }]
+                  - set: [idx, { "+": [idx, 1] }]

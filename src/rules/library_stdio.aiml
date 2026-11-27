@@ -1,0 +1,63 @@
+# OC-0166 no_fenv and OC-0167 no_stdio (catalogue in Pymann/coding-rules).  Read
+# from RuleInformation: the #include records (fenv.h) and references to the
+# functions of stdio.h (library check of library_calls.aiml).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/library_calls.aiml"
+
+- class:
+    name: NoFenvRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 166, "safety.c99-.13.2.no_fenv", "fenv.h and its exception handling are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^include$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(fenv\\.h|cfenv)$", rec.name] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 166, "fenv.h is included; the floating-point environment is not changed"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoStdioRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 167, "safety.c90-.13.3.no_stdio", "The standard input/output functions are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [library_function, info, rec, "^(printf|fprintf|sprintf|snprintf|vprintf|vfprintf|vsprintf|vsnprintf|scanf|fscanf|sscanf|vscanf|vfscanf|vsscanf|fopen|freopen|fclose|fflush|setbuf|setvbuf|fread|fwrite|fgetc|getc|getchar|fgets|gets|fputc|putc|putchar|fputs|puts|ungetc|fseek|ftell|rewind|fgetpos|fsetpos|clearerr|feof|ferror|perror|remove|rename|tmpfile|tmpnam)$", "^(printf|fprintf|sprintf|snprintf|vprintf|vfprintf|vsprintf|vsnprintf|scanf|fscanf|sscanf|vscanf|vfscanf|vsscanf|fopen|freopen|fclose|fflush|setbuf|setvbuf|fread|fwrite|fgetc|getc|getchar|fgets|gets|fputc|putc|putchar|fputs|puts|ungetc|fseek|ftell|rewind|fgetpos|fsetpos|clearerr|feof|ferror|perror|remove|rename|tmpfile|tmpnam)$"] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 167, { call: [library_message, info, rec, "the input/output functions of stdio.h are not used; use the project's I/O layer"] }] }]
+                  - set: [idx, { "+": [idx, 1] }]

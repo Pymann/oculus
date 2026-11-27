@@ -10,16 +10,6 @@
 - import: "src/rules/rule.aiml"
 - import: "src/rules/rule_kit.aiml"
 
-# The canonical type behind a type uid (-1 if unknown).
-- def:
-    name: canonical_of
-    args: [[info, RuleInformation], [type_uid, i32]]
-    return: i32
-    body:
-      - if: { condition: { eq: [{ call: [info_has_type, info, type_uid] }, false] }, then: [{ return: -1 }] }
-      - decl: [declared, ref<IrType>, { at: [info.types, type_uid] }]
-      - return: declared.canonical_uid
-
 # A pointer to char, unsigned char or std::byte: the byte view of an object.
 - def:
     name: is_byte_pointer

@@ -152,3 +152,14 @@
       - if: { condition: { "||": [{ lt: [pos.file_uid, 0] }, { gte: [pos.file_uid, info.files.len] }] }, then: [{ return: false }] }
       - decl: [file, ref<IrFile>, { at: [info.files, pos.file_uid] }]
       - return: { "&&": [{ eq: [{ call: [regex.search, "^header$", file.kind] }, 0] }, { call: [header_name, file.path] }] }
+
+# The canonical type of `type_uid`, -1 if it is not known.
+- def:
+    name: canonical_of
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: i32
+    body:
+      - if: { condition: { eq: [{ call: [info_has_type, info, type_uid] }, false] }, then: [{ return: -1 }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, declared.canonical_uid] }, false] }, then: [{ return: -1 }] }
+      - return: declared.canonical_uid

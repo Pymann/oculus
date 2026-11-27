@@ -1,0 +1,152 @@
+# OC-0301 no_pointer_exception, OC-0304 no_throw_null and OC-0309
+# catch_by_reference (catalogue in Pymann/coding-rules), C++.  Read from
+# RuleInformation: throw expressions and their operand node with its type, the
+# expansions of NULL, and handlers with the caught type and declaration.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The operand of a throw (the node right under a CXXThrowExpr).
+- def:
+    name: thrown_operand
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [{ call: [info_has_node, info, rec.parent_uid] }, false] }, then: [{ return: false }] }
+      - decl: [owner, ref<IrNode>, { at: [info.nodes, rec.parent_uid] }]
+      - return: { eq: [{ call: [regex.search, "^CXXThrowExpr$", owner.kind] }, 0] }
+
+# A pointer, or an array that decays to one when thrown (`throw "text"`).
+- def:
+    name: pointer_like
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: bool
+    body:
+      - decl: [canon_uid, i32, { call: [canonical_of, info, type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: { "||": [canon.is_pointer, { gt: [canon.array_kind.len, 0] }] }
+
+# Where NULL is expanded in a file, by "file:line:column".
+- def:
+    name: null_expansions
+    args: [[info, RuleInformation]]
+    return: map<string:i32>
+    body:
+      - decl: [found, map<string:i32>]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.macros.len] }
+          body:
+            - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+            - if:
+                condition: { "&&": [{ eq: [{ call: [regex.search, "^expansion$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^NULL$", rec.name] }, 0] }] }
+                then: [{ call: [found.set, "${rec.name_pos.file_uid}:${rec.name_pos.line}:${rec.name_pos.column}", 1] }]
+            - set: [idx, { "+": [idx, 1] }]
+      - return: found
+
+# A handler that catches a class type by value.
+- def:
+    name: caught_by_value
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^CXXCatchStmt$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [info_has_decl, info, rec.ref_uid] }, false] }, then: [{ return: false }] }
+      - decl: [canon_uid, i32, { call: [canonical_of, info, rec.type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: { "&&": [canon.is_record, { eq: [canon.is_dependent, false] }] }
+
+- def:
+    name: handler_pos
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: IrPos
+    body:
+      - decl: [caught, ref<IrDecl>, { at: [info.decls, rec.ref_uid] }]
+      - if: { condition: { "&&": [{ gt: [caught.name.len, 0] }, { gt: [caught.name_pos.line, 0] }] }, then: [{ return: caught.name_pos }] }
+      - return: { call: [written_pos, rec.pos] }
+
+- class:
+    name: NoPointerExceptionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 301, "safety.cpp98-.17.1.no_pointer_exception", "Thrown objects are not pointers", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [thrown_operand, info, rec] }, { call: [pointer_like, info, rec.type_uid] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 301, "a pointer is thrown; throw an object of class type and catch it by reference"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoThrowNullRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 304, "safety.cpp98-.17.1.no_throw_null", "NULL is not thrown", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [nulls, map<string:i32>, { call: [null_expansions, info] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [thrown_operand, info, rec] }, { eq: [{ call: [nulls.get, "${rec.pos.expansion.file_uid}:${rec.pos.expansion.line}:${rec.pos.expansion.column}", 0] }, 1] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos.expansion, 304, "NULL is thrown; it is an integer here and no pointer handler catches it"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: CatchByReferenceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 309, "safety.cpp98-.17.2.catch_by_reference", "Exceptions of class type are caught by reference", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [caught_by_value, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [handler_pos, info, rec] }, 309, "this handler catches a class type by value, which copies and slices the exception; catch by const reference"] }]
+                  - set: [idx, { "+": [idx, 1] }]

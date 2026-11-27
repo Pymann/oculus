@@ -1,0 +1,90 @@
+# OC-0163 no_setjmp, OC-0164 no_signal and OC-0165 no_tgmath (catalogue in
+# Pymann/coding-rules).  Read from RuleInformation: the #include records of the
+# user's files with the header name as written; the include of the header is the
+# use that is reported.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: NoSetjmpRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 163, "safety.c90-.13.2.no_setjmp", "setjmp.h is not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^include$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(setjmp\\.h|csetjmp)$", rec.name] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 163, "setjmp.h is included; setjmp and longjmp bypass normal control flow"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoSignalRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 164, "safety.c90-.13.2.no_signal", "signal.h is not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^include$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(signal\\.h|csignal)$", rec.name] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 164, "signal.h is included; signal handling is not used"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoTgmathRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 165, "style.c99-.13.2.no_tgmath", "tgmath.h is not used", "warn", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^include$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(tgmath\\.h|ctgmath)$", rec.name] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 165, "tgmath.h is included; call the function for the type explicitly"] }]
+                  - set: [idx, { "+": [idx, 1] }]

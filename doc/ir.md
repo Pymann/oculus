@@ -489,6 +489,13 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   declaration of `name` although it reads as a conversion.
 - `IrDecl.in_extern_c` also holds for a tag first named inside an `extern "C"`
   block (`typedef struct x x;`), whose semantic scope is the enclosing namespace.
+- `IrMacro` records of kind `include` (the header name as written, read from the
+  directive line of the file Clang entered) and `expansion` (a macro of a system
+  header expanded in the user's code, such as `NULL`, `errno` or `offsetof`, at
+  the place its name is spelled). Expansions of the user's own macros are not
+  recorded; there are too many of them in macro-heavy code.
+- A `CXXCatchStmt` node carries the caught type (`type_uid`) and the handler's
+  declaration (`ref_uid`).
 
 ## 12. Notes on the AIML side
 

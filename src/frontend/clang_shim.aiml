@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 9
+      - version: 10
 
 - enum:
     name: ClangUnitText

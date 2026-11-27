@@ -1,0 +1,183 @@
+# OC-0041 no_signed_single_bit_field, OC-0134 max_two_pointer_levels and OC-0117
+# no_boolean_switch (catalogue in Pymann/coding-rules).  Read from
+# RuleInformation: bit-fields with width, canonical type and the sign as written
+# (bitfield_type.aiml); declared types with their pointer and array chain; switch
+# statements with their controlling expression, its operator and type.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/bitfield_type.aiml"
+- import: "src/rules/exceptions.aiml"
+
+# A named one-bit bit-field of a type that is signed as written (`signed`, also
+# through typedefs).  Plain `int` is left to OC-0040.
+- def:
+    name: signed_single_bit
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { "||": [{ eq: [rec.is_bit_field, false] }, { neq: [rec.bit_width, 1] }, { eq: [rec.name.len, 0] }] }, then: [{ return: false }] }
+      - decl: [canon_uid, i32, { call: [canonical_of, info, rec.type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - if: { condition: { "||": [{ eq: [canon.is_integer, false] }, canon.is_bool, canon.is_enum, canon.plain_char, { eq: [canon.int_signed, false] }] }, then: [{ return: false }] }
+      - return: { call: [sign_explicit, info, rec] }
+
+# Levels of pointer indirection of a type, arrays seen through.
+- def:
+    name: pointer_levels
+    args: [[info, RuleInformation], [type_uid, i32]]
+    return: i32
+    body:
+      - decl: [levels, i32, 0]
+      - decl: [cursor, i32, { call: [canonical_of, info, type_uid] }]
+      - decl: [steps, i32, 0]
+      - while:
+          condition: { "&&": [{ gte: [cursor, 0] }, { lt: [steps, 32] }] }
+          body:
+            - decl: [step, ref<IrType>, { at: [info.types, cursor] }]
+            - if:
+                condition: { "||": [step.is_pointer, { gt: [step.array_kind.len, 0] }] }
+                then:
+                  - if: { condition: step.is_pointer, then: [{ set: [levels, { "+": [levels, 1] }] }] }
+                  - set: [cursor, { call: [canonical_of, info, step.element_uid] }]
+                else:
+                  - set: [cursor, -1]
+            - set: [steps, { "+": [steps, 1] }]
+      - return: levels
+
+# A parameter written as an array (`int **rows[]`) has one level from the decay
+# that was not written.
+- def:
+    name: written_levels
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: i32
+    body:
+      - decl: [levels, i32, { call: [pointer_levels, info, rec.type_uid] }]
+      - if: { condition: { eq: [{ call: [info_has_type, info, rec.type_uid] }, false] }, then: [{ return: levels }] }
+      - decl: [declared, ref<IrType>, { at: [info.types, rec.type_uid] }]
+      - if: { condition: { eq: [{ call: [regex.search, "^Decayed$", declared.kind] }, 0] }, then: [{ return: { "-": [levels, 1] } }] }
+      - return: levels
+
+- def:
+    name: levels_message
+    args: [[rec, ref<IrDecl>]]
+    return: string
+    body:
+      - if: { condition: { eq: [rec.name.len, 0] }, then: [{ return: "this parameter has more than two levels of pointer indirection" }] }
+      - return: "${rec.name} has more than two levels of pointer indirection"
+
+# The controlling expression of a switch, through parentheses.
+- def:
+    name: switch_condition
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - decl: [cursor, i32, rec.parent_uid]
+      - decl: [depth, i32, 0]
+      - while:
+          condition: { "&&": [{ call: [info_has_node, info, cursor] }, { lt: [depth, 4] }] }
+          body:
+            - decl: [step, ref<IrNode>, { at: [info.nodes, cursor] }]
+            - if: { condition: { eq: [{ call: [regex.search, "^SwitchStmt$", step.kind] }, 0] }, then: [{ return: true }] }
+            - if: { condition: { neq: [{ call: [regex.search, "^ParenExpr$", step.kind] }, 0] }, then: [{ return: false }] }
+            - set: [cursor, step.parent_uid]
+            - set: [depth, { "+": [depth, 1] }]
+      - return: false
+
+# A comparison, a logical operator or a bool value.
+- def:
+    name: essentially_boolean
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^BinaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^(<|>|<=|>=|==|!=|&&|\\|\\|)$", rec.detail] }, 0] }] }, then: [{ return: true }] }
+      - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^UnaryOperator$", rec.kind] }, 0] }, { eq: [{ call: [regex.search, "^!$", rec.detail] }, 0] }] }, then: [{ return: true }] }
+      - if: { condition: { eq: [{ call: [regex.search, "(Expr|Operator|Literal)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - decl: [canon_uid, i32, { call: [canonical_of, info, rec.type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: canon.is_bool
+
+- class:
+    name: NoSignedSingleBitFieldRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 41, "safety.c90-.6.1.no_signed_single_bit_field", "A named one-bit bit-field is unsigned", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [signed_single_bit, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 41, "${rec.name} is a signed one-bit bit-field and holds only 0 and -1; make it unsigned"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: MaxTwoPointerLevelsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 134, "style.c90-.10.2.max_two_pointer_levels", "A declaration nests pointers at most two levels deep", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { eq: [{ call: [regex.search, "^(Var|ParmVar|Field)$", rec.kind] }, 0] }, { gt: [{ call: [written_levels, info, rec] }, 2] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.declarator_pos, 134, { call: [levels_message, rec] }] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NoBooleanSwitchRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 117, "safety.c90-.4.5.no_boolean_switch", "The switch expression is not Boolean", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [switch_condition, info, rec] }, { call: [essentially_boolean, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 117, "the switch is controlled by a Boolean expression; use if and else"] }]
+                  - set: [idx, { "+": [idx, 1] }]

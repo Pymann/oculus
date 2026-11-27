@@ -1,5 +1,6 @@
 # Preprocessor directives (doc/ir.md, section 5.5): one record per #define,
-# #undef and #pragma (or _Pragma) of active code outside system headers, in
+# #undef, #pragma (or _Pragma) and #include of active code outside system headers,
+# and per expansion of a system macro there, in
 # source order.  `pos` is the # of the directive (a _Pragma written in a macro body:
 # its place in the #define).  Positions of a missing part have line 0.
 #
@@ -10,6 +11,13 @@
 # of the definition it removes, -1 if the name was not defined, -2 if it was
 # defined outside any file (command line, predefines).  pragma: `body` the text
 # from the # (or _Pragma) to the end of the line.
+#
+# include: an #include of the user; `name` the header as written without the
+# brackets or quotes, `body` with them, `defined_file_uid` the file entered (a
+# header skipped by its include guard is not entered again and not recorded).
+# expansion: a macro of a system header expanded in the user's code (NULL, errno,
+# offsetof ...); `pos` where its name is spelled (in a macro body of the user: that
+# body), `name_pos` the expansion in the file, `defined_file_uid` the header.
 
 - import: "src/ir/position.aiml"
 

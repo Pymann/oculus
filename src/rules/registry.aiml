@@ -29,6 +29,11 @@
 - import: "src/rules/header_contents.aiml"
 - import: "src/rules/cxx_scope.aiml"
 - import: "src/rules/library_locale.aiml"
+- import: "src/rules/banned_headers.aiml"
+- import: "src/rules/library_stdio.aiml"
+- import: "src/rules/system_macros.aiml"
+- import: "src/rules/exceptions.aiml"
+- import: "src/rules/bits_pointers_switch.aiml"
 
 - class:
     name: RuleRegistry
@@ -174,6 +179,32 @@
             - call: [<.rules.push, c_arrays]
             - decl: [set_locale, ptr<Rule>, { new: NoSetlocaleRule }]
             - call: [<.rules.push, set_locale]
+            - decl: [no_setjmp, ptr<Rule>, { new: NoSetjmpRule }]
+            - call: [<.rules.push, no_setjmp]
+            - decl: [no_signal, ptr<Rule>, { new: NoSignalRule }]
+            - call: [<.rules.push, no_signal]
+            - decl: [no_tgmath, ptr<Rule>, { new: NoTgmathRule }]
+            - call: [<.rules.push, no_tgmath]
+            - decl: [no_fenv, ptr<Rule>, { new: NoFenvRule }]
+            - call: [<.rules.push, no_fenv]
+            - decl: [no_stdio, ptr<Rule>, { new: NoStdioRule }]
+            - call: [<.rules.push, no_stdio]
+            - decl: [no_offsetof, ptr<Rule>, { new: NoOffsetofRule }]
+            - call: [<.rules.push, no_offsetof]
+            - decl: [no_errno, ptr<Rule>, { new: NoErrnoRule }]
+            - call: [<.rules.push, no_errno]
+            - decl: [pointer_exception, ptr<Rule>, { new: NoPointerExceptionRule }]
+            - call: [<.rules.push, pointer_exception]
+            - decl: [throw_null, ptr<Rule>, { new: NoThrowNullRule }]
+            - call: [<.rules.push, throw_null]
+            - decl: [catch_reference, ptr<Rule>, { new: CatchByReferenceRule }]
+            - call: [<.rules.push, catch_reference]
+            - decl: [signed_bit, ptr<Rule>, { new: NoSignedSingleBitFieldRule }]
+            - call: [<.rules.push, signed_bit]
+            - decl: [pointer_levels_rule, ptr<Rule>, { new: MaxTwoPointerLevelsRule }]
+            - call: [<.rules.push, pointer_levels_rule]
+            - decl: [boolean_switch, ptr<Rule>, { new: NoBooleanSwitchRule }]
+            - call: [<.rules.push, boolean_switch]
       - def:
           name: rule_count
           args: []

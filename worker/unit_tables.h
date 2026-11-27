@@ -92,7 +92,7 @@ struct FileRec {
 // order.  Recorded while the preprocessor runs; only directives of active code.
 struct MacroRec {
     int uid = 0;
-    std::string kind;           // define | undef | pragma
+    std::string kind;           // define | undef | pragma | include | expansion
     std::string name;           // the macro; for a pragma ""
     std::string body;           // define: replacement tokens, spaced; pragma: its text
     Pos pos;                    // the # of the directive (pragma: # or _Pragma)
@@ -107,7 +107,8 @@ struct MacroRec {
     Pos stringize_paste;        // a ## right after `#param`
     bool uses_call_site = false;  // __FILE__, __LINE__, __func__ ... or a macro that does
     int line_count = 1;         // lines of the definition (backslash continuations)
-    int defined_file_uid = -1;  // undef: file of the definition it removes; -2 none in a file
+    int defined_file_uid = -1;  // undef: file of the definition it removes; -2 none in a file;
+                                // include: the file included; expansion: file of the definition
 };
 
 struct TypeRec {
@@ -797,7 +798,66 @@ public:
     // A file the preprocessor enters, so that headers with nothing else recorded
     // are known too.
     void note_entered(SourceLocation loc) {
-        if (loc.isValid() && loc.isFileID()) file_of(loc);
+        if (loc.isValid() && loc.isFileID()) {
+            file_of(loc);
+            note_include(loc);
+        }
+    }
+
+    // An #include written by the user: name and body hold the header name as
+    // written (`setjmp.h`, `<setjmp.h>`), pos the #, defined_file_uid the file
+    // entered.  A header name made by a macro is not recorded.
+    void note_include(SourceLocation entered) {
+        SourceLocation include = sm_.getIncludeLoc(sm_.getFileID(entered));
+        if (include.isInvalid()) return;
+        include = sm_.getExpansionLoc(include);
+        if (!user_file_loc(include)) return;
+        std::pair<FileID, unsigned> at = sm_.getDecomposedLoc(include);
+        llvm::StringRef buffer = sm_.getBufferData(at.first);
+        unsigned start = std::min<unsigned>(at.second, static_cast<unsigned>(buffer.size()));
+        while (start > 0 && buffer[start - 1] != '\n') --start;
+        unsigned end = start;
+        while (end < buffer.size() && buffer[end] != '\n') ++end;
+        llvm::StringRef line = buffer.slice(start, end);
+        size_t hash = line.find_first_not_of(" \t");
+        if (hash == llvm::StringRef::npos || line[hash] != '#') return;
+        llvm::StringRef rest = line.substr(hash + 1).ltrim(" \t");
+        if (!rest.consume_front("include") && !rest.consume_front("import")) return;
+        rest.consume_front("_next");
+        rest = rest.ltrim(" \t");
+        if (rest.empty() || (rest[0] != '<' && rest[0] != '"')) return;
+        size_t stop = rest.find(rest[0] == '<' ? '>' : '"', 1);
+        if (stop == llvm::StringRef::npos) return;
+        MacroRec rec;
+        rec.uid = static_cast<int>(macros.size());
+        rec.kind = "include";
+        rec.name = rest.substr(1, stop - 1).str();
+        rec.body = rest.substr(0, stop + 1).str();
+        rec.pos = pos_of(sm_.getComposedLoc(at.first, start + static_cast<unsigned>(hash)));
+        rec.name_pos = rec.pos;
+        rec.defined_file_uid = file_of(entered);
+        macros.push_back(rec);
+    }
+
+    // A macro of a system header expanded in the user's code: pos is where its name
+    // is spelled (in a macro body of the user: that body), name_pos the expansion in
+    // the file.  Macros of the user are not recorded; there are too many.
+    void note_expansion(Preprocessor &pp, const Token &name, const MacroDefinition &definition) {
+        const MacroInfo *info = definition.getMacroInfo();
+        if (info == nullptr) return;
+        SourceLocation defined = info->getDefinitionLoc();
+        if (defined.isInvalid() || !defined.isFileID() || !sm_.isInSystemHeader(defined)) return;
+        SourceLocation spelled = sm_.getSpellingLoc(name.getLocation());
+        if (!user_file_loc(spelled)) return;
+        MacroRec rec;
+        rec.uid = static_cast<int>(macros.size());
+        rec.kind = "expansion";
+        rec.name = pp.getSpelling(name);
+        rec.pos = pos_of(spelled);
+        rec.name_pos = pos_of(sm_.getExpansionLoc(name.getLocation()));
+        rec.function_like = info->isFunctionLike();
+        rec.defined_file_uid = file_of(defined);
+        macros.push_back(rec);
     }
 
     // Is `loc` in a real file of the user (not a system header, not the command
@@ -963,6 +1023,10 @@ public:
             rec.ref_uid = decl_of(address->getLabel());
         } else if (const auto *handler = dyn_cast<CXXCatchStmt>(stmt)) {
             rec.detail = handler->getExceptionDecl() == nullptr ? "..." : "";
+            if (const VarDecl *caught = handler->getExceptionDecl()) {
+                rec.ref_uid = decl_of(caught);
+                rec.type_uid = type_of(handler->getCaughtType());
+            }
         } else if (const auto *choice = dyn_cast<SwitchStmt>(stmt)) {
             note_switch(choice, rec);
         } else if (isa<DefaultStmt>(stmt)) {
@@ -1201,6 +1265,10 @@ public:
     void MacroUndefined(const Token &name, const MacroDefinition &definition,
                         const MacroDirective *) override {
         tables_->note_undef(pp_, name, definition);
+    }
+    void MacroExpands(const Token &name, const MacroDefinition &definition, SourceRange,
+                      const MacroArgs *) override {
+        tables_->note_expansion(pp_, name, definition);
     }
     void PragmaDirective(SourceLocation loc, PragmaIntroducerKind) override {
         tables_->note_pragma(loc);
