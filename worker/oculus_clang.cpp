@@ -54,6 +54,7 @@ void write_document(llvm::raw_ostream &stream, const UnitResult &unit) {
                     out.attribute("first_column", static_cast<int64_t>(file.first_column));
                     out.attribute("included_in_declaration", file.included_in_declaration);
                     out.attribute("line_classes", file.line_classes);
+                    out.attribute("lexical_marks", file.lexical_marks);
                 });
             }
         });

@@ -53,6 +53,9 @@
 - import: "src/rules/cxx_ownership.aiml"
 - import: "src/rules/unused_params.aiml"
 - import: "src/rules/class_members.aiml"
+- import: "src/rules/lexical_comments.aiml"
+- import: "src/rules/lexical_literals.aiml"
+- import: "src/rules/lexical_tokens.aiml"
 - import: "src/rules/override_shapes.aiml"
 
 - class:
@@ -309,6 +312,18 @@
             - call: [<.rules.push, unused_param]
             - decl: [unused_local, ptr<Rule>, { new: NoUnusedLocalRule }]
             - call: [<.rules.push, unused_local]
+            - decl: [comment_open, ptr<Rule>, { new: CommentStartInCommentRule }]
+            - call: [<.rules.push, comment_open]
+            - decl: [comment_splice, ptr<Rule>, { new: LineCommentSpliceRule }]
+            - call: [<.rules.push, comment_splice]
+            - decl: [open_escape, ptr<Rule>, { new: TerminatedEscapeRule }]
+            - call: [<.rules.push, open_escape]
+            - decl: [odd_escape, ptr<Rule>, { new: StandardEscapeRule }]
+            - call: [<.rules.push, odd_escape]
+            - decl: [trigraphs, ptr<Rule>, { new: NoTrigraphsRule }]
+            - call: [<.rules.push, trigraphs]
+            - decl: [digraphs, ptr<Rule>, { new: NoDigraphsRule }]
+            - call: [<.rules.push, digraphs]
             - decl: [abstract_copy, ptr<Rule>, { new: AbstractCopyAssignmentRule }]
             - call: [<.rules.push, abstract_copy]
             - decl: [template_ctor, ptr<Rule>, { new: TemplateCtorCopyRule }]

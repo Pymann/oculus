@@ -27,7 +27,7 @@ using namespace oculus;
 
 namespace {
 
-constexpr int32_t OC_SHIM_ABI = 19;
+constexpr int32_t OC_SHIM_ABI = 20;
 static_assert(OC_SHIM_ABI == ClangShimAbi_version, "OC_SHIM_ABI and clang_shim.aiml disagree");
 
 char *fresh(const std::string &text) { return aiml_str_dup(text.c_str()); }
@@ -148,6 +148,7 @@ OC_EXPORT char *oc_file_text(void *unit, int32_t index, int32_t field) {
     case ClangFileText_path: return fresh(file->path);
     case ClangFileText_kind: return fresh(file->kind);
     case ClangFileText_line_classes: return fresh(file->line_classes);
+    case ClangFileText_lexical_marks: return fresh(file->lexical_marks);
     default: return fresh("");
     }
 }

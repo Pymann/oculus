@@ -73,6 +73,7 @@
       - set: [file.first_column, { call: [oc_file_num, unit, index, ClangFileNum.first_column] }]
       - set: [file.included_in_declaration, { eq: [{ call: [oc_file_num, unit, index, ClangFileNum.included_in_declaration] }, 1] }]
       - set: [file.line_classes, { call: [oc_file_text, unit, index, ClangFileText.line_classes] }]
+      - set: [file.lexical_marks, { call: [oc_file_text, unit, index, ClangFileText.lexical_marks] }]
       - return: file
 
 - def:

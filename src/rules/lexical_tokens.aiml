@@ -1,0 +1,54 @@
+# OC-0023 no_trigraphs and OC-0024 no_digraphs (catalogue in Pymann/coding-rules).
+# Read from IrFile.lexical_marks (lexical_comments.aiml).  Trigraphs exist up to
+# C17 and C++14; later standards read the characters as written.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+# Does the unit's standard still have trigraphs (unknown standards do not count)?
+- def:
+    name: has_trigraphs
+    args: [[info, RuleInformation]]
+    return: bool
+    body:
+      - decl: [year, i32, { call: [standard_year, info.standard] }]
+      - if: { condition: { eq: [year, 0] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^c\\+\\+$", info.language] }, 0] }, then: [{ return: { lte: [year, 2014] } }] }
+      - return: { lte: [year, 2017] }
+
+- class:
+    name: NoTrigraphsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 23, "style.c90-c17.3.2.no_trigraphs", "Trigraph sequences are not written", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - if: { condition: { call: [has_trigraphs, unit.info] }, then: [{ call: [mark_findings, unit, "trigraph", 23, "trigraph sequence; write the character itself or split the literal", out] }] }
+
+- class:
+    name: NoDigraphsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 24, "style.cpp98-.3.2.no_digraphs", "Alternative tokens such as <% are not written", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "digraph", 24, "digraph; write the plain token", out]

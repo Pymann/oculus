@@ -510,6 +510,13 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `body_end` and `body_tokens` for function definitions (lambdas belong to their
   enclosing function), and `IrNode.macro_body` (the node's keyword or operator
   comes from a macro body, so it is not part of the source as written).
+- `IrFile.lexical_marks`: what the raw tokens and characters of a user file show,
+  as `code:line:col;` entries: `comment_open` (a `/*` inside a block comment),
+  `comment_splice` (a line comment continued by a backslash), `trigraph`,
+  `open_escape` (at a literal whose octal or hex escape runs into a plain
+  character), `odd_escape` (an escape the standard does not define, at the
+  backslash) and `digraph` (adjacent digraphs such as `<::>` give one mark).  Literals in skipped code and on `#include`,
+  `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;
   `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`
   (`type`, `expr` or `polymorphic`, the evaluated form) and of `delete`

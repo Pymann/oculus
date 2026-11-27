@@ -1,0 +1,45 @@
+# OC-0022 terminated_escape and OC-0244 standard_escape_sequences (catalogue in
+# Pymann/coding-rules).  Read from
+# IrFile.lexical_marks (lexical_comments.aiml): literals in skipped code and on
+# #include, #error and #warning lines are not looked at, raw strings have no escapes.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: TerminatedEscapeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 22, "safety.c90-.3.2.terminated_escape", "Octal and hex escape sequences in literals are clearly terminated", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "open_escape", 22, "an octal or hex escape in this literal runs into the next character; end it with another escape or split the literal", out]
+
+- class:
+    name: StandardEscapeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 244, "safety.cpp98-.3.2.standard_escape_sequences", "Only escape sequences defined by the standard are used", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "odd_escape", 244, "escape sequence not defined by the standard; use a hex escape", out]
+

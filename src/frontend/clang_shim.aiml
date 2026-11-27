@@ -20,7 +20,7 @@
     name: ClangShimAbi
     wire: true
     values:
-      - version: 19
+      - version: 20
 
 - enum:
     name: ClangUnitText
@@ -51,6 +51,7 @@
       - path
       - kind
       - line_classes
+      - lexical_marks
 
 - enum:
     name: ClangFileNum

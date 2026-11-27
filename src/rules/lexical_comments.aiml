@@ -1,0 +1,79 @@
+# OC-0020 no_comment_start_in_comment and OC-0021 no_line_splice_in_line_comment
+# (catalogue in Pymann/coding-rules), and the reading of IrFile.lexical_marks that
+# the lexical rules share (lexical_literals.aiml, lexical_tokens.aiml): the marks
+# the frontend found in the raw characters and tokens of each user file.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# Reports each mark `code` of the unit's user files (IrFile.lexical_marks,
+# "code:line:col;" entries) as a finding of rule `rule_id`.
+- def:
+    name: mark_findings
+    args: [[unit, IrUnit], [code, string], [rule_id, i32], [message, string], [out, list<Finding>]]
+    return: void
+    body:
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, unit.info.files.len] }
+          body:
+            - decl: [file, ref<IrFile>, { at: [unit.info.files, idx] }]
+            - decl: [user, bool, { eq: [{ call: [regex.search, "^(source|header)$", file.kind] }, 0] }]
+            - if:
+                condition: { "&&": [user, { gt: [file.lexical_marks.len, 0] }] }
+                then:
+                  - decl: [entries, list<string>, { call: [file.lexical_marks.split, ";"] }]
+                  - decl: [pick, i32, 0]
+                  - while:
+                      condition: { lt: [pick, entries.len] }
+                      body:
+                        - decl: [entry, string, { at: [entries, pick] }]
+                        - decl: [parts, list<string>, { call: [entry.split, ":"] }]
+                        - if:
+                            condition: { "&&": [{ eq: [parts.len, 3] }, { eq: [{ at: [parts, 0] }, code] }] }
+                            then:
+                              - decl: [where, IrPos]
+                              - set: [where.file_uid, idx]
+                              - decl: [line_text, string, { at: [parts, 1] }]
+                              - decl: [column_text, string, { at: [parts, 2] }]
+                              - set: [where.line, { call: [line_text.parse_i32] }]
+                              - set: [where.column, { call: [column_text.parse_i32] }]
+                              - call: [out.push, { call: [pos_finding, unit, where, rule_id, message] }]
+                        - set: [pick, { "+": [pick, 1] }]
+            - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: CommentStartInCommentRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 20, "safety.c90-.3.1.no_comment_start_in_comment", "No comment opener inside a block comment", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "comment_open", 20, "'/*' inside a block comment; an earlier comment may be missing its end", out]
+
+- class:
+    name: LineCommentSpliceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 21, "safety.c90-.3.1.no_line_splice_in_line_comment", "A line comment does not end in a backslash continuation", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "comment_splice", 21, "line comment ends in a backslash, which joins the next line into the comment", out]

@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <cstring>
+
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -89,6 +91,9 @@ struct FileRec {
     // source files and headers: one character per physical line, as Oculus' own
     // line counting sees it: b blank, c comment only, x code only, m code and comment
     std::string line_classes;
+    // source files and headers: lexical marks, "code:line:col;" each (comment_open,
+    // comment_splice, trigraph, open_escape, odd_escape, digraph)
+    std::string lexical_marks;
 };
 
 // One #define, #undef or #pragma (or _Pragma) outside system headers, in source
@@ -1218,7 +1223,138 @@ public:
             FileRec &rec = files[static_cast<size_t>(entry.second)];
             if (rec.kind == "system_header" || !sm_.getFileEntryRefForID(entry.first)) continue;
             rec.line_classes = line_classes(entry.first, lang);
+            rec.lexical_marks = lexical_marks(entry.first, lang);
         }
+    }
+
+    // One lexical mark at a file offset.
+    void add_mark(std::string &out, const char *code, FileID fid, unsigned offset) const {
+        out += code;
+        out += ":" + std::to_string(sm_.getLineNumber(fid, offset)) + ":" +
+               std::to_string(sm_.getColumnNumber(fid, offset)) + ";";
+    }
+
+    // The escapes of one string or character literal token: an octal or hex
+    // escape not followed by another escape or the closing quote (open_escape, at
+    // the literal), an escape the standard does not define (odd_escape, at the
+    // backslash).  Raw strings have none.
+    void literal_marks(std::string &out, FileID fid, unsigned start, llvm::StringRef text) const {
+        size_t quote = text.find_first_of("'\"");
+        if (quote == llvm::StringRef::npos || text.take_front(quote).contains('R')) return;
+        if (text.size() < quote + 2) return;
+        size_t close = text.size() - 1;
+        bool open_seen = false;
+        size_t idx = quote + 1;
+        while (idx < close) {
+            if (text[idx] != '\\') { ++idx; continue; }
+            if (idx + 1 >= close) break;
+            char kind = text[idx + 1];
+            size_t next = idx + 2;
+            bool numeric = false;
+            if (kind == 'x' && next < close && text[next] == '{') {
+                while (next < close && text[next] != '}') ++next;
+                ++next;
+            } else if (kind == 'x') {
+                while (next < close && llvm::isHexDigit(text[next])) ++next;
+                numeric = next > idx + 2;
+            } else if (kind >= '0' && kind <= '7') {
+                while (next < close && next < idx + 4 && text[next] >= '0' && text[next] <= '7') ++next;
+                numeric = true;
+            } else if ((kind == 'o' || kind == 'N' || kind == 'u' || kind == 'U') && next < close &&
+                       text[next] == '{') {
+                while (next < close && text[next] != '}') ++next;
+                ++next;
+            } else if (kind == '\n' || kind == '\r' || std::strchr("'\"?\\abfnrtvuU", kind) == nullptr) {
+                if (kind != '\n' && kind != '\r') add_mark(out, "odd_escape", fid, start + static_cast<unsigned>(idx));
+            }
+            if (numeric && !open_seen && next < close && text[next] != '\\') {
+                add_mark(out, "open_escape", fid, start);
+                open_seen = true;
+            }
+            idx = next;
+        }
+    }
+
+    // The lexical marks of a file (FileRec.lexical_marks).  The raw tokens, comments
+    // kept; literals in skipped code and on #include, #error and #warning lines
+    // are not looked at.
+    std::string lexical_marks(FileID fid, const LangOptions &lang) const {
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(fid, &invalid);
+        if (invalid) return "";
+        std::string out;
+        for (size_t at = 0; at + 2 < buffer.size(); ++at) {
+            if (buffer[at] == '?' && buffer[at + 1] == '?' &&
+                std::strchr("=(/)'<!>-", buffer[at + 2]) != nullptr && buffer[at + 2] != 0) {
+                add_mark(out, "trigraph", fid, static_cast<unsigned>(at));
+                at += 2;
+            }
+        }
+        Lexer lexer(fid, sm_.getBufferOrFake(fid), sm_, lang);
+        lexer.SetCommentRetentionState(true);
+        Token tok;
+        bool directive_quiet = false;
+        bool after_hash = false;
+        unsigned digraph_end = ~0u;
+        while (true) {
+            lexer.LexFromRawLexer(tok);
+            if (tok.is(tok::eof)) break;
+            if (tok.getLength() == 0) continue;
+            unsigned offset = sm_.getFileOffset(tok.getLocation());
+            if (offset + tok.getLength() > buffer.size()) break;
+            llvm::StringRef text = buffer.substr(offset, tok.getLength());
+            // A token right after a backslash continuation starts at the backslash.
+            while (text.starts_with("\\")) {
+                size_t rest = 1;
+                while (rest < text.size() && (text[rest] == ' ' || text[rest] == '\t')) ++rest;
+                if (rest < text.size() && text[rest] == '\r') ++rest;
+                if (rest >= text.size() || text[rest] != '\n') break;
+                text = text.drop_front(rest + 1);
+                offset += static_cast<unsigned>(rest + 1);
+            }
+            if (text.empty()) continue;
+            if (tok.isAtStartOfLine()) {
+                directive_quiet = false;
+                after_hash = tok.is(tok::hash);
+            } else if (after_hash) {
+                after_hash = false;
+                if (tok.is(tok::raw_identifier)) {
+                    llvm::StringRef name = tok.getRawIdentifier();
+                    directive_quiet = name == "include" || name == "include_next" || name == "import" ||
+                                      name == "error" || name == "warning";
+                }
+            }
+            if (tok.is(tok::comment)) {
+                if (text.starts_with("/*")) {
+                    size_t inner = text.find("/*", 2);
+                    if (inner != llvm::StringRef::npos)
+                        add_mark(out, "comment_open", fid, offset + static_cast<unsigned>(inner));
+                } else if (text.starts_with("//")) {
+                    size_t slash = text.find('\\');
+                    while (slash != llvm::StringRef::npos) {
+                        size_t rest = slash + 1;
+                        while (rest < text.size() && (text[rest] == ' ' || text[rest] == '\t')) ++rest;
+                        if (rest < text.size() && (text[rest] == '\n' || text[rest] == '\r')) {
+                            add_mark(out, "comment_splice", fid, offset + static_cast<unsigned>(slash));
+                            break;
+                        }
+                        slash = text.find('\\', slash + 1);
+                    }
+                }
+                continue;
+            }
+            if (tok.isOneOf(tok::l_square, tok::r_square, tok::l_brace, tok::r_brace, tok::hash,
+                            tok::hashhash) && (text[0] == '<' || text[0] == ':' || text[0] == '%')) {
+                // one mark for adjacent digraphs such as <::>
+                if (offset != digraph_end) add_mark(out, "digraph", fid, offset);
+                digraph_end = offset + tok.getLength();
+            }
+            bool literal = tok::isStringLiteral(tok.getKind()) || tok.isOneOf(tok::char_constant,
+                tok::wide_char_constant, tok::utf8_char_constant, tok::utf16_char_constant,
+                tok::utf32_char_constant);
+            if (literal && !directive_quiet && !offset_skipped(fid, offset)) literal_marks(out, fid, offset, text);
+        }
+        return out;
     }
 
     // Oculus' line counting: the raw tokens of the file, comments kept; a line
