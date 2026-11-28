@@ -22,6 +22,17 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   by the rule text. Open: should headers that only wrap a namespace be treated
   differently?
 
+- **OC-0460 privilege_drop_checked, gid functions.** The rule text names
+  `setuid`, `setgid` and the related functions, but the catalogue's bad case
+  drops the result of `setgid` and expects only the `setuid` line. Only the uid
+  functions (`setuid`, `seteuid`, `setreuid`, `setresuid`) are reported until
+  the catalogue says whether the gid functions count too. A path that goes on
+  without testing a stored result is not checked yet.
+- **OC-0470 no_signal_in_handler, platform option.** The rule allows a
+  configuration for platforms that keep handlers installed (glibc's `signal`
+  does). There is no configuration key yet, so every reinstalling call is
+  reported; `signal(sig, SIG_DFL)` and `SIG_IGN` in a handler are not.
+
 ## Left out on purpose
 
 - **OC-0386** catch_all_handler_last and **OC-0329**
@@ -233,3 +244,11 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0280**: private members of bases do not count.
 - **OC-0299** (uniform viable set) is not implemented: the candidate set of
   overload resolution is not kept in the AST.
+- **OC-0410**: only within one unit (the `signal` call and the thread creation
+  in the same translation unit) until cross-TU facts exist.
+- **OC-0420, OC-0470, OC-0471**: handlers are only the functions named directly
+  in `atexit`, `at_quick_exit` or `signal` of the same unit; `sigaction`
+  handlers are not followed. 0420 looks only at calls written in the handler
+  itself.
+- **OC-0432**: only the direct form `b[strlen(b) - 1]` on a variable filled by
+  `fgets` in the same unit; a length kept in a variable is not followed.

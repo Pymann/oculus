@@ -1,0 +1,59 @@
+# OC-0410, OC-0420, OC-0470 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): signal_in_threads, exit_in_handler, signal_in_handler.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: SignalInThreadsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 410, "safety.c11-.18.2.no_signal_in_threads", "signal is not called in a program that creates threads", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "signal_in_threads", 410, "signal in a program that creates threads is undefined; use sigaction, or block the signal and wait for it in one thread", out]
+
+- class:
+    name: ExitHandlerReturnsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 420, "safety.c90-.11.3.exit_handlers_return", "Functions registered with atexit return normally", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "exit_in_handler", 420, "this function is registered with atexit or at_quick_exit; ending the program or jumping out of it there is undefined, return instead", out]
+
+- class:
+    name: SignalInHandlerRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 470, "safety.c90-.13.2.no_signal_in_handler", "signal is not called from a signal handler that may be interrupted", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "signal_in_handler", 470, "signal called in a signal handler leaves a window in which the signal is lost or takes the default action; use sigaction", out]

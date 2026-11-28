@@ -1,0 +1,59 @@
+# OC-0432, OC-0434, OC-0471 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): fgets_last_char, stream_side_effect, fault_handler_returns.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: FgetsEmptyResultRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 432, "safety.c90-.14.2.fgets_empty_result", "Code does not assume that a successful fgets returned a non-empty string", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "fgets_last_char", 432, "fgets can return an empty string, and strlen - 1 then indexes before the buffer; check the length or use strchr for the newline", out]
+
+- class:
+    name: StreamArgumentEffectRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 434, "safety.c90-.14.2.no_side_effect_stream_arg", "The stream argument of getc and putc has no side effects", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "stream_side_effect", 434, "getc and putc may be macros that evaluate the stream twice; move the side effect out or use fgetc/fputc", out]
+
+- class:
+    name: FaultHandlerReturnsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 471, "safety.c90-.13.2.no_return_from_fpe_handler", "Handlers for computational signals do not return", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "fault_handler_returns", 471, "this handler of SIGFPE, SIGILL, SIGSEGV or SIGBUS returns, which re-runs the faulting instruction; end the program or jump out instead", out]

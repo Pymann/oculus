@@ -665,7 +665,21 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `unsafe_in_threads` (a call of `strtok`, `rand`, `asctime`, `ctime`,
   `gmtime`, `localtime`, `localeconv`, `setlocale`, `strerror`, `tmpnam` or
   `strsignal` in a unit that calls `thrd_create` or `pthread_create` or builds
-  a `std::thread`).  Literals in skipped code and on `#include`,
+  a `std::thread`), `signal_in_threads` (a call of `signal` in such a unit),
+  `exit_in_handler` (`exit`, `quick_exit` or a long jump called directly in a
+  function this unit passes to `atexit` or `at_quick_exit`),
+  `signal_in_handler` (a `signal` call that installs a named function, inside a
+  function this unit passes to `signal`), `fault_handler_returns` (the closing
+  brace of a handler passed to `signal` for `SIGFPE`, `SIGILL`, `SIGSEGV` or
+  `SIGBUS` that calls nothing noreturn, no jump, `raise`, `kill`, no function of
+  unseen body and has no endless loop, looked at one call level deep),
+  `fgets_last_char` (the index `strlen(b) - 1` of `b[...]` when `b` is filled by
+  `fgets` in the unit and nothing compares `strlen(b)`, tests it as a condition,
+  or reads `b[0]` or `*b`), `stream_side_effect` (a stream argument of `getc`,
+  `putc`, `getwc`, `putwc` with a side effect), `putenv_automatic` (a `putenv`
+  argument that is a local array or `&local[i]`) and `unchecked_setuid`
+  (`setuid`, `seteuid`, `setreuid` or `setresuid` whose result is cast to void
+  or dropped as a statement).  Literals in skipped code and on `#include`,
   `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;
   `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`

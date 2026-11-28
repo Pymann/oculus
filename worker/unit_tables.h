@@ -2500,6 +2500,7 @@ public:
 
     // The line classes of every user file seen, after all records are in.
     void finish_lines(const LangOptions &lang) {
+        finish_signals();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -2977,6 +2978,239 @@ public:
         static const std::set<std::string> unsafe = {"strtok", "rand", "asctime", "ctime", "gmtime", "localtime",
                                                      "localeconv", "setlocale", "strerror", "tmpnam", "strsignal"};
         if (unsafe.count(name.str()) > 0) unsafe_calls_.push_back(call->getBeginLoc());
+    }
+
+    // The calls in a statement, not those in nested lambdas and blocks.
+    static void calls_in(const Stmt *stmt, std::vector<const CallExpr *> &out) {
+        if (stmt == nullptr || isa<LambdaExpr>(stmt) || isa<BlockExpr>(stmt)) return;
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) out.push_back(call);
+        for (const Stmt *child : stmt->children()) calls_in(child, out);
+    }
+
+    // The function a call argument names, if it names one directly.
+    static const FunctionDecl *named_function(const Expr *expr) {
+        expr = expr->IgnoreParenImpCasts();
+        if (const auto *address = dyn_cast<UnaryOperator>(expr)) {
+            if (address->getOpcode() == UO_AddrOf) expr = address->getSubExpr()->IgnoreParenImpCasts();
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(expr);
+        return ref != nullptr ? dyn_cast<FunctionDecl>(ref->getDecl()) : nullptr;
+    }
+
+    // A loop that never ends by its condition (for (;;), while (1)).
+    bool endless_loop(const Stmt *stmt) const {
+        const Expr *cond = nullptr;
+        if (const auto *loop = dyn_cast<ForStmt>(stmt)) {
+            if (loop->getCond() == nullptr) return true;
+            cond = loop->getCond();
+        } else if (const auto *loop = dyn_cast<WhileStmt>(stmt)) {
+            cond = loop->getCond();
+        } else if (const auto *loop = dyn_cast<DoStmt>(stmt)) {
+            cond = loop->getCond();
+        }
+        if (cond == nullptr || cond->isValueDependent()) return false;
+        Expr::EvalResult value;
+        return cond->EvaluateAsInt(value, context_) && value.Val.getInt() != 0;
+    }
+
+    // Whether a statement may end without returning: a call of a noreturn or
+    // jump function, an endless loop, or a call of a function whose body is not
+    // seen (or that does so itself, one level deep).
+    bool may_not_return(const Stmt *stmt, int depth) const {
+        if (stmt == nullptr || isa<LambdaExpr>(stmt) || isa<BlockExpr>(stmt)) return false;
+        if (endless_loop(stmt)) return true;
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            const FunctionDecl *callee = call->getDirectCallee();
+            if (callee == nullptr) return true;
+            if (callee->isNoReturn()) return true;
+            if (callee->getIdentifier() != nullptr) {
+                llvm::StringRef name = callee->getName();
+                if (name == "longjmp" || name == "siglongjmp" || name == "_longjmp" || name == "raise" || name == "kill") return true;
+            }
+            SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+            bool library = declared.isValid() && sm_.isInSystemHeader(declared);
+            if (!library) {
+                const FunctionDecl *defined = nullptr;
+                if (!callee->hasBody(defined) || depth >= 1) return true;
+                if (may_not_return(defined->getBody(), depth + 1)) return true;
+            }
+        }
+        for (const Stmt *child : stmt->children()) {
+            if (may_not_return(child, depth)) return true;
+        }
+        return false;
+    }
+
+    // signal, atexit, at_quick_exit, getc/putc, putenv and the uid functions:
+    // collects signal calls and handlers for finish_signals, marks
+    // stream_side_effect at a getc/putc stream argument with a side effect,
+    // putenv_automatic at a putenv argument that is a local array, and
+    // unchecked_setuid at a uid change whose result is thrown away.
+    void note_signal_calls(const CallExpr *call) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || callee->getIdentifier() == nullptr) return;
+        SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+        if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) return;
+        llvm::StringRef name = callee->getName();
+        if (name == "signal" && call->getNumArgs() == 2) {
+            signal_calls_.push_back(call->getBeginLoc());
+            if (const FunctionDecl *handler = named_function(call->getArg(1))) {
+                signal_handlers_.insert(handler->getCanonicalDecl());
+                std::string number = expansion_text(call->getArg(0));
+                if (number == "SIGFPE" || number == "SIGILL" || number == "SIGSEGV" || number == "SIGBUS") {
+                    fault_handlers_.insert(handler->getCanonicalDecl());
+                }
+            }
+        }
+        if ((name == "atexit" || name == "at_quick_exit") && call->getNumArgs() == 1) {
+            if (const FunctionDecl *handler = named_function(call->getArg(0))) exit_handlers_.insert(handler->getCanonicalDecl());
+        }
+        int stream = -1;
+        if ((name == "getc" || name == "getwc") && call->getNumArgs() == 1) stream = 0;
+        if ((name == "putc" || name == "putwc") && call->getNumArgs() == 2) stream = 1;
+        if (stream >= 0) {
+            const Expr *arg = call->getArg(static_cast<unsigned>(stream));
+            if (!arg->isValueDependent() && arg->HasSideEffects(context_)) add_ast_mark("stream_side_effect", sm_.getFileLoc(arg->getBeginLoc()));
+        }
+        if (name == "putenv" && call->getNumArgs() == 1) {
+            const Expr *arg = call->getArg(0)->IgnoreParenImpCasts();
+            if (const auto *address = dyn_cast<UnaryOperator>(arg)) {
+                if (address->getOpcode() == UO_AddrOf) {
+                    if (const auto *element = dyn_cast<ArraySubscriptExpr>(address->getSubExpr()->IgnoreParens())) arg = element->getBase()->IgnoreParenImpCasts();
+                }
+            }
+            const auto *ref = dyn_cast<DeclRefExpr>(arg);
+            const auto *var = ref != nullptr ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+            if (var != nullptr && var->hasLocalStorage() && var->getType()->isArrayType()) {
+                add_ast_mark("putenv_automatic", sm_.getFileLoc(call->getArg(0)->getBeginLoc()));
+            }
+        }
+        if ((name == "setuid" || name == "seteuid" || name == "setreuid" || name == "setresuid") && result_dropped(call)) {
+            add_ast_mark("unchecked_setuid", call->getBeginLoc());
+        }
+    }
+
+    // A call whose value is cast to void or used as a statement.
+    bool result_dropped(const CallExpr *call) const {
+        DynTypedNode node = DynTypedNode::create(*static_cast<const Stmt *>(call));
+        for (int depth = 0; depth < 6; ++depth) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return false;
+            const Stmt *parent = parents[0].get<Stmt>();
+            if (parent == nullptr) return false;
+            if (isa<ParenExpr>(parent) || isa<ImplicitCastExpr>(parent)) {
+                node = parents[0];
+                continue;
+            }
+            if (const auto *cast = dyn_cast<ExplicitCastExpr>(parent)) return cast->getType()->isVoidType();
+            return isa<CompoundStmt>(parent);
+        }
+        return false;
+    }
+
+    // buffer[strlen(buffer) - 1] on a buffer filled by fgets (collected for
+    // finish_signals), and the reads that check the length first.
+    void note_fgets_index(const Stmt *stmt) {
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            const FunctionDecl *callee = call->getDirectCallee();
+            if (system_function(callee, "fgets") && call->getNumArgs() == 3) {
+                if (const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts())) fgets_buffers_.insert(ref->getDecl());
+            }
+            return;
+        }
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            if (binary->isComparisonOp() || binary->isLogicalOp()) {
+                for (const Expr *side : {binary->getLHS(), binary->getRHS()}) {
+                    if (const ValueDecl *decl = strlen_of(side)) length_checked_.insert(decl);
+                }
+            }
+            return;
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            if (unary->getOpcode() == UO_Deref || unary->getOpcode() == UO_LNot) {
+                const auto *ref = dyn_cast<DeclRefExpr>(unary->getSubExpr()->IgnoreParenImpCasts());
+                if (ref != nullptr) length_checked_.insert(ref->getDecl());
+                if (const ValueDecl *decl = strlen_of(unary->getSubExpr())) length_checked_.insert(decl);
+            }
+            return;
+        }
+        const Expr *cond = nullptr;
+        if (const auto *branch = dyn_cast<IfStmt>(stmt)) cond = branch->getCond();
+        if (const auto *loop = dyn_cast<WhileStmt>(stmt)) cond = loop->getCond();
+        if (const auto *loop = dyn_cast<ForStmt>(stmt)) cond = loop->getCond();
+        if (const auto *choice = dyn_cast<ConditionalOperator>(stmt)) cond = choice->getCond();
+        if (cond != nullptr) {
+            if (const ValueDecl *decl = strlen_of(cond)) length_checked_.insert(decl);
+            return;
+        }
+        const auto *element = dyn_cast<ArraySubscriptExpr>(stmt);
+        if (element == nullptr) return;
+        const auto *base = dyn_cast<DeclRefExpr>(element->getBase()->IgnoreParenImpCasts());
+        if (base == nullptr) return;
+        const Expr *index = element->getIdx()->IgnoreParenImpCasts();
+        Expr::EvalResult value;
+        if (!index->isValueDependent() && index->EvaluateAsInt(value, context_)) {
+            if (value.Val.getInt() == 0) length_checked_.insert(base->getDecl());
+            return;
+        }
+        const auto *minus = dyn_cast<BinaryOperator>(index);
+        if (minus == nullptr || minus->getOpcode() != BO_Sub || strlen_of(minus->getLHS()) != base->getDecl()) return;
+        const Expr *one = minus->getRHS();
+        if (one->isValueDependent() || !one->EvaluateAsInt(value, context_) || value.Val.getInt() != 1) return;
+        fgets_indexes_.push_back({base->getDecl(), element->getIdx()->getBeginLoc()});
+    }
+
+    // The variable of strlen(variable), or null.
+    const ValueDecl *strlen_of(const Expr *expr) const {
+        const auto *call = dyn_cast<CallExpr>(expr->IgnoreParenImpCasts());
+        if (call == nullptr || call->getNumArgs() != 1 || !system_function(call->getDirectCallee(), "strlen")) return nullptr;
+        const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+        return ref != nullptr ? ref->getDecl() : nullptr;
+    }
+
+    // At the end of the unit: signal_in_threads at signal calls when the unit
+    // creates threads; exit_in_handler at exit and jumps in atexit handlers;
+    // signal_in_handler at a signal call in a handler that installs a function;
+    // fault_handler_returns at the closing brace of a SIGFPE/SIGILL/SIGSEGV/SIGBUS
+    // handler that always returns; fgets_last_char at unchecked
+    // buffer[strlen(buffer) - 1].
+    void finish_signals() {
+        if (creates_threads_) {
+            for (SourceLocation call : signal_calls_) add_ast_mark("signal_in_threads", call);
+        }
+        for (const FunctionDecl *handler : exit_handlers_) {
+            const FunctionDecl *defined = nullptr;
+            if (!handler->hasBody(defined)) continue;
+            std::vector<const CallExpr *> calls;
+            calls_in(defined->getBody(), calls);
+            for (const CallExpr *call : calls) {
+                const FunctionDecl *callee = call->getDirectCallee();
+                for (const char *name : {"exit", "quick_exit", "longjmp", "siglongjmp", "_longjmp"}) {
+                    if (system_function(callee, name)) add_ast_mark("exit_in_handler", call->getBeginLoc());
+                }
+            }
+        }
+        for (const FunctionDecl *handler : signal_handlers_) {
+            const FunctionDecl *defined = nullptr;
+            if (!handler->hasBody(defined)) continue;
+            std::vector<const CallExpr *> calls;
+            calls_in(defined->getBody(), calls);
+            for (const CallExpr *call : calls) {
+                if (call->getNumArgs() == 2 && system_function(call->getDirectCallee(), "signal") && named_function(call->getArg(1)) != nullptr) {
+                    add_ast_mark("signal_in_handler", call->getBeginLoc());
+                }
+            }
+        }
+        for (const FunctionDecl *handler : fault_handlers_) {
+            const FunctionDecl *defined = nullptr;
+            if (!handler->hasBody(defined)) continue;
+            const auto *body = dyn_cast<CompoundStmt>(defined->getBody());
+            if (body == nullptr || may_not_return(body, 0)) continue;
+            add_ast_mark("fault_handler_returns", body->getRBracLoc());
+        }
+        for (const auto &entry : fgets_indexes_) {
+            if (fgets_buffers_.count(entry.first) > 0 && length_checked_.count(entry.first) == 0) add_ast_mark("fgets_last_char", entry.second);
+        }
     }
 
     // ~ or << of an operand narrower than int (promoted), not cast at once to an
@@ -4103,6 +4337,8 @@ public:
         if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) note_atomic_refs(ref);
         if (const auto *call = dyn_cast<CallExpr>(stmt)) note_thread_calls(call);
         if (const auto *call = dyn_cast<CallExpr>(stmt)) note_library_calls(call);
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) note_signal_calls(call);
+        note_fgets_index(stmt);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
         }
@@ -4859,6 +5095,13 @@ private:
     std::vector<const UsingDecl *> usings_;
     std::vector<SourceLocation> unsafe_calls_;
     bool creates_threads_ = false;
+    std::vector<SourceLocation> signal_calls_;
+    std::set<const FunctionDecl *> signal_handlers_;
+    std::set<const FunctionDecl *> fault_handlers_;
+    std::set<const FunctionDecl *> exit_handlers_;
+    std::set<const ValueDecl *> fgets_buffers_;
+    std::set<const ValueDecl *> length_checked_;
+    std::vector<std::pair<const ValueDecl *, SourceLocation>> fgets_indexes_;
     std::set<std::pair<FileID, unsigned>> ast_mark_seen_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> argument_ranges_;
     struct ScopeRange {

@@ -1,0 +1,42 @@
+# OC-0457, OC-0460 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): putenv_automatic, unchecked_setuid.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: PutenvStaticRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 457, "security.c90-.21.1.putenv_static_argument", "putenv is not given a pointer to an automatic object", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "putenv_automatic", 457, "putenv keeps this pointer in the environment, and the local array dies with the function; use static or allocated storage, or setenv", out]
+
+- class:
+    name: PrivilegeDropCheckedRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 460, "security.c90-.21.1.privilege_drop_checked", "Dropping privileges is checked for success", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unchecked_setuid", 460, "the result of the privilege change is not checked; the process may go on with its old rights", out]

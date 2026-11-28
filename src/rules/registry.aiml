@@ -92,6 +92,9 @@
 - import: "src/rules/generic_types.aiml"
 - import: "src/rules/cxx_lookup.aiml"
 - import: "src/rules/main_handler.aiml"
+- import: "src/rules/signal_handlers.aiml"
+- import: "src/rules/stdio_checks.aiml"
+- import: "src/rules/environment_calls.aiml"
 
 - class:
     name: RuleRegistry
@@ -551,6 +554,22 @@
             - call: [<.rules.push, straddled]
             - decl: [main_catch, ptr<Rule>, { new: CatchAllInMainRule }]
             - call: [<.rules.push, main_catch]
+            - decl: [signal_threads, ptr<Rule>, { new: SignalInThreadsRule }]
+            - call: [<.rules.push, signal_threads]
+            - decl: [exit_handler, ptr<Rule>, { new: ExitHandlerReturnsRule }]
+            - call: [<.rules.push, exit_handler]
+            - decl: [signal_handler, ptr<Rule>, { new: SignalInHandlerRule }]
+            - call: [<.rules.push, signal_handler]
+            - decl: [fgets_empty, ptr<Rule>, { new: FgetsEmptyResultRule }]
+            - call: [<.rules.push, fgets_empty]
+            - decl: [stream_effect, ptr<Rule>, { new: StreamArgumentEffectRule }]
+            - call: [<.rules.push, stream_effect]
+            - decl: [fault_handler, ptr<Rule>, { new: FaultHandlerReturnsRule }]
+            - call: [<.rules.push, fault_handler]
+            - decl: [putenv_static, ptr<Rule>, { new: PutenvStaticRule }]
+            - call: [<.rules.push, putenv_static]
+            - decl: [setuid_checked, ptr<Rule>, { new: PrivilegeDropCheckedRule }]
+            - call: [<.rules.push, setuid_checked]
       - def:
           name: rule_count
           args: []
