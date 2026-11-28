@@ -780,7 +780,23 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `obsolescent` for `register`; from the AST `atomic_member` (a member of an
   _Atomic struct or union accessed with . or ->) and, in C before C23,
   `obsolescent` for a function declared without a prototype (at its name) and
-  for a storage class written after a type keyword or qualifier.  IrDecl shape `unused_static` (C): a static object of
+  for a storage class written after a type keyword or qualifier.
+  Batch 40 marks: `function_designator` (a function name that decays to a
+  pointer without being called, at its spelling), `inline_asm_keyword` (C++:
+  an asm statement spelled `__asm__`/`__asm`, or a Microsoft asm block),
+  `incompatible_copy` (memcpy, memmove, memcmp whose pointees as written
+  differ, neither a character type, std::byte nor void), `memcmp_type` (C:
+  memcmp of objects that are not integers, Booleans, enums or pointers),
+  `memcmp_string` (C: memcmp with a string literal and a constant size that
+  reaches its terminator), `const_result` (getenv, localeconv, setlocale or
+  strerror whose result reaches a pointer to non-const: initialization,
+  assignment, parameter or return), `ctype_char` (the argument of a ctype
+  function or macro that is plain char where char is signed, or signed char,
+  not a non-negative constant), `thread_twice` (a join or detach of a thread
+  variable after an unconditional earlier one with no new value in between)
+  and `plain_timed_lock` (mtx_timedlock of a variable whose mtx_init calls all
+  name only mtx_plain or mtx_recursive). A mark is now kept once per code and
+  place (before, two rules marking the same place lost one of the marks).  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,

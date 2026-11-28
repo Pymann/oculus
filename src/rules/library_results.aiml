@@ -1,0 +1,42 @@
+# OC-0199, OC-0205 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): ctype_char, const_result.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: CtypeCharRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 199, "safety.c90-.13.4.ctype_argument_range", "Arguments to ctype.h functions are EOF or fit in unsigned char", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "ctype_char", 199, "this char may be negative; convert it to unsigned char before passing it to a ctype function", out]
+
+- class:
+    name: ConstResultRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 205, "safety.c90-.13.4.library_result_as_const", "Results of localeconv, getenv, setlocale and strerror are treated as const", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "const_result", 205, "this result must be treated as const but reaches a pointer to non-const", out]

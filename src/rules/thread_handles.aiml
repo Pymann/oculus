@@ -1,0 +1,42 @@
+# OC-0212, OC-0217 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): plain_timed_lock, thread_twice.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: TimedLockRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 212, "safety.c11-.18.2.timedlock_on_timed_mutex", "mtx_timedlock is used only on timed mutexes", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "plain_timed_lock", 212, "mtx_timedlock is used on a mutex that was not initialized as timed", out]
+
+- class:
+    name: ThreadTwiceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 217, "safety.c11-.18.2.join_or_detach_once", "A thread is joined or detached at most once", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "thread_twice", 217, "this thread was already joined or detached", out]

@@ -1,0 +1,59 @@
+# OC-0200, OC-0201, OC-0202 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): memcmp_string, incompatible_copy, memcmp_type.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: MemcmpStringRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 200, "safety.c90-.13.4.no_memcmp_on_strings", "memcmp is not used to compare strings", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "memcmp_string", 200, "memcmp is used to compare a string; use strcmp or strncmp", out]
+
+- class:
+    name: CompatibleCopyRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 201, "safety.c90-.13.4.compatible_mem_arguments", "memcpy, memmove and memcmp get pointers to compatible types", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "incompatible_copy", 201, "the objects behind these pointers have incompatible types", out]
+
+- class:
+    name: MemcmpTypeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 202, "safety.c90-.13.4.memcmp_argument_types", "memcmp compares only pointers, integers, Booleans or enums", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "memcmp_type", 202, "memcmp compares objects that are not pointers, integers, Booleans or enums", out]

@@ -1,0 +1,42 @@
+# OC-0195, OC-0269 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): function_designator, inline_asm_keyword.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: FunctionDesignatorRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 195, "style.c90-.11.1.explicit_function_address", "A function name is either called or written with &", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "function_designator", 195, "this function name is neither called nor written with &", out]
+
+- class:
+    name: AsmKeywordRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 269, "style.cpp98-.1.4.asm_declaration_only", "Assembly is introduced only through the asm declaration", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "inline_asm_keyword", 269, "assembly is introduced with a keyword other than the asm declaration", out]

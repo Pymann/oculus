@@ -117,6 +117,10 @@
 - import: "src/rules/handler_jumps.aiml"
 - import: "src/rules/type_diagnostics.aiml"
 - import: "src/rules/legacy_forms.aiml"
+- import: "src/rules/function_forms.aiml"
+- import: "src/rules/memory_compares.aiml"
+- import: "src/rules/library_results.aiml"
+- import: "src/rules/thread_handles.aiml"
 
 - class:
     name: RuleRegistry
@@ -690,6 +694,24 @@
             - call: [<.rules.push, r0179]
             - decl: [r0311, ptr<Rule>, { new: ExceptionSpecMatchRule }]
             - call: [<.rules.push, r0311]
+            - decl: [r0195, ptr<Rule>, { new: FunctionDesignatorRule }]
+            - call: [<.rules.push, r0195]
+            - decl: [r0269, ptr<Rule>, { new: AsmKeywordRule }]
+            - call: [<.rules.push, r0269]
+            - decl: [r0200, ptr<Rule>, { new: MemcmpStringRule }]
+            - call: [<.rules.push, r0200]
+            - decl: [r0201, ptr<Rule>, { new: CompatibleCopyRule }]
+            - call: [<.rules.push, r0201]
+            - decl: [r0202, ptr<Rule>, { new: MemcmpTypeRule }]
+            - call: [<.rules.push, r0202]
+            - decl: [r0199, ptr<Rule>, { new: CtypeCharRule }]
+            - call: [<.rules.push, r0199]
+            - decl: [r0205, ptr<Rule>, { new: ConstResultRule }]
+            - call: [<.rules.push, r0205]
+            - decl: [r0212, ptr<Rule>, { new: TimedLockRule }]
+            - call: [<.rules.push, r0212]
+            - decl: [r0217, ptr<Rule>, { new: ThreadTwiceRule }]
+            - call: [<.rules.push, r0217]
             - decl: [r0141, ptr<Rule>, { new: HeaderNameCharsRule }]
             - call: [<.rules.push, r0141]
             - decl: [r0142, ptr<Rule>, { new: IncludeFormRule }]

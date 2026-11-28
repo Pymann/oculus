@@ -47,6 +47,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <tuple>
 #include <memory>
 #include <string>
 #include <vector>
@@ -2364,6 +2365,7 @@ public:
         if (args != nullptr && info->getNumParams() == 1 && args->getNumMacroArguments() == 1) {
             const Token *tok = args->getUnexpArgument(0);
             if (tok != nullptr && tok->isNot(tok::eof)) rec.argument_pos = pos_of(sm_.getSpellingLoc(tok->getLocation()));
+            if (tok != nullptr && tok->isNot(tok::eof) && ctype_name(rec.name)) ctype_args_.insert(sm_.getSpellingLoc(tok->getLocation()).getRawEncoding());
             for (; tok != nullptr && tok->isNot(tok::eof); ++tok) {
                 if (!rec.body.empty()) rec.body += " ";
                 rec.body += pp.getSpelling(*tok);
@@ -2601,6 +2603,7 @@ public:
         finish_batch36();
         finish_batch37();
         finish_diagnostics();
+        finish_batch40();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -2893,7 +2896,7 @@ public:
         SourceLocation at = sm_.getExpansionLoc(loc);
         if (at.isInvalid() || sm_.isInSystemHeader(at)) return;
         std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
-        if (!ast_mark_seen_.insert(place).second) return;
+        if (!ast_mark_seen_.insert({code, place.first, place.second}).second) return;
         add_mark(ast_marks_[place.first], code, place.first, place.second);
     }
 
@@ -2903,7 +2906,7 @@ public:
         SourceLocation at = sm_.getExpansionLoc(loc);
         if (at.isInvalid() || sm_.isInSystemHeader(at)) return;
         std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
-        if (!ast_mark_seen_.insert(place).second) return;
+        if (!ast_mark_seen_.insert({code, place.first, place.second}).second) return;
         std::string &out = ast_marks_[place.first];
         add_mark(out, code, place.first, place.second);
         out.pop_back();
@@ -4627,6 +4630,248 @@ public:
         return loc;
     }
 
+    static bool ctype_name(llvm::StringRef name) {
+        static const std::set<std::string> names = {"isalnum", "isalpha", "isblank", "iscntrl", "isdigit", "isgraph", "islower",
+                                                    "isprint", "ispunct", "isspace", "isupper", "isxdigit", "tolower", "toupper"};
+        return names.count(name.str()) > 0;
+    }
+
+    // The callee of `call` when it is a function declared in a system header.
+    const FunctionDecl *library_callee(const CallExpr *call) const {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || callee->getIdentifier() == nullptr) return nullptr;
+        SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+        if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) return nullptr;
+        return callee;
+    }
+
+    // The type an argument points to as written (before the conversion to
+    // void *), arrays reduced to their elements; null when unknown or void.
+    QualType written_pointee(const Expr *arg) const {
+        QualType type = arg->IgnoreParenImpCasts()->getType();
+        QualType target;
+        if (const ArrayType *array = context_.getAsArrayType(type)) target = array->getElementType();
+        else if (type->isPointerType()) target = type->getPointeeType();
+        else return QualType();
+        while (const ArrayType *array = context_.getAsArrayType(target)) target = array->getElementType();
+        if (target->isVoidType() || target->isIncompleteType()) return QualType();
+        return target;
+    }
+
+    static bool pointer_to_mutable(QualType type) {
+        return !type.isNull() && type->isPointerType() && !type->getPointeeType().isConstQualified();
+    }
+
+    // A char that may be negative (plain char where it is signed, signed char).
+    static bool maybe_negative_char(QualType type) {
+        return type->isSpecificBuiltinType(BuiltinType::Char_S) || type->isSpecificBuiltinType(BuiltinType::SChar);
+    }
+
+    // The variable an expression names (after parens and implicit casts), or of &variable.
+    static const ValueDecl *named_variable(const Expr *expr, bool address) {
+        const Expr *bare = expr->IgnoreParenImpCasts();
+        if (address) {
+            const auto *unary = dyn_cast<UnaryOperator>(bare);
+            if (unary == nullptr || unary->getOpcode() != UO_AddrOf) return nullptr;
+            bare = unary->getSubExpr()->IgnoreParenImpCasts();
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(bare);
+        return ref != nullptr && isa<VarDecl>(ref->getDecl()) ? ref->getDecl() : nullptr;
+    }
+
+    // Batch 40 statement facts: function_designator, inline_asm_keyword,
+    // incompatible_copy, memcmp_type, memcmp_string, const_result,
+    // ctype_char, and the thread and mutex calls for finish_batch40.
+    void note_batch40(const Stmt *stmt) {
+        const LangOptions &lang = context_.getLangOpts();
+        if (const auto *decay = dyn_cast<ImplicitCastExpr>(stmt)) {
+            const auto *ref = dyn_cast<DeclRefExpr>(decay->getSubExpr()->IgnoreParens());
+            if (decay->getCastKind() == CK_FunctionToPointerDecay && ref != nullptr && isa<FunctionDecl>(ref->getDecl()) && !decay->isValueDependent()) {
+                auto parents = context_.getParents(*decay);
+                const CallExpr *call = parents.size() == 1 ? parents[0].get<CallExpr>() : nullptr;
+                bool called = call != nullptr && call->getCallee() == decay;
+                if (!called && !system_spelled(ref->getBeginLoc())) add_ast_mark("function_designator", sm_.getFileLoc(ref->getBeginLoc()));
+            }
+            return;
+        }
+        if (const auto *gcc = dyn_cast<GCCAsmStmt>(stmt)) {
+            SourceLocation keyword = sm_.getSpellingLoc(gcc->getAsmLoc());
+            bool invalid = false;
+            const char *text = sm_.getCharacterData(keyword, &invalid);
+            if (lang.CPlusPlus && !invalid && text != nullptr && std::strncmp(text, "__asm", 5) == 0) add_ast_mark("inline_asm_keyword", gcc->getBeginLoc());
+            return;
+        }
+        if (isa<MSAsmStmt>(stmt)) {
+            if (lang.CPlusPlus) add_ast_mark("inline_asm_keyword", stmt->getBeginLoc());
+            return;
+        }
+        if (const auto *expr = dyn_cast<Expr>(stmt)) {
+            if (!ctype_args_.empty() && ctype_args_.count(sm_.getSpellingLoc(expr->getBeginLoc()).getRawEncoding()) > 0) note_ctype_argument(expr);
+        }
+        if (const auto *assign = dyn_cast<BinaryOperator>(stmt)) {
+            if (assign->getOpcode() == BO_Assign) {
+                const ValueDecl *var = named_variable(assign->getLHS(), false);
+                if (var != nullptr) thread_writes_.push_back({var, assign});
+            }
+            return;
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            const ValueDecl *var = named_variable(unary, true);
+            if (var != nullptr) thread_writes_.push_back({var, unary});
+            return;
+        }
+        const auto *call = dyn_cast<CallExpr>(stmt);
+        const FunctionDecl *callee = call != nullptr ? library_callee(call) : nullptr;
+        if (callee == nullptr) return;
+        llvm::StringRef name = callee->getName();
+        unsigned count = call->getNumArgs();
+        if ((name == "memcpy" || name == "memmove" || name == "memcmp") && count == 3) {
+            QualType first = written_pointee(call->getArg(0));
+            QualType second = written_pointee(call->getArg(1));
+            if (!first.isNull() && !second.isNull() && !first->isCharType() && !second->isCharType() && !first->isStdByteType() && !second->isStdByteType() &&
+                !context_.hasSameUnqualifiedType(first, second)) {
+                add_ast_mark("incompatible_copy", call->getArg(1)->getBeginLoc());
+            }
+        }
+        if (name == "memcmp" && count == 3 && !lang.CPlusPlus) {
+            for (unsigned at = 0; at < 2; ++at) {
+                QualType target = written_pointee(call->getArg(at));
+                bool fits = target.isNull() || target->isIntegerType() || target->isPointerType() || target->isBooleanType() || target->isEnumeralType();
+                if (!fits) {
+                    add_ast_mark("memcmp_type", call->getArg(at)->getBeginLoc());
+                    break;
+                }
+            }
+            // A string literal compared with its terminator (a constant size
+            // beyond its characters); a shorter prefix compares bytes only.
+            Expr::EvalResult size;
+            bool sized = !call->getArg(2)->isValueDependent() && call->getArg(2)->EvaluateAsInt(size, context_);
+            for (unsigned at = 0; at < 2 && sized; ++at) {
+                const auto *text = dyn_cast<StringLiteral>(call->getArg(at)->IgnoreParenImpCasts());
+                if (text != nullptr && size.Val.getInt().getZExtValue() > text->getByteLength()) add_ast_mark("memcmp_string", text->getBeginLoc());
+            }
+        }
+        if (name == "getenv" || name == "localeconv" || name == "setlocale" || name == "strerror") note_const_result(call);
+        if (ctype_name(name) && count == 1) note_ctype_argument(call->getArg(0)->IgnoreParenImpCasts());
+        if ((name == "thrd_join" || name == "thrd_detach" || name == "pthread_join" || name == "pthread_detach") && count >= 1) {
+            const ValueDecl *var = named_variable(call->getArg(0), false);
+            if (var != nullptr) thread_ops_.push_back({var, call});
+        }
+        if (name == "mtx_init" && count == 2) {
+            const ValueDecl *var = named_variable(call->getArg(0), true);
+            if (var != nullptr) {
+                int kind = mutex_kind(call->getArg(1));
+                int &known = mutex_kinds_[var];
+                known = std::max(known, kind);
+            }
+        }
+        if (name == "mtx_timedlock" && count == 2) {
+            const ValueDecl *var = named_variable(call->getArg(0), true);
+            if (var != nullptr) timed_locks_.push_back({var, call->getArg(0)});
+        }
+    }
+
+    // 1 when the mtx_init type names only mtx_plain or mtx_recursive, 2 otherwise.
+    int mutex_kind(const Expr *type) const {
+        bool named = false;
+        bool timed = false;
+        std::vector<const Stmt *> work = {type};
+        while (!work.empty()) {
+            const Stmt *node = work.back();
+            work.pop_back();
+            if (node == nullptr) continue;
+            if (const auto *ref = dyn_cast<DeclRefExpr>(node)) {
+                const auto *value = dyn_cast<EnumConstantDecl>(ref->getDecl());
+                if (value == nullptr) return 2;
+                llvm::StringRef word = value->getName();
+                if (word == "mtx_timed") timed = true;
+                else if (word == "mtx_plain" || word == "mtx_recursive") named = true;
+                else return 2;
+            }
+            for (const Stmt *child : node->children()) work.push_back(child);
+        }
+        return named && !timed ? 1 : 2;
+    }
+
+    // OC-0205: a result that must be treated as const reaching a pointer to non-const.
+    void note_const_result(const CallExpr *call) {
+        const Stmt *node = call;
+        for (int step = 0; step < 8; ++step) {
+            auto parents = context_.getParents(*node);
+            if (parents.size() != 1) return;
+            if (const auto *cast = parents[0].get<ImplicitCastExpr>()) {
+                if (!pointer_to_mutable(cast->getType())) return;
+                node = cast;
+                continue;
+            }
+            if (const auto *paren = parents[0].get<ParenExpr>()) {
+                node = paren;
+                continue;
+            }
+            bool mutable_target = false;
+            if (const auto *var = parents[0].get<VarDecl>()) mutable_target = pointer_to_mutable(var->getType());
+            if (const auto *assign = parents[0].get<BinaryOperator>()) {
+                mutable_target = assign->getOpcode() == BO_Assign && assign->getRHS() == node && pointer_to_mutable(assign->getLHS()->getType());
+            }
+            if (const auto *outer = parents[0].get<CallExpr>()) {
+                const FunctionDecl *target = outer->getDirectCallee();
+                for (unsigned at = 0; target != nullptr && at < outer->getNumArgs() && at < target->getNumParams(); ++at) {
+                    if (outer->getArg(at) == node) mutable_target = pointer_to_mutable(target->getParamDecl(at)->getType());
+                }
+            }
+            if (const auto *back = parents[0].get<ReturnStmt>()) {
+                const auto *fn = dyn_cast_or_null<FunctionDecl>(enclosing_function_decl(back));
+                mutable_target = fn != nullptr && pointer_to_mutable(fn->getReturnType());
+            }
+            if (mutable_target) add_ast_mark("const_result", call->getBeginLoc());
+            return;
+        }
+    }
+
+    // OC-0199: the argument of a ctype function or macro that is a char that
+    // may be negative (a non-negative constant is fine).  `expr` is the whole
+    // argument when its parent starts elsewhere.
+    void note_ctype_argument(const Expr *expr) {
+        SourceLocation begin = sm_.getSpellingLoc(expr->getBeginLoc());
+        auto parents = context_.getParents(*expr);
+        if (parents.size() == 1) {
+            const auto *above = parents[0].get<Expr>();
+            if (above != nullptr && sm_.getSpellingLoc(above->getBeginLoc()) == begin && !isa<CallExpr>(above)) return;
+        }
+        const Expr *bare = expr->IgnoreParens();
+        if (const auto *promote = dyn_cast<ImplicitCastExpr>(bare)) {
+            if (promote->getCastKind() == CK_IntegralCast) bare = promote->getSubExpr()->IgnoreParens();
+        }
+        if (!maybe_negative_char(bare->getType()) || bare->isValueDependent()) return;
+        Expr::EvalResult value;
+        if (bare->EvaluateAsInt(value, context_) && value.Val.getInt().isNonNegative()) return;
+        add_ast_mark("ctype_char", sm_.getFileLoc(expr->getBeginLoc()));
+    }
+
+    // Batch 40 unit facts: thread_twice (a second join or detach of a thread
+    // after an unconditional first one, with no new value in between) and
+    // plain_timed_lock (mtx_timedlock of a mutex every mtx_init made plain).
+    void finish_batch40() {
+        for (const auto &later : thread_ops_) {
+            for (const auto &first : thread_ops_) {
+                if (first.first != later.first || first.second == later.second) continue;
+                if (!sequenced_before(first.second, later.second) || !unconditional_below(first.second, later.second)) continue;
+                bool renewed = false;
+                for (const auto &write : thread_writes_) {
+                    if (write.first == later.first && sequenced_before(first.second, write.second) && !sequenced_before(later.second, write.second)) renewed = true;
+                }
+                if (!renewed) {
+                    add_ast_mark("thread_twice", later.second->getArg(0)->getBeginLoc());
+                    break;
+                }
+            }
+        }
+        for (const auto &lock : timed_locks_) {
+            auto found = mutex_kinds_.find(lock.first);
+            if (found != mutex_kinds_.end() && found->second == 1) add_ast_mark("plain_timed_lock", lock.second->getBeginLoc());
+        }
+    }
+
     // Batch 39: atomic_member (a member of an _Atomic structure or union
     // accessed directly).
     void note_batch39(const Stmt *stmt) {
@@ -5586,7 +5831,7 @@ public:
         SourceLocation at = sm_.getSpellingLoc(loc);
         if (at.isInvalid() || sm_.isInSystemHeader(at) || sm_.isWrittenInScratchSpace(at)) return;
         std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
-        if (!ast_mark_seen_.insert(place).second) return;
+        if (!ast_mark_seen_.insert({code, place.first, place.second}).second) return;
         add_mark(ast_marks_[place.first], code, place.first, place.second);
     }
 
@@ -5841,6 +6086,7 @@ public:
         if (const auto *block = dyn_cast<CompoundStmt>(stmt)) note_dead_statements(block);
         note_batch37(stmt);
         note_batch39(stmt);
+        note_batch40(stmt);
         if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
@@ -6610,6 +6856,11 @@ private:
     std::set<std::string> guard_candidates_;
     std::vector<const FunctionDecl *> graph_functions_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_uses_;
+    std::set<unsigned> ctype_args_;
+    std::vector<std::pair<const ValueDecl *, const CallExpr *>> thread_ops_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> thread_writes_;
+    std::map<const ValueDecl *, int> mutex_kinds_;   // 1 plain only, 2 timed or unknown
+    std::vector<std::pair<const ValueDecl *, const Expr *>> timed_locks_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_closes_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_writes_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> buffer_writes_;
@@ -6639,7 +6890,7 @@ private:
     std::set<const ValueDecl *> fgets_buffers_;
     std::set<const ValueDecl *> length_checked_;
     std::vector<std::pair<const ValueDecl *, SourceLocation>> fgets_indexes_;
-    std::set<std::pair<FileID, unsigned>> ast_mark_seen_;
+    std::set<std::tuple<std::string, FileID, unsigned>> ast_mark_seen_;  // once per code and place
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> argument_ranges_;
     struct ScopeRange {
         FileID fid;
@@ -6776,7 +7027,10 @@ public:
         bool skipped = isa<ImplicitCastExpr>(stmt) ||
                        (loc.isValid() && sm_.isInSystemHeader(sm_.getExpansionLoc(loc)));
         if (const auto *implicit = dyn_cast<ImplicitCastExpr>(stmt)) {
-            if (!(loc.isValid() && sm_.isInSystemHeader(sm_.getExpansionLoc(loc)))) tables_.note_implicit_cast(implicit);
+            if (!(loc.isValid() && sm_.isInSystemHeader(sm_.getExpansionLoc(loc)))) {
+                tables_.note_implicit_cast(implicit);
+                tables_.note_batch40(implicit);
+            }
         }
         stack_.push_back(skipped ? parent : tables_.node_of(stmt, parent, function_));
         return true;

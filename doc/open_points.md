@@ -311,3 +311,12 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   after a struct or typedef name), `register` (C++). Others (ungetc at the
   start of a file, realloc to size 0, and so on) are not checked yet.
 - **OC-0084, OC-0311, OC-0342**: taken from Clang's diagnostics like batch 38.
+- **OC-0200**: only a string literal argument with a constant size that
+  reaches its terminator; prefix compares (size up to the characters) and
+  strings in arrays are not reported.
+- **OC-0201**: type punning with memcpy (sqlite and yyjson copy between
+  doubles and 64-bit integers, 37 findings) is reported; it is what the rule
+  text forbids.
+- **OC-0195**: sqlite passes function names without & throughout (839).
+- **OC-0217, OC-0212**: within one function and on named variables only;
+  OC-0212 needs every mtx_init of the variable to name its kind.
