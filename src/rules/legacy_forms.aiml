@@ -1,0 +1,42 @@
+# OC-0179, OC-0311 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): obsolescent, exception_spec_mismatch.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ObsolescentFeatureRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 179, "safety.c90-.1.3.no_obsolescent_features", "Obsolescent language features are not used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "obsolescent", 179, "this is an obsolescent language feature", out]
+
+- class:
+    name: ExceptionSpecMatchRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 311, "safety.cpp98-.17.3.consistent_exception_spec", "All declarations of a function have the same exception specification", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "exception_spec_mismatch", 311, "this declaration has another exception specification than an earlier one", out]

@@ -352,7 +352,14 @@ inline bool kept_diagnostic(unsigned id) {
         diag::err_atomic_specifier_bad_type, diag::err_goto_into_protected_scope,
         diag::err_switch_into_protected_scope, diag::err_early_catch_all,
         diag::err_unsupported_string_concat, diag::err_static_non_static, diag::err_non_static_static,
-        diag::err_pp_file_not_found, diag::err_pp_unterminated_conditional};
+        diag::err_pp_file_not_found, diag::err_pp_unterminated_conditional,
+        diag::err_cast_pointer_to_non_pointer_int, diag::err_cast_pointer_from_non_pointer_int,
+        diag::warn_atomic_member_access, diag::err_missing_exception_specification,
+        diag::err_mismatched_exception_spec, diag::ext_missing_exception_specification,
+        diag::ext_mismatched_exception_spec, diag::ext_register_storage_class, diag::warn_deprecated_register,
+        diag::warn_cannot_pass_non_pod_arg_to_vararg, diag::warn_non_pod_vararg_with_format_string,
+        diag::err_cannot_pass_to_vararg, diag::err_cannot_pass_to_vararg_format,
+        diag::err_cannot_pass_non_trivial_c_struct_to_vararg};
     for (unsigned one : kept) {
         if (one == id) return true;
     }
@@ -790,6 +797,7 @@ public:
         note_throwing_bodies(decl);
         note_noreturn_returns(decl);
         note_function_paths(decl);
+        note_obsolescent(decl);
         if (decl->getLocation().isValid()) decl_begins_[decl->getLocation().getRawEncoding()] = decl->getBeginLoc();
         note_graph_function(decl);
         if (unused_static(decl)) add_shape(rec, "unused_static");
@@ -4588,6 +4596,81 @@ public:
             if ((id == diag::err_goto_into_protected_scope || id == diag::err_switch_into_protected_scope) && one.try_scope) add_ast_mark("jump_into_try", one.loc);
             if (id == diag::err_early_catch_all) add_ast_mark("early_catch_all", one.loc);
             if (id == diag::err_unsupported_string_concat) add_ast_mark("mixed_string_prefix", one.loc);
+            if (id == diag::err_cast_pointer_to_non_pointer_int || id == diag::err_cast_pointer_from_non_pointer_int) add_ast_mark("float_pointer_cast", cast_open(one.loc));
+            if (id == diag::err_missing_exception_specification || id == diag::err_mismatched_exception_spec || id == diag::ext_missing_exception_specification || id == diag::ext_mismatched_exception_spec) {
+                add_ast_mark("exception_spec_mismatch", one.loc);
+            }
+            if (id == diag::ext_register_storage_class || id == diag::warn_deprecated_register) add_ast_mark("obsolescent", one.loc);
+            if (id == diag::warn_cannot_pass_non_pod_arg_to_vararg || id == diag::warn_non_pod_vararg_with_format_string || id == diag::err_cannot_pass_to_vararg || id == diag::err_cannot_pass_to_vararg_format || id == diag::err_cannot_pass_non_trivial_c_struct_to_vararg) {
+                add_ast_mark("vararg_type", one.loc);
+            }
+        }
+    }
+
+    // The ( of the C-style cast whose operand starts at `loc`, else `loc`.
+    SourceLocation cast_open(SourceLocation loc) const {
+        if (!loc.isFileID()) return loc;
+        std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(loc);
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(place.first, &invalid);
+        if (invalid || place.second > buffer.size()) return loc;
+        size_t at = place.second;
+        while (at > 0 && (buffer[at - 1] == ' ' || buffer[at - 1] == '\t')) --at;
+        if (at == 0 || buffer[at - 1] != ')') return loc;
+        int depth = 0;
+        while (at > 0) {
+            --at;
+            if (buffer[at] == '\n') return loc;
+            if (buffer[at] == ')') ++depth;
+            if (buffer[at] == '(' && --depth == 0) return sm_.getComposedLoc(place.first, static_cast<unsigned>(at));
+        }
+        return loc;
+    }
+
+    // Batch 39: atomic_member (a member of an _Atomic structure or union
+    // accessed directly).
+    void note_batch39(const Stmt *stmt) {
+        const auto *member = dyn_cast<MemberExpr>(stmt);
+        if (member == nullptr) return;
+        QualType base = member->getBase()->IgnoreParenImpCasts()->getType();
+        if (member->isArrow() && base->isPointerType()) base = base->getPointeeType();
+        if (!base.isNull() && base->isAtomicType()) add_ast_mark("atomic_member", member->getBeginLoc());
+    }
+
+    // OC-0179 in C: obsolescent (a function declared or defined without a
+    // prototype, before C23; a storage class written after a type keyword or
+    // qualifier).
+    void note_obsolescent(const Decl *decl) {
+        const LangOptions &lang = context_.getLangOpts();
+        if (lang.CPlusPlus || decl->isImplicit() || !user_location(sm_, decl->getLocation()) || decl->getLocation().isMacroID()) return;
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn != nullptr && !lang.requiresStrictPrototypes() && !fn->hasWrittenPrototype() && fn->getBuiltinID() == 0) {
+            add_ast_mark("obsolescent", fn->getLocation());
+            return;
+        }
+        const auto *var = dyn_cast<VarDecl>(decl);
+        bool storage = isa<TypedefDecl>(decl) || (fn != nullptr && fn->getStorageClass() != SC_None) ||
+                       (var != nullptr && (var->getStorageClass() != SC_None || var->getTSCSpec() != TSCS_unspecified));
+        if (!storage || isa<ParmVarDecl>(decl) || decl->getBeginLoc().isMacroID()) return;
+        static const std::set<std::string> storage_words = {"static", "extern", "typedef", "_Thread_local", "thread_local", "register", "auto"};
+        static const std::set<std::string> type_words = {"int", "char", "short", "long", "signed", "unsigned", "float", "double",
+                                                         "void", "_Bool", "bool", "const", "volatile", "restrict", "_Atomic", "_Complex"};
+        SourceLocation at = decl->getBeginLoc();
+        unsigned stop = sm_.getFileOffset(decl->getLocation());
+        FileID fid = sm_.getFileID(at);
+        bool typed = false;
+        for (int step = 0; step < 64 && at.isValid() && sm_.getFileID(at) == fid && sm_.getFileOffset(at) < stop; ++step) {
+            Token tok;
+            if (Lexer::getRawToken(at, tok, sm_, lang, true)) break;
+            if (!tok.is(tok::raw_identifier)) break;
+            std::string word = tok.getRawIdentifier().str();
+            if (storage_words.count(word) > 0 && typed) {
+                add_ast_mark("obsolescent", tok.getLocation());
+                break;
+            }
+            if (type_words.count(word) == 0 && storage_words.count(word) == 0) break;
+            if (type_words.count(word) > 0) typed = true;
+            at = tok.getEndLoc();
         }
     }
 
@@ -5757,6 +5840,7 @@ public:
         note_batch35(stmt);
         if (const auto *block = dyn_cast<CompoundStmt>(stmt)) note_dead_statements(block);
         note_batch37(stmt);
+        note_batch39(stmt);
         if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;

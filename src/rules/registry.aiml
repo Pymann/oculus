@@ -115,6 +115,8 @@
 - import: "src/rules/include_directives.aiml"
 - import: "src/rules/literal_diagnostics.aiml"
 - import: "src/rules/handler_jumps.aiml"
+- import: "src/rules/type_diagnostics.aiml"
+- import: "src/rules/legacy_forms.aiml"
 
 - class:
     name: RuleRegistry
@@ -678,6 +680,16 @@
             - call: [<.rules.push, r0122]
             - decl: [r0414, ptr<Rule>, { new: LinkageConflictRule }]
             - call: [<.rules.push, r0414]
+            - decl: [r0084, ptr<Rule>, { new: FloatPointerCastRule }]
+            - call: [<.rules.push, r0084]
+            - decl: [r0191, ptr<Rule>, { new: AtomicMemberRule }]
+            - call: [<.rules.push, r0191]
+            - decl: [r0342, ptr<Rule>, { new: VarargTypeRule }]
+            - call: [<.rules.push, r0342]
+            - decl: [r0179, ptr<Rule>, { new: ObsolescentFeatureRule }]
+            - call: [<.rules.push, r0179]
+            - decl: [r0311, ptr<Rule>, { new: ExceptionSpecMatchRule }]
+            - call: [<.rules.push, r0311]
             - decl: [r0141, ptr<Rule>, { new: HeaderNameCharsRule }]
             - call: [<.rules.push, r0141]
             - decl: [r0142, ptr<Rule>, { new: IncludeFormRule }]

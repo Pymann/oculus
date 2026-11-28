@@ -306,3 +306,8 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0046, OC-0122, OC-0142, OC-0154, OC-0189, OC-0302, OC-0329, OC-0386,
   OC-0414**: taken from Clang's diagnostics, so they depend on Clang
   reporting the construct; such a unit is still checked by all rules.
+- **OC-0179**: only these obsolescent features: functions without a prototype
+  (C before C23), a storage class after a type keyword or qualifier (C, not
+  after a struct or typedef name), `register` (C++). Others (ungetc at the
+  start of a file, realloc to size 0, and so on) are not checked yet.
+- **OC-0084, OC-0311, OC-0342**: taken from Clang's diagnostics like batch 38.

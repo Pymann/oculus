@@ -1,0 +1,2 @@
+bad.c:1:5
+bad_static_late.c:1:5

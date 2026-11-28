@@ -773,7 +773,14 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   opening " or < of an #include header name with ', \, /* or //, or " between
   < and >); mark `constant_macro_arg` (the argument of INTn_C, UINTn_C,
   INTMAX_C or UINTMAX_C that is not one unsuffixed decimal, octal or hex
-  literal within the range of the type; a lone macro name is not looked at).  IrDecl shape `unused_static` (C): a static object of
+  literal within the range of the type; a lone macro name is not looked at).
+  Batch 39 marks: from diagnostics `float_pointer_cast` (at the ( of a cast
+  between a pointer and a floating type), `exception_spec_mismatch`,
+  `vararg_type` (a non-trivial object passed through ...) and, in C++,
+  `obsolescent` for `register`; from the AST `atomic_member` (a member of an
+  _Atomic struct or union accessed with . or ->) and, in C before C23,
+  `obsolescent` for a function declared without a prototype (at its name) and
+  for a storage class written after a type keyword or qualifier.  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,

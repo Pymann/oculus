@@ -1,0 +1,59 @@
+# OC-0084, OC-0191, OC-0342 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): float_pointer_cast, atomic_member, vararg_type.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: FloatPointerCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 84, "safety.c90-.8.3.no_pointer_float_cast", "Object pointers and non-integer arithmetic types are not cast into each other", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "float_pointer_cast", 84, "an object pointer and a floating type are cast into each other", out]
+
+- class:
+    name: AtomicMemberRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 191, "safety.c11-.18.1.no_atomic_member_access", "Members of atomic structures and unions are not accessed directly", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "atomic_member", 191, "a member of an atomic structure or union is accessed directly; load or store the whole object", out]
+
+- class:
+    name: VarargTypeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 342, "safety.cpp98-.11.1.vararg_argument_type", "Arguments passed through ... have a suitable type", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "vararg_type", 342, "an argument of this type cannot be passed through ...", out]
