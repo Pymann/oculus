@@ -566,6 +566,18 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   an assignment of a structure with a flexible array member, `atomic_again` (C)
   on the operand that holds a second reference to an `_Atomic` variable in one
   full expression (operand of the innermost expression holding both).
+  `busy_increment` on a builtin `++`/`--` whose full expression also assigns or
+  increments something else (calls are not counted; not in the third clause of
+  a for header), `char_widened` on an explicit cast of a character value (plain
+  char, or signed char not named by a typedef) to a wider non-enum integer type,
+  and on such a value used as an array index or as the argument of a ctype
+  function (constants, character literals and `?:` between constants are left
+  out), `small_bitwise` (C++) on `~` or `<<` of a non-constant operand narrower
+  than int that is not cast at once to an integer type narrower than int (at the
+  outermost parentheses), `escaping_default` on a lambda with `[=]` or `[&]`
+  that is returned, assigned to a member or a static variable, given to
+  `std::thread`, `std::jthread` or `std::async`, or added to a member container,
+  and `escaping_this` when such a lambda captures `this` implicitly.
   `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
   the for header, `exposed_data` on a named public or protected field of a C++
   class that is not an aggregate and has a user-provided constructor or
@@ -594,7 +606,14 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   Marks from the AST: `thread_signal` (the constant non-zero signal of a call
   of the system's `pthread_kill`), `async_cancel` (`PTHREAD_CANCEL_ASYNCHRONOUS`
   passed to `pthread_setcanceltype`) and `vector_bool` (the template argument of
-  a written `std::vector` whose element type is `bool`).  Literals in skipped code and on `#include`,
+  a written `std::vector` whose element type is `bool`), `float_memcmp` (an
+  argument of `memcmp`/`bcmp` that points to a floating object or a structure
+  with a floating member), `unlooped_wait` (`cnd_wait`, `cnd_timedwait` or a
+  weak C11 compare-exchange outside any loop of the function) and
+  `unsafe_in_threads` (a call of `strtok`, `rand`, `asctime`, `ctime`,
+  `gmtime`, `localtime`, `localeconv`, `setlocale`, `strerror`, `tmpnam` or
+  `strsignal` in a unit that calls `thrd_create` or `pthread_create` or builds
+  a `std::thread`).  Literals in skipped code and on `#include`,
   `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;
   `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`

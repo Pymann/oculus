@@ -1,0 +1,60 @@
+# OC-0406 no_thread_unsafe_library, OC-0409 spurious_failure_in_loop (C) and
+# OC-0441 no_float_memcmp, catalogue in Pymann/coding-rules.  Read the marks
+# unsafe_in_threads, unlooped_wait and float_memcmp of IrFile.lexical_marks.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ThreadUnsafeLibraryRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 406, "security.c11-.18.2.no_thread_unsafe_library", "Library functions that are not thread-safe are not called from multithreaded code", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unsafe_in_threads", 406, "this library function keeps hidden static state and the unit creates threads; use the reentrant variant", out]
+
+- class:
+    name: SpuriousFailureLoopRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 409, "safety.c11-.18.2.spurious_failure_in_loop", "Condition waits and weak compare-exchange calls are retried in a loop", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unlooped_wait", 409, "this call can return without the awaited change; call it in a loop that tests the condition again", out]
+
+- class:
+    name: FloatMemcmpRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 441, "safety.c90-.13.4.no_float_memcmp", "Floating-point values are not compared through their object representation", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "float_memcmp", 441, "memcmp of floating values: +0.0 and -0.0 differ in bytes, equal NaN bytes are not equal values; compare the values", out]

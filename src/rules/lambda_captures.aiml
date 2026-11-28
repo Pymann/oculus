@@ -1,0 +1,42 @@
+# OC-0338 no_implicit_this_capture and OC-0339 explicit_lambda_capture (C++),
+# catalogue in Pymann/coding-rules.  Read from IrNode.shape of lambdas that leave
+# the call (doc/ir.md): escaping_this, escaping_default.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: ImplicitThisCaptureRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 338, "safety.cpp11-.11.4.no_implicit_this_capture", "A lambda that may outlive its scope does not capture this implicitly", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "escaping_this", 338, "the lambda outlives the call and captures this through a default capture; the pointer dangles when the object goes away", out]
+
+- class:
+    name: ExplicitLambdaCaptureRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 339, "style.cpp11-.11.4.explicit_lambda_capture", "A lambda that may outlive its scope names its captures explicitly", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "escaping_default", 339, "the lambda outlives the call; name what it captures instead of [=] or [&]", out]

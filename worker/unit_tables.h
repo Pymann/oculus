@@ -2425,6 +2425,9 @@ public:
 
     // The line classes of every user file seen, after all records are in.
     void finish_lines(const LangOptions &lang) {
+        if (creates_threads_) {
+            for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
+        }
         for (const auto &entry : file_ids_) {
             FileRec &rec = files[static_cast<size_t>(entry.second)];
             if (rec.kind == "system_header" || !sm_.getFileEntryRefForID(entry.first)) continue;
@@ -2844,6 +2847,272 @@ public:
         return false;
     }
 
+    static bool std_class(QualType type, const char *name) {
+        if (type.isNull()) return false;
+        const auto *record = type->getAsCXXRecordDecl();
+        return record != nullptr && record->getIdentifier() != nullptr && record->getName() == name &&
+               record->isInStdNamespace();
+    }
+
+    // Inside a while, do or for statement of the same function.
+    bool inside_loop(const Stmt *stmt) const {
+        DynTypedNode node = DynTypedNode::create(*stmt);
+        while (true) {
+            auto parents = context_.getParents(node);
+            if (parents.empty()) return false;
+            node = parents[0];
+            if (node.get<WhileStmt>() || node.get<DoStmt>() || node.get<ForStmt>() || node.get<CXXForRangeStmt>()) return true;
+            if (node.get<FunctionDecl>() || node.get<LambdaExpr>() || node.get<BlockDecl>()) return false;
+        }
+    }
+
+    static bool float_inside(const ASTContext &context, QualType type, int depth) {
+        if (type.isNull() || depth > 8) return false;
+        type = context.getBaseElementType(type.getCanonicalType());
+        if (type->isRealFloatingType()) return true;
+        const auto *record = type->getAsRecordDecl();
+        if (record == nullptr || record->getDefinition() == nullptr) return false;
+        for (const FieldDecl *field : record->getDefinition()->fields()) {
+            if (float_inside(context, field->getType(), depth + 1)) return true;
+        }
+        return false;
+    }
+
+    // Library calls: memcmp of floating objects (mark float_memcmp at the
+    // argument), cnd_wait and cnd_timedwait outside a loop (unlooped_wait), the
+    // functions with hidden static state (unsafe_in_threads, when the unit
+    // creates threads), and ctype functions given a plain or signed char.
+    void note_library_calls(const CallExpr *call) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || callee->getIdentifier() == nullptr) return;
+        SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+        if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) return;
+        llvm::StringRef name = callee->getName();
+        if ((name == "memcmp" || name == "bcmp") && call->getNumArgs() == 3) {
+            for (unsigned at = 0; at < 2; ++at) {
+                QualType held = without_implicit_casts(call->getArg(at))->getType();
+                if (held->isPointerType() && float_inside(context_, held->getPointeeType(), 0)) {
+                    add_ast_mark("float_memcmp", call->getArg(at)->getBeginLoc());
+                    break;
+                }
+            }
+        }
+        if ((name == "cnd_wait" || name == "cnd_timedwait") && !inside_loop(call)) add_ast_mark("unlooped_wait", call->getBeginLoc());
+        if (name == "thrd_create" || name == "pthread_create") creates_threads_ = true;
+        static const std::set<std::string> unsafe = {"strtok", "rand", "asctime", "ctime", "gmtime", "localtime",
+                                                     "localeconv", "setlocale", "strerror", "tmpnam", "strsignal"};
+        if (unsafe.count(name.str()) > 0) unsafe_calls_.push_back(call->getBeginLoc());
+    }
+
+    // ~ or << of an operand narrower than int (promoted), not cast at once to an
+    // integer type narrower than int (C++).
+    bool small_bitwise(const Expr *expr) const {
+        if (!context_.getLangOpts().CPlusPlus) return false;
+        {
+            const Expr *bare = expr->IgnoreParens();
+            const auto *bare_unary = dyn_cast<UnaryOperator>(bare);
+            const auto *bare_binary = dyn_cast<BinaryOperator>(bare);
+            if (!(bare_unary != nullptr && bare_unary->getOpcode() == UO_Not) && !(bare_binary != nullptr && bare_binary->getOpcode() == BO_Shl)) return false;
+            auto up = context_.getParents(*expr);
+            if (up.size() == 1 && up[0].get<ParenExpr>() != nullptr) return false;
+        }
+        const Expr *whole = expr;
+        expr = expr->IgnoreParens();
+        const Expr *operand = nullptr;
+        if (const auto *unary = dyn_cast<UnaryOperator>(expr)) {
+            if (unary->getOpcode() == UO_Not) operand = unary->getSubExpr();
+        } else if (const auto *binary = dyn_cast<BinaryOperator>(expr)) {
+            if (binary->getOpcode() == BO_Shl) operand = binary->getLHS();
+        }
+        if (operand == nullptr || expr->isValueDependent() || expr->getType()->isDependentType()) return false;
+        QualType held = without_implicit_casts(operand)->getType();
+        if (held.isNull() || !held->isIntegerType() || held->isBooleanType() || held->isDependentType()) return false;
+        if (context_.getTypeSize(held) >= context_.getTypeSize(context_.IntTy)) return false;
+        if (operand->isIntegerConstantExpr(context_)) return false;
+        DynTypedNode node = DynTypedNode::create(*whole);
+        while (true) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return true;
+            node = parents[0];
+            if (node.get<ParenExpr>() != nullptr || node.get<ImplicitCastExpr>() != nullptr) continue;
+            if (const auto *cast = node.get<ExplicitCastExpr>()) {
+                QualType target = cast->getType();
+                return !(target->isIntegerType() && context_.getTypeSize(target) < context_.getTypeSize(context_.IntTy));
+            }
+            return true;
+        }
+    }
+
+    // A plain or signed char value widened for use as a number: an explicit cast
+    // to a wider integer type, an array index, or the argument of a ctype
+    // function (on the char expression).  Constants and a value cast to signed
+    // char on purpose are left out.
+    bool char_widened(const Expr *expr) const {
+        if (isa<ImplicitCastExpr>(expr) || isa<ParenExpr>(expr) || !character_value(expr)) return false;
+        DynTypedNode node = DynTypedNode::create(*expr);
+        const Stmt *below = expr;
+        while (true) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return false;
+            node = parents[0];
+            if (const auto *paren = node.get<ParenExpr>()) { below = paren; continue; }
+            if (const auto *cast = node.get<ImplicitCastExpr>()) {
+                if (cast->getCastKind() == CK_LValueToRValue || cast->getCastKind() == CK_IntegralCast) { below = cast; continue; }
+                return false;
+            }
+            break;
+        }
+        if (node.get<ExplicitCastExpr>() != nullptr) return false;
+        if (const auto *index = node.get<ArraySubscriptExpr>()) return index->getIdx() == below;
+        if (const auto *call = node.get<CallExpr>()) {
+            const FunctionDecl *callee = call->getDirectCallee();
+            if (callee == nullptr || callee->getIdentifier() == nullptr || call->getNumArgs() != 1 || call->getArg(0) != below) return false;
+            SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+            if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) return false;
+            static const std::set<std::string> ctype = {"isalnum", "isalpha", "isblank", "iscntrl", "isdigit", "isgraph",
+                                                        "islower", "isprint", "ispunct", "isspace", "isupper",
+                                                        "isxdigit", "tolower", "toupper"};
+            return ctype.count(callee->getName().str()) > 0;
+        }
+        return false;
+    }
+
+    // A character value: plain char, or signed char not named by a typedef
+    // (int8_t, ImS8 and the like are small integers).  Constants, character
+    // literals, deliberate casts and ?: between constants are left out.
+    bool character_value(const Expr *operand) const {
+        QualType held = operand->getType();
+        if (held.isNull() || operand->isValueDependent()) return false;
+        QualType canonical = held.getCanonicalType();
+        bool plain = canonical->isSpecificBuiltinType(BuiltinType::Char_S);
+        bool written_signed = canonical->isSpecificBuiltinType(BuiltinType::SChar) && !isa<TypedefType>(held.getTypePtr()) &&
+                              held->getAs<TypedefType>() == nullptr;
+        if (!plain && !written_signed) return false;
+        if (isa<CharacterLiteral>(operand) || isa<ExplicitCastExpr>(operand)) return false;
+        if (const auto *choice = dyn_cast<ConditionalOperator>(operand)) {
+            const Expr *yes = choice->getTrueExpr()->IgnoreParenImpCasts(), *no = choice->getFalseExpr()->IgnoreParenImpCasts();
+            if (yes->isIntegerConstantExpr(context_) && no->isIntegerConstantExpr(context_)) return false;
+        }
+        return !operand->isIntegerConstantExpr(context_);
+    }
+
+    // An explicit cast of a plain or signed char value to a wider integer type.
+    bool char_cast_widened(const ExplicitCastExpr *cast) const {
+        QualType target = cast->getType();
+        if (target.isNull() || target->isDependentType() || !target->isIntegerType() || target->isBooleanType() ||
+            target->isAnyCharacterType() || context_.getTypeSize(target) <= context_.getTypeSize(context_.CharTy)) return false;
+        if (target->isEnumeralType()) return false;
+        return character_value(cast->getSubExpr()->IgnoreParenImpCasts());
+    }
+
+    // Side effects other than `self` in a full expression: assignments, compound
+    // assignments and other builtin ++/--.  Calls are not counted.  Unevaluated
+    // operands, statement expressions and lambdas are not entered.
+    static bool other_effect(const Stmt *stmt, const Stmt *self) {
+        if (stmt == nullptr) return false;
+        if (isa<UnaryExprOrTypeTraitExpr>(stmt) || isa<StmtExpr>(stmt) || isa<LambdaExpr>(stmt) ||
+            isa<GenericSelectionExpr>(stmt) || isa<CXXTypeidExpr>(stmt) || isa<CXXNoexceptExpr>(stmt) ||
+            isa<DeclRefExpr>(stmt)) return false;
+        if (stmt != self) {
+            if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+                if (unary->isIncrementDecrementOp()) return true;
+            }
+            if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+                if (binary->isAssignmentOp()) return true;
+            }
+            if (const auto *op = dyn_cast<CXXOperatorCallExpr>(stmt)) {
+                if (op->isAssignmentOp()) return true;
+            }
+        }
+        for (const Stmt *child : stmt->children()) {
+            if (other_effect(child, self)) return true;
+        }
+        return false;
+    }
+
+    // A builtin ++/-- whose full expression has another side effect (not in the
+    // third clause of a for header, not in a macro of a system header).
+    bool increment_with_effects(const UnaryOperator *unary) const {
+        if (unary->isTypeDependent() || unary->isValueDependent()) return false;
+        const Expr *top = full_expression(unary);
+        auto parents = context_.getParents(*top);
+        if (parents.size() == 1) {
+            if (const auto *loop = parents[0].get<ForStmt>()) {
+                if (loop->getInc() == top) return false;
+            }
+        }
+        return other_effect(top, unary);
+    }
+
+    // A lambda that leaves the call: returned, assigned to a member or a static
+    // variable, given to std::thread, std::jthread or std::async, or added to a
+    // member container.  Shapes: escaping_default (written [=] or [&]),
+    // escaping_this (this captured implicitly).
+    void note_lambda(const LambdaExpr *lambda, NodeRec &rec) {
+        if (lambda->getCaptureDefault() == LCD_None) return;
+        DynTypedNode node = DynTypedNode::create(*static_cast<const Expr *>(lambda));
+        const Expr *below = lambda;
+        bool escapes = false;
+        while (true) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) break;
+            node = parents[0];
+            const Expr *outer = node.get<Expr>();
+            if (outer != nullptr && (isa<ImplicitCastExpr>(outer) || isa<MaterializeTemporaryExpr>(outer) ||
+                                     isa<CXXBindTemporaryExpr>(outer) || isa<ExprWithCleanups>(outer) ||
+                                     isa<ParenExpr>(outer) || isa<CXXFunctionalCastExpr>(outer))) {
+                below = outer;
+                continue;
+            }
+            if (const auto *make = dyn_cast_or_null<CXXConstructExpr>(outer)) {
+                if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) { escapes = true; break; }
+                if (make->getNumArgs() >= 1 && make->getArg(0) == below) { below = outer; continue; }
+                break;
+            }
+            if (node.get<ReturnStmt>() != nullptr) { escapes = true; break; }
+            if (const auto *var = node.get<VarDecl>()) { escapes = var->hasGlobalStorage() && !var->isConstexpr(); break; }
+            if (const auto *op = dyn_cast_or_null<CXXOperatorCallExpr>(outer)) {
+                escapes = op->isAssignmentOp() && op->getNumArgs() == 2 && op->getArg(1) == below && stored_far(op->getArg(0));
+                break;
+            }
+            if (const auto *binary = dyn_cast_or_null<BinaryOperator>(outer)) {
+                escapes = binary->isAssignmentOp() && binary->getRHS() == below && stored_far(binary->getLHS());
+                break;
+            }
+            if (const auto *member_call = dyn_cast_or_null<CXXMemberCallExpr>(outer)) {
+                const CXXMethodDecl *method = member_call->getMethodDecl();
+                static const std::set<std::string> adders = {"push_back", "emplace_back", "push_front", "emplace_front",
+                                                             "insert", "emplace", "push"};
+                escapes = method != nullptr && method->getIdentifier() != nullptr && adders.count(method->getName().str()) > 0 &&
+                          stored_far(member_call->getImplicitObjectArgument());
+                break;
+            }
+            if (const auto *call = dyn_cast_or_null<CallExpr>(outer)) {
+                const FunctionDecl *callee = call->getDirectCallee();
+                escapes = callee != nullptr && callee->getIdentifier() != nullptr && callee->getName() == "async" && callee->isInStdNamespace();
+                break;
+            }
+            break;
+        }
+        if (!escapes) return;
+        add_shape(rec, "escaping_default");
+        for (const LambdaCapture &capture : lambda->captures()) {
+            if (capture.capturesThis() && capture.isImplicit()) add_shape(rec, "escaping_this");
+        }
+    }
+
+    // A member (of this or another object) or a variable with static storage.
+    static bool stored_far(const Expr *target) {
+        if (target == nullptr) return false;
+        target = target->IgnoreParenImpCasts();
+        if (isa<MemberExpr>(target)) return true;
+        if (const auto *ref = dyn_cast<DeclRefExpr>(target)) {
+            const auto *var = dyn_cast<VarDecl>(ref->getDecl());
+            return var != nullptr && var->hasGlobalStorage();
+        }
+        return false;
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -2876,6 +3145,35 @@ public:
         }
         if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) note_atomic_refs(ref);
         if (const auto *call = dyn_cast<CallExpr>(stmt)) note_thread_calls(call);
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) note_library_calls(call);
+        if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
+            if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
+        }
+        if (const auto *atomic = dyn_cast<AtomicExpr>(stmt)) {
+            if (atomic->getOp() == AtomicExpr::AO__c11_atomic_compare_exchange_weak && !inside_loop(atomic)) {
+                add_ast_mark("unlooped_wait", atomic->getBeginLoc());
+            }
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            if (unary->isIncrementDecrementOp() && increment_with_effects(unary)) add_shape(rec, "busy_increment");
+        }
+        if (const auto *small = dyn_cast<Expr>(stmt)) {
+            if (small_bitwise(small)) add_shape(rec, "small_bitwise");
+        }
+        if (const auto *lambda = dyn_cast<LambdaExpr>(stmt)) note_lambda(lambda, rec);
+        if (const auto *expr = dyn_cast<Expr>(stmt)) {
+            if (char_widened(expr)) add_shape(rec, "char_widened");
+        }
+        if (const auto *widen = dyn_cast<ExplicitCastExpr>(stmt)) {
+            if (char_cast_widened(widen)) {
+                SourceLocation written = sm_.getSpellingLoc(widen->getBeginLoc());
+                if (written.isValid() && sm_.isInSystemHeader(written)) {
+                    add_pending(widen->getSubExpr()->IgnoreParenImpCasts(), "char_widened");
+                } else {
+                    add_shape(rec, "char_widened");
+                }
+            }
+        }
         note_float_counter(stmt);
         if (isa<IntegerLiteral>(stmt) || isa<GNUNullExpr>(stmt)) {
             if (const char *null = null_shape(cast<Expr>(stmt))) rec.shape = null;
@@ -3577,6 +3875,8 @@ private:
     std::set<const Stmt *> shadowed_handlers_;
     std::map<const Stmt *, std::string> pending_shape_;
     std::map<FileID, std::string> ast_marks_;
+    std::vector<SourceLocation> unsafe_calls_;
+    bool creates_threads_ = false;
     std::set<std::pair<FileID, unsigned>> ast_mark_seen_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> argument_ranges_;
     struct ScopeRange {

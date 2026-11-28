@@ -77,6 +77,9 @@
 - import: "src/rules/aggregate_shapes.aiml"
 - import: "src/rules/thread_calls.aiml"
 - import: "src/rules/vector_bool.aiml"
+- import: "src/rules/expression_effects.aiml"
+- import: "src/rules/lambda_captures.aiml"
+- import: "src/rules/library_threads.aiml"
 
 - class:
     name: RuleRegistry
@@ -464,6 +467,22 @@
             - call: [<.rules.push, atomic_once]
             - decl: [vector_bool, ptr<Rule>, { new: NoVectorBoolRule }]
             - call: [<.rules.push, vector_bool]
+            - decl: [lone_inc, ptr<Rule>, { new: LoneIncrementRule }]
+            - call: [<.rules.push, lone_inc]
+            - decl: [char_widen, ptr<Rule>, { new: CharCastBeforeWideningRule }]
+            - call: [<.rules.push, char_widen]
+            - decl: [small_bits, ptr<Rule>, { new: CastSmallBitwiseRule }]
+            - call: [<.rules.push, small_bits]
+            - decl: [this_capture, ptr<Rule>, { new: ImplicitThisCaptureRule }]
+            - call: [<.rules.push, this_capture]
+            - decl: [lambda_capture, ptr<Rule>, { new: ExplicitLambdaCaptureRule }]
+            - call: [<.rules.push, lambda_capture]
+            - decl: [unsafe_lib, ptr<Rule>, { new: ThreadUnsafeLibraryRule }]
+            - call: [<.rules.push, unsafe_lib]
+            - decl: [wait_loop, ptr<Rule>, { new: SpuriousFailureLoopRule }]
+            - call: [<.rules.push, wait_loop]
+            - decl: [float_cmp, ptr<Rule>, { new: FloatMemcmpRule }]
+            - call: [<.rules.push, float_cmp]
       - def:
           name: rule_count
           args: []

@@ -1,0 +1,59 @@
+# OC-0096 lone_increment, OC-0475 char_cast_before_widening and OC-0251
+# cast_small_bitwise_result (C++), catalogue in Pymann/coding-rules.  Read from
+# IrNode.shape (doc/ir.md): busy_increment, char_widened, small_bitwise.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: LoneIncrementRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 96, "safety.c90-.9.3.lone_increment", "An expression with ++ or -- has no other side effect", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "busy_increment", 96, "the expression also changes another object besides this ++ or --; put the increment in a statement of its own", out]
+
+- class:
+    name: CharCastBeforeWideningRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 475, "safety.c90-.8.1.char_cast_before_widening", "char values are converted to unsigned char before conversion to a wider integer", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "char_widened", 475, "a char value is widened as a number; characters above 127 turn negative where char is signed, convert to unsigned char first", out]
+
+- class:
+    name: CastSmallBitwiseRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 251, "safety.cpp98-.8.1.cast_small_bitwise_result", "The result of ~ or << on a small operand is cast back to its intended type", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "small_bitwise", 251, "~ or << of an operand narrower than int works on the promoted int; cast the result back to the operand's type", out]

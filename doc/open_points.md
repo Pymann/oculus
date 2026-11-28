@@ -153,3 +153,23 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   functions yet).
 - **OC-0375**: only written `std::vector<...>` types; an instantiation reached
   only through a template parameter is not reported.
+- **OC-0096** lone increment: only assignments, compound assignments and other
+  builtin `++`/`--` count as the other side effect; calls (which may have side
+  effects) and overloaded `++` on iterators (`*out++ = v`) are not checked.
+- **OC-0475**: `signed char` named by a typedef (`int8_t`, sqlite's `i8`,
+  imgui's `ImS8`) is a small integer, not a character, and is not reported;
+  casts to enum types neither. Arguments are only checked for the ctype
+  functions (`strchr(s, c)` converts back to char). Implicit widening in
+  arithmetic (`c - '0'`) and in initialisation is not reported.
+- **OC-0251**: constant operands (`'+' << 16`, enumerators) are not reported.
+  An implicit conversion back to the small type (`std::uint8_t x = ~m;`) is
+  reported, as the rule asks for a cast.
+- **OC-0338**/**OC-0339**: "may outlive the call" is: returned, assigned to a
+  member or static variable, given to `std::thread`, `std::jthread` or
+  `std::async`, or added to a member container. Other asynchronous APIs and
+  local containers are not recognised (no configuration key yet).
+- **OC-0406**: thread creation is judged per unit (phase 2 can use the whole
+  program); `getenv` is not reported.
+- **OC-0409**: any enclosing loop counts; whether its condition re-tests the
+  awaited predicate is not checked. `pthread_cond_wait` is not in the rule text
+  and not reported.
