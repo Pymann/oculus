@@ -2604,6 +2604,7 @@ public:
         finish_batch37();
         finish_diagnostics();
         finish_batch40();
+        finish_batch41();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -4872,6 +4873,190 @@ public:
         }
     }
 
+    // OC-0033 (C): macro_prefix_clash at a macro name that agrees with an
+    // earlier, different macro name in the significant characters (31 before
+    // C99, 63 after).
+    void note_macro_prefix(const Token &name) {
+        const IdentifierInfo *ident = name.getIdentifierInfo();
+        if (ident == nullptr || context_.getLangOpts().CPlusPlus || !user_file_loc(name.getLocation())) return;
+        size_t limit = context_.getLangOpts().C99 ? 63 : 31;
+        std::string word = ident->getName().str();
+        if (word.size() <= limit) return;
+        auto found = macro_prefixes_.emplace(word.substr(0, limit), word);
+        if (!found.second && found.first->second != word) add_ast_mark("macro_prefix_clash", name.getLocation());
+    }
+
+    // A call of fopen or freopen whose mode is a literal without + w a (read only).
+    static bool read_only_open(const Expr *expr, const FunctionDecl *callee, const CallExpr *call) {
+        if (callee == nullptr || call == nullptr || call->getNumArgs() < 2) return false;
+        llvm::StringRef name = callee->getName();
+        if (name != "fopen" && name != "freopen") return false;
+        const auto *mode = dyn_cast<StringLiteral>(call->getArg(1)->IgnoreParenImpCasts());
+        if (mode == nullptr || !mode->isOrdinary()) return false;
+        llvm::StringRef text = mode->getString();
+        (void)expr;
+        return text.starts_with("r") && !text.contains('+');
+    }
+
+    // Batch 41 statement facts: continue_outside_for (C++), param_reference_return,
+    // const_member_handle, and the stream and realloc facts for finish_batch41.
+    void note_batch41(const Stmt *stmt) {
+        const LangOptions &lang = context_.getLangOpts();
+        if (const auto *skip = dyn_cast<ContinueStmt>(stmt)) {
+            if (!lang.CPlusPlus) return;
+            const Stmt *loop = enclosing_loop(skip);
+            if (loop != nullptr && (isa<WhileStmt>(loop) || isa<DoStmt>(loop))) add_ast_mark("continue_outside_for", skip->getBeginLoc());
+            return;
+        }
+        if (const auto *back = dyn_cast<ReturnStmt>(stmt)) {
+            if (!lang.CPlusPlus || back->getRetValue() == nullptr) return;
+            const auto *fn = dyn_cast_or_null<FunctionDecl>(enclosing_function_decl(back));
+            if (fn == nullptr || fn->isDependentContext()) return;
+            QualType result = fn->getReturnType();
+            if (result->isReferenceType() || result->isPointerType()) {
+                if (returns_reference_param(back->getRetValue(), result->isPointerType())) add_ast_mark("param_reference_return", back->getRetValue()->getBeginLoc());
+            }
+            const auto *method = dyn_cast<CXXMethodDecl>(fn);
+            bool handle = (result->isPointerType() && !result->getPointeeType().isConstQualified()) ||
+                          (result->isLValueReferenceType() && !result.getNonReferenceType().isConstQualified());
+            if (method != nullptr && method->isConst() && handle && member_data(back->getRetValue(), result->isPointerType())) {
+                add_ast_mark("const_member_handle", back->getRetValue()->getBeginLoc());
+            }
+            return;
+        }
+        if (const auto *var = dyn_cast<DeclStmt>(stmt)) {
+            for (const Decl *one : var->decls()) {
+                const auto *local = dyn_cast<VarDecl>(one);
+                if (local == nullptr || !local->hasLocalStorage() || local->getInit() == nullptr) continue;
+                note_stream_value(local, local->getInit());
+                if (is_aligned_alloc(local->getInit())) aligned_writes_.push_back({local, var});
+            }
+            return;
+        }
+        if (const auto *assign = dyn_cast<BinaryOperator>(stmt)) {
+            if (assign->getOpcode() != BO_Assign) return;
+            const ValueDecl *target = named_variable(assign->getLHS(), false);
+            if (target == nullptr) return;
+            note_stream_value(target, assign->getRHS());
+            note_aligned_value(target, assign->getRHS());
+            if (!is_aligned_alloc(assign->getRHS())) aligned_writes_.push_back({target, nullptr});
+            return;
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            const ValueDecl *target = named_variable(unary, true);
+            if (target != nullptr) stream_modes_[target] = 2;
+            return;
+        }
+        const auto *call = dyn_cast<CallExpr>(stmt);
+        const FunctionDecl *callee = call != nullptr ? library_callee(call) : nullptr;
+        if (callee == nullptr) return;
+        llvm::StringRef name = callee->getName();
+        int stream_arg = -1;
+        if (name == "fputs" || name == "fputc" || name == "putc" || name == "fputws" || name == "fputwc" || name == "putwc") stream_arg = 1;
+        if (name == "fprintf" || name == "vfprintf" || name == "fwprintf" || name == "vfwprintf") stream_arg = 0;
+        if (name == "fwrite") stream_arg = 3;
+        if (stream_arg >= 0 && static_cast<unsigned>(stream_arg) < call->getNumArgs()) {
+            const ValueDecl *stream = named_variable(call->getArg(static_cast<unsigned>(stream_arg)), false);
+            if (stream != nullptr) stream_puts_.push_back({stream, call->getArg(static_cast<unsigned>(stream_arg))});
+        }
+        if (name == "realloc" && call->getNumArgs() == 2) {
+            const ValueDecl *pointer = named_variable(call->getArg(0), false);
+            if (pointer != nullptr) reallocs_.push_back({pointer, call});
+        }
+    }
+
+    // The innermost loop around `stmt` in its function (null at the function).
+    const Stmt *enclosing_loop(const Stmt *stmt) const {
+        const Stmt *node = stmt;
+        for (int step = 0; step < 256; ++step) {
+            auto parents = context_.getParents(*node);
+            if (parents.empty()) return nullptr;
+            const Stmt *above = parents[0].get<Stmt>();
+            if (above == nullptr) return nullptr;
+            if (isa<WhileStmt>(above) || isa<DoStmt>(above) || isa<ForStmt>(above) || isa<CXXForRangeStmt>(above)) return above;
+            if (isa<LambdaExpr>(above)) return nullptr;
+            node = above;
+        }
+        return nullptr;
+    }
+
+    // A returned parameter that a temporary may bind to: a const lvalue or an
+    // rvalue reference parameter (or its address), also through ?:.
+    bool returns_reference_param(const Expr *value, bool pointer) const {
+        const Expr *bare = value->IgnoreParenImpCasts();
+        if (const auto *choice = dyn_cast<ConditionalOperator>(bare)) {
+            return returns_reference_param(choice->getTrueExpr(), pointer) || returns_reference_param(choice->getFalseExpr(), pointer);
+        }
+        if (pointer) {
+            const auto *address = dyn_cast<UnaryOperator>(bare);
+            if (address == nullptr || address->getOpcode() != UO_AddrOf) return false;
+            bare = address->getSubExpr()->IgnoreParenImpCasts();
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(bare);
+        const auto *param = ref != nullptr ? dyn_cast<ParmVarDecl>(ref->getDecl()) : nullptr;
+        if (param == nullptr) return false;
+        QualType type = param->getType();
+        return type->isRValueReferenceType() || (type->isLValueReferenceType() && type.getNonReferenceType().isConstQualified());
+    }
+
+    // A non-static, non-mutable data member of *this (or its address, or for a
+    // pointer result the member's own pointer value).
+    static bool member_data(const Expr *value, bool pointer) {
+        const Expr *bare = value->IgnoreParenImpCasts();
+        if (const auto *address = dyn_cast<UnaryOperator>(bare)) {
+            if (address->getOpcode() != UO_AddrOf || !pointer) return false;
+            bare = address->getSubExpr()->IgnoreParenImpCasts();
+        }
+        const auto *member = dyn_cast<MemberExpr>(bare);
+        if (member == nullptr || !isa<CXXThisExpr>(member->getBase()->IgnoreParenImpCasts())) return false;
+        const auto *field = dyn_cast<FieldDecl>(member->getMemberDecl());
+        return field != nullptr && !field->isMutable();
+    }
+
+    void note_stream_value(const ValueDecl *var, const Expr *value) {
+        if (!file_pointer(var->getType())) return;
+        const auto *call = dyn_cast<CallExpr>(value->IgnoreParenImpCasts());
+        bool only_read = call != nullptr && read_only_open(value, library_callee(call), call);
+        int &mode = stream_modes_[var];
+        mode = std::max(mode, only_read ? 1 : 2);
+    }
+
+    bool is_aligned_alloc(const Expr *value) const {
+        const auto *call = dyn_cast<CallExpr>(value->IgnoreParenImpCasts());
+        const FunctionDecl *callee = call != nullptr ? library_callee(call) : nullptr;
+        return callee != nullptr && callee->getName() == "aligned_alloc";
+    }
+
+    void note_aligned_value(const ValueDecl *var, const Expr *value) {
+        if (is_aligned_alloc(value)) aligned_writes_.push_back({var, value->IgnoreParenImpCasts()});
+    }
+
+    // Batch 41 unit facts: read_only_write (a write to a stream variable that
+    // only ever holds read-only fopen results) and aligned_realloc (realloc of a
+    // pointer whose last value, unconditionally before it, came from
+    // aligned_alloc).
+    void finish_batch41() {
+        for (const auto &put : stream_puts_) {
+            auto found = stream_modes_.find(put.first);
+            const auto *local = dyn_cast<VarDecl>(put.first);
+            if (found != stream_modes_.end() && found->second == 1 && local != nullptr && local->hasLocalStorage() && !isa<ParmVarDecl>(local)) add_ast_mark("read_only_write", put.second->getBeginLoc());
+        }
+        for (const auto &grow : reallocs_) {
+            for (const auto &write : aligned_writes_) {
+                if (write.first != grow.first || write.second == nullptr) continue;
+                if (!sequenced_before(write.second, grow.second) || !unconditional_below(write.second, grow.second)) continue;
+                bool replaced = false;
+                for (const auto &other : thread_writes_) {
+                    if (other.first == grow.first && sequenced_before(write.second, other.second) && sequenced_before(other.second, grow.second)) replaced = true;
+                }
+                if (!replaced) {
+                    add_ast_mark("aligned_realloc", grow.second->getArg(0)->getBeginLoc());
+                    break;
+                }
+            }
+        }
+    }
+
     // Batch 39: atomic_member (a member of an _Atomic structure or union
     // accessed directly).
     void note_batch39(const Stmt *stmt) {
@@ -6087,6 +6272,7 @@ public:
         note_batch37(stmt);
         note_batch39(stmt);
         note_batch40(stmt);
+        note_batch41(stmt);
         if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
@@ -6857,6 +7043,11 @@ private:
     std::vector<const FunctionDecl *> graph_functions_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_uses_;
     std::set<unsigned> ctype_args_;
+    std::map<std::string, std::string> macro_prefixes_;
+    std::map<const ValueDecl *, int> stream_modes_;   // 1 opened read-only only, 2 otherwise
+    std::vector<std::pair<const ValueDecl *, const Expr *>> stream_puts_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> aligned_writes_;   // second: the aligned_alloc call
+    std::vector<std::pair<const ValueDecl *, const CallExpr *>> reallocs_;
     std::vector<std::pair<const ValueDecl *, const CallExpr *>> thread_ops_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> thread_writes_;
     std::map<const ValueDecl *, int> mutex_kinds_;   // 1 plain only, 2 timed or unknown
@@ -6914,6 +7105,7 @@ public:
     void MacroDefined(const Token &name, const MacroDirective *directive) override {
         tables_->note_define(pp_, name, directive);
         tables_->note_main_define(name, directive != nullptr ? directive->getMacroInfo() : nullptr);
+        tables_->note_macro_prefix(name);
     }
     void MacroUndefined(const Token &name, const MacroDefinition &definition,
                         const MacroDirective *) override {

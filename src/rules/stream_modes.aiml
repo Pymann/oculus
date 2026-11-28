@@ -1,0 +1,42 @@
+# OC-0175, OC-0450 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): read_only_write, aligned_realloc.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ReadOnlyWriteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 175, "safety.c90-.14.2.no_write_to_readonly_stream", "Nothing is written to a stream opened read-only", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "read_only_write", 175, "this stream was opened for reading only", out]
+
+- class:
+    name: AlignedReallocRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 450, "safety.c11-.14.1.no_realloc_alignment", "Over-aligned memory is not resized with realloc", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "aligned_realloc", 450, "memory from aligned_alloc is resized with realloc, which may lose the alignment", out]

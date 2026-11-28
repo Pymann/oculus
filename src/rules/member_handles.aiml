@@ -1,0 +1,59 @@
+# OC-0259, OC-0270, OC-0273 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): continue_outside_for, param_reference_return, const_member_handle.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ContinueForRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 259, "style.cpp98-.4.1.continue_in_well_formed_for", "continue appears only in a well-formed for loop", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "continue_outside_for", 259, "continue is used outside a for loop", out]
+
+- class:
+    name: ParamReferenceReturnRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 270, "safety.cpp98-.10.3.no_return_reference_parameter", "A function does not return a reference or pointer to a by-reference parameter", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "param_reference_return", 270, "this returns a reference or pointer to a parameter that a temporary may be bound to", out]
+
+- class:
+    name: ConstMemberHandleRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 273, "safety.cpp98-.15.1.const_member_no_mutable_handle", "A const member function does not return non-const pointers or references to member data", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "const_member_handle", 273, "a const member function returns a non-const handle to member data", out]

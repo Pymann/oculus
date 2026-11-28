@@ -796,7 +796,19 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   variable after an unconditional earlier one with no new value in between)
   and `plain_timed_lock` (mtx_timedlock of a variable whose mtx_init calls all
   name only mtx_plain or mtx_recursive). A mark is now kept once per code and
-  place (before, two rules marking the same place lost one of the marks).  IrDecl shape `unused_static` (C): a static object of
+  place (before, two rules marking the same place lost one of the marks).
+  Batch 41 marks: `macro_prefix_clash` (C: a macro name longer than the
+  significant characters, 63 or 31 before C99, that agrees with an earlier
+  different macro name in them), `read_only_write` (fputs, fputc, putc,
+  fprintf, vfprintf, fwrite and the wide forms on a local stream variable
+  that only ever gets fopen or freopen results with a literal read-only
+  mode), `aligned_realloc` (realloc of a variable whose value, set
+  unconditionally before it in the same function, came from aligned_alloc),
+  `continue_outside_for` (C++: continue whose innermost loop is while or do),
+  `param_reference_return` (C++: a return of a const lvalue or rvalue
+  reference parameter, or its address, also through ?:) and
+  `const_member_handle` (C++: a const member function returning a non-const
+  pointer or reference to a non-mutable data member of *this).  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,

@@ -121,6 +121,9 @@
 - import: "src/rules/memory_compares.aiml"
 - import: "src/rules/library_results.aiml"
 - import: "src/rules/thread_handles.aiml"
+- import: "src/rules/macro_prefixes.aiml"
+- import: "src/rules/stream_modes.aiml"
+- import: "src/rules/member_handles.aiml"
 
 - class:
     name: RuleRegistry
@@ -712,6 +715,18 @@
             - call: [<.rules.push, r0212]
             - decl: [r0217, ptr<Rule>, { new: ThreadTwiceRule }]
             - call: [<.rules.push, r0217]
+            - decl: [r0033, ptr<Rule>, { new: MacroPrefixRule }]
+            - call: [<.rules.push, r0033]
+            - decl: [r0175, ptr<Rule>, { new: ReadOnlyWriteRule }]
+            - call: [<.rules.push, r0175]
+            - decl: [r0450, ptr<Rule>, { new: AlignedReallocRule }]
+            - call: [<.rules.push, r0450]
+            - decl: [r0259, ptr<Rule>, { new: ContinueForRule }]
+            - call: [<.rules.push, r0259]
+            - decl: [r0270, ptr<Rule>, { new: ParamReferenceReturnRule }]
+            - call: [<.rules.push, r0270]
+            - decl: [r0273, ptr<Rule>, { new: ConstMemberHandleRule }]
+            - call: [<.rules.push, r0273]
             - decl: [r0141, ptr<Rule>, { new: HeaderNameCharsRule }]
             - call: [<.rules.push, r0141]
             - decl: [r0142, ptr<Rule>, { new: IncludeFormRule }]

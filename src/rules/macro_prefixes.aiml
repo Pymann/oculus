@@ -1,0 +1,25 @@
+# OC-0033 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): macro_prefix_clash.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: MacroPrefixRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 33, "safety.c90-.5.1.distinct_macro_names", "Macro names differ within the significant characters", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "macro_prefix_clash", 33, "this macro name agrees with another macro name in the significant characters", out]

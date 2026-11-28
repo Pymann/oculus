@@ -1,0 +1,2 @@
+#define PORT1_MAX_RETRIES 3
+#define PORT2_MAX_RETRIES 4

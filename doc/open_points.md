@@ -320,3 +320,9 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0195**: sqlite passes function names without & throughout (839).
 - **OC-0217, OC-0212**: within one function and on named variables only;
   OC-0212 needs every mtx_init of the variable to name its kind.
+- **OC-0033**: the limit is 63 characters (31 before C99); the rule text says
+  it is configurable, a configuration key is not there yet. Zephyr's
+  generated devicetree header has 490 such names (genuine).
+- **OC-0259**: only continue in while and do loops; whether a for loop is
+  well-formed is not checked yet.
+- **OC-0175, OC-0450**: within one function, on local variables.
