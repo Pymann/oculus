@@ -604,7 +604,21 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   (C) on a definition, parameter or function returning by value of a structure
   with a flexible array member, `qualified_function` (C) on a function or typedef
   whose function type from a typedef is written with const, volatile, restrict or
-  _Atomic (Clang drops the qualifier; the tokens keep it).  Decl shapes are a
+  _Atomic (Clang drops the qualifier; the tokens keep it), `shadowing` on a
+  local or parameter of a function definition that hides a local of an
+  enclosing block, a parameter or a user variable at file or namespace scope
+  (not in macro expansions, not across lambdas), `long_name_clash` on the
+  later of two identifiers of one scope and name space that agree in their
+  first 63 characters, `type_clash` (C++) on a function, variable or
+  enumerator named like a class or enum of its scope, `hides_base` (C++) on a
+  member function that overrides nothing and hides an accessible base function
+  of another signature, `odd_special_signature` (C++) on user-provided copy
+  and move members with unconventional parameters, return types or a missing
+  noexcept, `global_variable` on a modifiable (not const, not volatile)
+  variable definition at file or namespace scope, and
+  `partial_special_members` (C++) on a class that declares between one and four
+  of the five special members.  IrNode `member_handle` (C++) on a returned
+  member of the object as a non-const reference or pointer.  Decl shapes are a
   comma-separated list too.
   `IrDecl.missing_base_init`: a user-provided, non-delegating
   constructor of a non-dependent class does not name a direct or virtual base

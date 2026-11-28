@@ -1,0 +1,59 @@
+# OC-0031 distinct_names_in_scope (C), OC-0032 no_shadowing and OC-0243
+# no_type_object_name_clash (C++), catalogue in Pymann/coding-rules.  Read from
+# IrDecl.shape (doc/ir.md): long_name_clash, shadowing, type_clash.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: DistinctNamesInScopeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 31, "safety.c90-.5.1.distinct_names_in_scope", "Names in the same scope and name space differ within the significant characters", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "long_name_clash", 31, "this name agrees with another of the same scope in the first 63 characters; make them differ earlier", out]
+
+- class:
+    name: NoShadowingRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 32, "safety.c90-.5.2.no_shadowing", "A name in an inner scope does not shadow one from an outer scope", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "shadowing", 32, "this declaration hides a variable or parameter of the same name from an outer scope; rename it", out]
+
+- class:
+    name: TypeObjectNameClashRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 243, "style.cpp98-.5.4.no_type_object_name_clash", "A name does not denote both a type and an object or function in one scope", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "type_clash", 243, "this name also names a class or enum in the same scope; give one of them another name", out]

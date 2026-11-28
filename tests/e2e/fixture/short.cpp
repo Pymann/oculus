@@ -1,3 +1,3 @@
 namespace app {
-int only;
+const int only = 1;
 }

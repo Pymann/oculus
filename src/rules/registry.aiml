@@ -83,6 +83,9 @@
 - import: "src/rules/pointer_scaling.aiml"
 - import: "src/rules/temporaries.aiml"
 - import: "src/rules/cxx_resources.aiml"
+- import: "src/rules/scope_names.aiml"
+- import: "src/rules/special_members.aiml"
+- import: "src/rules/globals_handles.aiml"
 
 - class:
     name: RuleRegistry
@@ -498,6 +501,22 @@
             - call: [<.rules.push, managed_new]
             - decl: [handler_member, ptr<Rule>, { new: CtorTryHandlerMemberRule }]
             - call: [<.rules.push, handler_member]
+            - decl: [distinct_names, ptr<Rule>, { new: DistinctNamesInScopeRule }]
+            - call: [<.rules.push, distinct_names]
+            - decl: [shadowing, ptr<Rule>, { new: NoShadowingRule }]
+            - call: [<.rules.push, shadowing]
+            - decl: [type_clash, ptr<Rule>, { new: TypeObjectNameClashRule }]
+            - call: [<.rules.push, type_clash]
+            - decl: [special_set, ptr<Rule>, { new: ConsistentSpecialMembersRule }]
+            - call: [<.rules.push, special_set]
+            - decl: [special_sig, ptr<Rule>, { new: CopyMoveSignaturesRule }]
+            - call: [<.rules.push, special_sig]
+            - decl: [hidden_base, ptr<Rule>, { new: HiddenInheritedFunctionsRule }]
+            - call: [<.rules.push, hidden_base]
+            - decl: [globals, ptr<Rule>, { new: NoGlobalVariablesRule }]
+            - call: [<.rules.push, globals]
+            - decl: [member_handle, ptr<Rule>, { new: NonConstMemberHandleRule }]
+            - call: [<.rules.push, member_handle]
       - def:
           name: rule_count
           args: []

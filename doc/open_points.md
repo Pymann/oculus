@@ -190,3 +190,20 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   `ROUND8` layouts within one allocation) are reported.
 - **OC-0296** (explicit instantiation after a specialisation) is not
   implemented: Clang keeps no node for such an instantiation, only a warning.
+- **OC-0032**: locals hiding class members, and members hiding namespace-scope
+  names, are not checked; names of system headers (`timezone`, `optarg`) do
+  not count as hidden globals.
+- **OC-0031**: the limit is 63 characters (C99); the C90 limit of 31 and the
+  configuration key do not exist yet.
+- **OC-0332**: only member functions that override nothing; an override that
+  hides other overloads of its name is not reported. fmt's formatters that
+  derive from `formatter<string_view>` and declare their own `format` are
+  reported, as the rule text says.
+- **OC-0334**: volatile objects are not reported (the hardware-register
+  configuration does not exist yet), and neither are variables whose name a
+  macro body writes or pastes (Zephyr's `K_THREAD_STACK_DEFINE`,
+  `LOG_MODULE_DECLARE`).
+- **OC-0355**: a private copy or move member that is declared and never defined
+  (the pre-C++11 way to forbid copying) is left out like a deleted one.
+- **OC-0354**: only the "some but not all five declared" part; inconsistent
+  copy and move definitions within a full set are not checked.

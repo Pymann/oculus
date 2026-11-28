@@ -1,0 +1,60 @@
+# OC-0354 consistent_special_members, OC-0355 copy_move_signatures and OC-0332
+# no_hidden_inherited_functions (C++), catalogue in Pymann/coding-rules.  Read
+# from IrDecl.shape (doc/ir.md): partial_special_members, odd_special_signature,
+# hides_base.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: ConsistentSpecialMembersRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 354, "safety.cpp11-.15.3.consistent_special_members", "Special member functions are declared as a consistent set", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "partial_special_members", 354, "the class declares some of copy and move constructor, copy and move assignment and destructor; declare none or all five", out]
+
+- class:
+    name: CopyMoveSignaturesRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 355, "safety.cpp11-.15.3.copy_move_signatures", "User-provided copy and move members have the conventional signatures", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "odd_special_signature", 355, "copy members take const T& and assignments return T&; move members take T&&, are noexcept and assignments return T&", out]
+
+- class:
+    name: HiddenInheritedFunctionsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 332, "safety.cpp98-.15.2.no_hidden_inherited_functions", "A derived class does not hide functions inherited from its bases", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "hides_base", 332, "this function hides a base class function of the same name with another signature; add a using-declaration or rename it", out]

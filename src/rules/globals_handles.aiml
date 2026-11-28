@@ -1,0 +1,55 @@
+# OC-0334 no_global_variables and OC-0274 no_nonconst_member_handle (C++),
+# catalogue in Pymann/coding-rules.  Read IrDecl.shape global_variable and
+# IrNode.shape member_handle (doc/ir.md).  Variables whose name a macro body
+# writes or pastes (Zephyr's K_*_DEFINE, gtest's flags) are not reported.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: NoGlobalVariablesRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 334, "style.c90-.6.4.no_global_variables", "Global variables are not used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - decl: [global, bool, { gte: [{ call: [regex.search, "(^|,)global_variable(,|$)", rec.shape] }, 0] }]
+                  - decl: [made, bool, { gte: [{ call: [regex.search, "(^|,)(macro_body_name|pasted_name)(,|$)", rec.shape] }, 0] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, global, { eq: [made, false] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 334, "modifiable variable with static storage at file or namespace scope; pass the state explicitly"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: NonConstMemberHandleRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 274, "safety.cpp98-.15.1.no_nonconst_member_handle", "Member functions do not return non-const handles to member data", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "member_handle", 274, "returns a non-const pointer or reference to member data, which lets callers change the object behind its interface", out]

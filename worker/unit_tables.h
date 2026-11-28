@@ -719,6 +719,13 @@ public:
             if (vexing_function(fn)) rec.shape = "vexing_function";
         }
         if (flexible_object(decl)) add_shape(rec, "flexible_object");
+        if (shadows_outer(decl)) add_shape(rec, "shadowing");
+        if (long_name_clash(decl)) add_shape(rec, "long_name_clash");
+        if (type_name_clash(decl)) add_shape(rec, "type_clash");
+        if (hides_base_function(decl)) add_shape(rec, "hides_base");
+        if (odd_special_signature(decl)) add_shape(rec, "odd_special_signature");
+        if (global_variable(decl)) add_shape(rec, "global_variable");
+        if (partial_special_members(decl)) add_shape(rec, "partial_special_members");
         if (qualified_function(decl)) add_shape(rec, "qualified_function");
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
@@ -3307,6 +3314,315 @@ public:
         }
     }
 
+    static bool user_location(const SourceManager &sm, SourceLocation loc) {
+        SourceLocation spelled = sm.getSpellingLoc(loc);
+        return spelled.isValid() && !sm.isInSystemHeader(spelled);
+    }
+
+    // Variables declared directly in `stmt` (a DeclStmt) with this name.
+    static const VarDecl *declares(const Stmt *stmt, const IdentifierInfo *name) {
+        const auto *group = dyn_cast_or_null<DeclStmt>(stmt);
+        if (group == nullptr) return nullptr;
+        for (const Decl *one : group->decls()) {
+            const auto *var = dyn_cast<VarDecl>(one);
+            if (var != nullptr && var->getIdentifier() == name) return var;
+        }
+        return nullptr;
+    }
+
+    // A local or parameter of a function definition that hides a local of an
+    // enclosing block, a parameter, or a variable at file or namespace scope of
+    // the user's (not in macro expansions, not across lambdas).
+    bool shadows_outer(const Decl *decl) const {
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || var->getIdentifier() == nullptr || var->isImplicit() || var->hasExternalStorage()) return false;
+        if (var->getLocation().isMacroID() || !user_location(sm_, var->getLocation())) return false;
+        const IdentifierInfo *name = var->getIdentifier();
+        const auto *fn = dyn_cast<FunctionDecl>(var->getDeclContext());
+        if (fn == nullptr || !fn->doesThisDeclarationHaveABody()) return false;
+        if (!isa<ParmVarDecl>(var)) {
+            if (!var->isLocalVarDecl() && !var->isExceptionVariable()) return false;
+            DynTypedNode node = DynTypedNode::create(*static_cast<const Decl *>(var));
+            const Stmt *came = nullptr;
+            while (true) {
+                auto parents = context_.getParents(node);
+                if (parents.size() != 1) return false;
+                node = parents[0];
+                if (node.get<FunctionDecl>() != nullptr) break;
+                if (node.get<LambdaExpr>() != nullptr || node.get<BlockDecl>() != nullptr || node.get<CXXRecordDecl>() != nullptr) return false;
+                const Stmt *here = node.get<Stmt>();
+                if (here == nullptr) continue;
+                if (const auto *block = dyn_cast<CompoundStmt>(here)) {
+                    for (const Stmt *item : block->body()) {
+                        if (item == came) break;
+                        if (declares(item, name) != nullptr) return true;
+                    }
+                } else if (const auto *loop = dyn_cast<ForStmt>(here)) {
+                    if (came != loop->getInit() && declares(loop->getInit(), name) != nullptr) return true;
+                    if (loop->getConditionVariable() != nullptr && loop->getConditionVariable()->getIdentifier() == name && came != loop->getConditionVariableDeclStmt()) return true;
+                } else if (const auto *branch = dyn_cast<IfStmt>(here)) {
+                    if (came != branch->getInit() && declares(branch->getInit(), name) != nullptr) return true;
+                    const VarDecl *cond = branch->getConditionVariable();
+                    if (cond != nullptr && cond != var && cond->getIdentifier() == name && came != branch->getConditionVariableDeclStmt()) return true;
+                } else if (const auto *again = dyn_cast<WhileStmt>(here)) {
+                    const VarDecl *cond = again->getConditionVariable();
+                    if (cond != nullptr && cond != var && cond->getIdentifier() == name && came != again->getConditionVariableDeclStmt()) return true;
+                } else if (const auto *choice = dyn_cast<SwitchStmt>(here)) {
+                    if (came != choice->getInit() && declares(choice->getInit(), name) != nullptr) return true;
+                    const VarDecl *cond = choice->getConditionVariable();
+                    if (cond != nullptr && cond != var && cond->getIdentifier() == name && came != choice->getConditionVariableDeclStmt()) return true;
+                } else if (const auto *range = dyn_cast<CXXForRangeStmt>(here)) {
+                    const VarDecl *item = range->getLoopVariable();
+                    if (item != nullptr && item != var && item->getIdentifier() == name && came == range->getBody()) return true;
+                    if (came != range->getInit() && declares(range->getInit(), name) != nullptr) return true;
+                } else if (const auto *handler = dyn_cast<CXXCatchStmt>(here)) {
+                    const VarDecl *caught = handler->getExceptionDecl();
+                    if (caught != nullptr && caught != var && caught->getIdentifier() == name) return true;
+                }
+                came = here;
+            }
+            for (const ParmVarDecl *param : fn->parameters()) {
+                if (param->getIdentifier() == name) return true;
+            }
+        }
+        // a variable at file or namespace scope (the enclosing namespaces)
+        const DeclContext *scope = fn->getDeclContext();
+        while (scope != nullptr) {
+            if (scope->isFileContext()) {
+                for (const NamedDecl *found : scope->lookup(DeclarationName(name))) {
+                    const auto *global = dyn_cast<VarDecl>(found);
+                    if (global != nullptr && global != var && user_location(sm_, global->getLocation()) &&
+                        sm_.isBeforeInTranslationUnit(global->getLocation(), var->getLocation())) return true;
+                }
+            }
+            if (scope->isRecord()) return false;
+            scope = scope->getParent();
+        }
+        return false;
+    }
+
+    // Two identifiers of one scope and name space that agree in the first 63
+    // characters (the later one is marked).  Scopes: a file, namespace or
+    // record; for locals, the statement that holds their declaration.
+    bool long_name_clash(const Decl *decl) {
+        const auto *named = dyn_cast<NamedDecl>(decl);
+        if (named == nullptr || named->getIdentifier() == nullptr || named->isImplicit()) return false;
+        llvm::StringRef name = named->getName();
+        if (name.size() <= 63 || !user_location(sm_, named->getLocation())) return false;
+        if (isa<TemplateDecl>(named) || named->isTemplated()) return false;
+        const void *scope = named->getDeclContext();
+        if (const auto *var = dyn_cast<VarDecl>(named)) {
+            if (var->isLocalVarDecl()) {
+                auto parents = context_.getParents(*var);
+                if (parents.size() != 1) return false;
+                auto above = context_.getParents(parents[0]);
+                if (above.size() != 1 || above[0].get<Stmt>() == nullptr) return false;
+                scope = above[0].get<Stmt>();
+            }
+        }
+        if (isa<FunctionDecl>(named) && named->getDeclContext()->isFunctionOrMethod()) return false;
+        std::string space = isa<TagDecl>(named) ? "tag:" : isa<LabelDecl>(named) ? "label:" : "name:";
+        std::string key = space + name.substr(0, 63).str();
+        // redeclarations of one entity are no clash
+        const Decl *first = named->getCanonicalDecl();
+        if (first != decl) return false;
+        if (long_names_.count({scope, key}) > 0) {
+            return !long_names_.count({scope, "full:" + name.str()});
+        }
+        long_names_.insert({scope, key});
+        long_names_.insert({scope, "full:" + name.str()});
+        return false;
+    }
+
+    // C++: a function, variable or enumerator named like a class or enum of the
+    // same scope (both the user's).
+    bool type_name_clash(const Decl *decl) const {
+        if (!context_.getLangOpts().CPlusPlus) return false;
+        const auto *named = dyn_cast<NamedDecl>(decl);
+        if (named == nullptr || named->getIdentifier() == nullptr || named->isImplicit()) return false;
+        if (!(isa<FunctionDecl>(named) || isa<VarDecl>(named) || isa<EnumConstantDecl>(named)) || isa<CXXMethodDecl>(named)) return false;
+        if (isa<ParmVarDecl>(named) || named->getDeclContext()->isFunctionOrMethod()) return false;
+        if (!user_location(sm_, named->getLocation()) || named->getCanonicalDecl() != decl) return false;
+        const DeclContext *scope = named->getDeclContext();
+        if (isa<EnumDecl>(scope)) scope = scope->getParent();
+        for (const NamedDecl *found : scope->lookup(named->getDeclName())) {
+            const auto *tag = dyn_cast<TagDecl>(found);
+            if (tag != nullptr && !tag->isImplicit() && user_location(sm_, tag->getLocation())) return true;
+        }
+        return false;
+    }
+
+    static bool same_signature(const CXXMethodDecl *one, const CXXMethodDecl *other) {
+        if (one->getNumParams() != other->getNumParams()) return false;
+        if (one->getMethodQualifiers() != other->getMethodQualifiers() || one->getRefQualifier() != other->getRefQualifier()) return false;
+        for (unsigned at = 0; at < one->getNumParams(); ++at) {
+            QualType left = one->getParamDecl(at)->getType().getCanonicalType().getUnqualifiedType();
+            QualType right = other->getParamDecl(at)->getType().getCanonicalType().getUnqualifiedType();
+            if (left != right) return false;
+        }
+        return true;
+    }
+
+    // Is there an accessible function `name` with another signature in a base
+    // reached through public or protected inheritance?
+    static bool base_overload(const CXXRecordDecl *record, const CXXMethodDecl *method, int depth) {
+        if (depth > 16) return false;
+        for (const CXXBaseSpecifier &base : record->bases()) {
+            if (base.getAccessSpecifier() == AS_private) continue;
+            const CXXRecordDecl *parent = base.getType()->getAsCXXRecordDecl();
+            if (parent == nullptr || !parent->hasDefinition()) return false;
+            parent = parent->getDefinition();
+            bool found = false;
+            for (const CXXMethodDecl *other : parent->methods()) {
+                if (other->getDeclName() != method->getDeclName() || other->isImplicit() || other->getAccess() == AS_private) continue;
+                found = true;
+                if (!same_signature(other, method)) return true;
+            }
+            for (const Decl *inner : parent->decls()) {
+                if (const auto *shared = dyn_cast<FunctionTemplateDecl>(inner)) {
+                    if (shared->getDeclName() == method->getDeclName() && shared->getAccess() != AS_private) return true;
+                }
+            }
+            if (!found && base_overload(parent, method, depth + 1)) return true;
+        }
+        return false;
+    }
+
+    // C++: a member function that overrides nothing and hides a base function of
+    // the same name with another signature (no using-declaration for the name).
+    bool hides_base_function(const Decl *decl) const {
+        const auto *method = dyn_cast<CXXMethodDecl>(decl);
+        if (method == nullptr || method->isImplicit() || method->getIdentifier() == nullptr || isa<CXXConstructorDecl>(method) ||
+            isa<CXXDestructorDecl>(method) || isa<CXXConversionDecl>(method) || method->size_overridden_methods() > 0) return false;
+        if (method->getCanonicalDecl() != method || method->isDependentContext()) return false;
+        const CXXRecordDecl *record = method->getParent();
+        if (record == nullptr || !record->hasDefinition() || record->isLambda()) return false;
+        if (!user_location(sm_, method->getLocation())) return false;
+        for (const CXXBaseSpecifier &base : record->bases()) {
+            if (base.getType()->isDependentType()) return false;
+        }
+        for (const Decl *inner : record->decls()) {
+            if (const auto *brought = dyn_cast<UsingDecl>(inner)) {
+                if (brought->getDeclName() == method->getDeclName()) return false;
+            }
+        }
+        return base_overload(record, method, 0);
+    }
+
+    // C++: a user-provided copy constructor not taking const T&, a copy
+    // assignment (not by value) not taking const T& or not returning T&, a move
+    // constructor or assignment that is not noexcept or takes const T&&, a move
+    // assignment not returning T&.  Defaulted and deleted ones are left out.
+    bool odd_special_signature(const Decl *decl) const {
+        const auto *method = dyn_cast<CXXMethodDecl>(decl);
+        if (method == nullptr || method->isImplicit() || method->isDeleted() || method->isDefaulted() ||
+            method->isDependentContext() || method->getCanonicalDecl() != method) return false;
+        if (method->getNumParams() < 1 || !user_location(sm_, method->getLocation())) return false;
+        // the pre-C++11 idiom of a private member declared and never defined
+        if (method->getAccess() == AS_private && !method->isDefined()) return false;
+        const CXXRecordDecl *record = method->getParent();
+        QualType param = method->getParamDecl(0)->getType();
+        auto nothrow = [&]() {
+            const auto *proto = method->getType()->getAs<FunctionProtoType>();
+            return proto != nullptr && !isUnresolvedExceptionSpec(proto->getExceptionSpecType()) && proto->isNothrow();
+        };
+        auto returns_self = [&]() {
+            QualType result = method->getReturnType();
+            const CXXRecordDecl *target = result->isLValueReferenceType() ? result->getPointeeType()->getAsCXXRecordDecl() : nullptr;
+            return target != nullptr && target->getCanonicalDecl() == record->getCanonicalDecl() &&
+                   !result->getPointeeType().isConstQualified();
+        };
+        if (const auto *ctor = dyn_cast<CXXConstructorDecl>(method)) {
+            if (ctor->isCopyConstructor()) return !(param->isLValueReferenceType() && param->getPointeeType().isConstQualified());
+            if (ctor->isMoveConstructor()) return !nothrow() || param->getPointeeType().isConstQualified();
+            return false;
+        }
+        if (method->isCopyAssignmentOperator()) {
+            if (!param->isReferenceType()) return false;   // copy-and-swap
+            return !param->getPointeeType().isConstQualified() || !returns_self();
+        }
+        if (method->isMoveAssignmentOperator()) {
+            return !nothrow() || param->getPointeeType().isConstQualified() || !returns_self();
+        }
+        return false;
+    }
+
+    // A modifiable variable with static storage at file or namespace scope (not
+    // const, not volatile, not an extern declaration).
+    bool global_variable(const Decl *decl) const {
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || var->isImplicit() || !var->getDeclContext()->getRedeclContext()->isFileContext()) return false;
+        if (isa<ParmVarDecl>(var) || var->isConstexpr() || var->isThisDeclarationADefinition() == VarDecl::DeclarationOnly) return false;
+        if (var->isTemplated() || var->getType()->isDependentType() || isa<VarTemplateSpecializationDecl>(var)) return false;
+        QualType held = context_.getBaseElementType(var->getType());
+        if (held.isConstQualified() || held.isVolatileQualified() || var->getType()->isReferenceType()) return false;
+        return user_location(sm_, var->getLocation());
+    }
+
+    // C++: a class that declares some, not all, of copy constructor, copy
+    // assignment, move constructor, move assignment and destructor.
+    bool partial_special_members(const Decl *decl) const {
+        const auto *record = dyn_cast<CXXRecordDecl>(decl);
+        if (record == nullptr || !record->isThisDeclarationADefinition() || record->isLambda() || record->isUnion() ||
+            record->isImplicit() || isa<ClassTemplateSpecializationDecl>(record) || !user_location(sm_, record->getLocation())) return false;
+        bool copy_ctor = false, move_ctor = false, copy_assign = false, move_assign = false;
+        for (const CXXConstructorDecl *ctor : record->ctors()) {
+            if (ctor->isImplicit()) continue;
+            copy_ctor = copy_ctor || ctor->isCopyConstructor();
+            move_ctor = move_ctor || ctor->isMoveConstructor();
+        }
+        for (const CXXMethodDecl *method : record->methods()) {
+            if (method->isImplicit()) continue;
+            copy_assign = copy_assign || method->isCopyAssignmentOperator();
+            move_assign = move_assign || method->isMoveAssignmentOperator();
+        }
+        const CXXDestructorDecl *dtor = record->getDestructor();
+        bool destructor = dtor != nullptr && !dtor->isImplicit();
+        int count = copy_ctor + move_ctor + copy_assign + move_assign + destructor;
+        return count > 0 && count < 5;
+    }
+
+    // C++: a member function (not operator[], *, -> or an assignment) that
+    // returns a non-const pointer or reference to a data member of its object
+    // (shape member_handle on the returned expression).
+    void note_member_handle(const ReturnStmt *back) {
+        if (!context_.getLangOpts().CPlusPlus || back->getRetValue() == nullptr) return;
+        auto parents = context_.getParents(*back);
+        DynTypedNode node = parents.empty() ? DynTypedNode() : parents[0];
+        const CXXMethodDecl *method = nullptr;
+        while (!parents.empty()) {
+            if (node.get<LambdaExpr>() != nullptr) return;
+            if (const auto *fn = node.get<FunctionDecl>()) { method = dyn_cast<CXXMethodDecl>(fn); break; }
+            parents = context_.getParents(node);
+            if (parents.empty()) return;
+            node = parents[0];
+        }
+        if (method == nullptr || method->isStatic() || method->isDependentContext()) return;
+        OverloadedOperatorKind op = method->getOverloadedOperator();
+        if (op == OO_Subscript || op == OO_Star || op == OO_Arrow || op == OO_Equal || method->isCopyAssignmentOperator() ||
+            method->isMoveAssignmentOperator()) return;
+        QualType result = method->getReturnType();
+        bool reference = result->isReferenceType(), pointer = result->isPointerType();
+        if (!reference && !pointer) return;
+        if (result->getPointeeType().isConstQualified() || result->getPointeeType()->isFunctionType()) return;
+        const Expr *value = back->getRetValue()->IgnoreParenImpCasts();
+        if (pointer) {
+            const auto *address = dyn_cast<UnaryOperator>(value);
+            if (address != nullptr && address->getOpcode() == UO_AddrOf) {
+                value = address->getSubExpr()->IgnoreParens();
+            } else if (!(value->getType()->isArrayType() || isa<MemberExpr>(value))) {
+                return;
+            } else if (isa<MemberExpr>(value) && !cast<MemberExpr>(value)->getType()->isArrayType()) {
+                return;   // a pointer member's value is not the member itself
+            }
+        }
+        const auto *member = dyn_cast<MemberExpr>(value);
+        if (member == nullptr || !isa<FieldDecl>(member->getMemberDecl())) return;
+        if (!isa<CXXThisExpr>(member->getBase()->IgnoreParenImpCasts())) return;
+        if (cast<FieldDecl>(member->getMemberDecl())->getParent() != method->getParent()) return;
+        add_pending(back->getRetValue()->IgnoreParenImpCasts(), "member_handle");
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -3355,6 +3671,7 @@ public:
             if (small_bitwise(small)) add_shape(rec, "small_bitwise");
         }
         if (const auto *lambda = dyn_cast<LambdaExpr>(stmt)) note_lambda(lambda, rec);
+        if (const auto *back = dyn_cast<ReturnStmt>(stmt)) note_member_handle(back);
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) note_scaled_offset(binary);
         if (const auto *explicit_cast = dyn_cast<ExplicitCastExpr>(stmt)) {
             if (alignment_increase(explicit_cast)) add_shape(rec, "align_increase");
@@ -4080,6 +4397,7 @@ private:
     std::set<const Stmt *> shadowed_handlers_;
     std::map<const Stmt *, std::string> pending_shape_;
     std::map<FileID, std::string> ast_marks_;
+    std::set<std::pair<const void *, std::string>> long_names_;
     std::vector<SourceLocation> unsafe_calls_;
     bool creates_threads_ = false;
     std::set<std::pair<FileID, unsigned>> ast_mark_seen_;
