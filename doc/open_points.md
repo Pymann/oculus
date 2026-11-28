@@ -89,8 +89,9 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0081** and **OC-0082**: the configuration keys of the rule text do not
   exist yet. In C, `uintptr_t` casts are reported, and there is no hardware-access
   header. In C++ only `uintptr_t` is allowed. For OC-0082 no function is marked as
-  a callback, and only `malloc`, `calloc` and `realloc` are exempt, not wrappers
-  such as `sqlite3_malloc`.
+  a callback. Exempt are `malloc`, `calloc`, `realloc`, functions with the
+  `malloc` or `alloc_size` attribute, and functions whose name contains `alloc`
+  (project wrappers such as `sqlite3_malloc`).
 - **OC-0090** explicit_precedence: `&&` against `||`, and shifts or bitwise
   operators against another binary operator. The conditional operator and
   `sizeof` of a non-primary expression are not checked yet. `sizeof *p` is the
@@ -103,6 +104,9 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   end. `[[fallthrough]]` is reported: the configuration key does not exist yet.
 - **OC-0140**: the `extern "C" {` and `}` around includes do not count as code,
   and neither does code skipped by `#if`. X-macro files cannot be configured yet.
+- **OC-0284**: a class whose data members are all public is plain data and is
+  not reported, even with a constructor (the rule text's "plain structs whose
+  data is all public"; imgui's `ImVec2`).
 - **OC-0045**: a literal passed to a function declared in a system header is not
   reported (the configurable list does not exist yet), and neither is a variadic
   argument or a `?:` that picks a literal.
@@ -112,8 +116,9 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   Names that a macro body writes or pastes (Zephyr's `LOG_MODULE_REGISTER`) are
   not reported at the macro's use.
 - **OC-0126** use_return_value: the ignorable list of the rule text is not a
-  configuration key yet. Built in: `printf`, `vprintf`, `wprintf`, `vwprintf`
-  (the catalogue reports `fprintf`) and the C functions that return their first
+  configuration key yet. Built in: the printf family that writes to stdout or to
+  memory (`printf`, `sprintf`, `snprintf` and their `v`/wide forms; the
+  catalogue reports `fprintf`) and the C functions that return their first
   argument (`memcpy`, `strcpy` and the like). Members and functions of the C++
   standard library count only when marked `[[nodiscard]]` (the catalogue reports
   `empty()` but not `erase()`). A discarded `?:` or comma operand is not checked.

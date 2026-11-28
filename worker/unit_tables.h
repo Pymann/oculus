@@ -759,9 +759,9 @@ public:
         return loc.isMacroID() && sm_.isWrittenInScratchSpace(sm_.getSpellingLoc(loc));
     }
 
-    // A named public or protected field of a C++ class that is not an aggregate and
+    // A named public or protected field of a C++ class that is not an aggregate,
     // has a user-provided constructor or destructor, a virtual function, a base or a
-    // private field.
+    // private field, and does not keep all its data public.
     static bool exposed_data(const FieldDecl *field) {
         if (field->isImplicit() || field->getIdentifier() == nullptr) return false;
         if (field->getAccess() != AS_public && field->getAccess() != AS_protected) return false;
@@ -777,8 +777,13 @@ public:
                 invariant = invariant || isa<CXXConstructorDecl>(tmpl->getTemplatedDecl());
             }
         }
-        for (const FieldDecl *other : record->fields()) invariant = invariant || other->getAccess() == AS_private;
-        return invariant;
+        bool hidden = false;
+        for (const FieldDecl *other : record->fields()) {
+            if (other->getAccess() != AS_public) hidden = true;
+            invariant = invariant || other->getAccess() == AS_private;
+        }
+        // a struct whose data is all public is plain data, even with a constructor
+        return invariant && hidden;
     }
 
     // A block-scope function declaration with nothing between its parentheses
@@ -1045,9 +1050,9 @@ public:
         pending_shape_[ref] = "float_loop_counter";
     }
 
-    // C library functions whose result may be ignored: printf to stdout (the
-    // catalogue reports fprintf) and the functions that return their first
-    // argument.
+    // C library functions whose result may be ignored: the printf family that
+    // writes to stdout or to memory (the catalogue reports fprintf) and the
+    // functions that return their first argument.
     static bool ignorable_result(const FunctionDecl *callee, const SourceManager &sm) {
         if (callee->getIdentifier() == nullptr) return false;
         const DeclContext *owner = callee->getDeclContext()->getRedeclContext();
@@ -1055,7 +1060,8 @@ public:
         SourceLocation spelled = sm.getSpellingLoc(callee->getFirstDecl()->getLocation());
         if (spelled.isInvalid() || !sm.isInSystemHeader(spelled)) return false;
         static const char *const names[] = {
-            "printf", "vprintf", "wprintf", "vwprintf",
+            "printf", "vprintf", "wprintf", "vwprintf", "sprintf", "snprintf", "vsprintf", "vsnprintf",
+            "swprintf", "vswprintf",
             "memcpy", "memmove", "memset", "strcpy", "strncpy", "strcat", "strncat", "wmemcpy",
             "wmemmove", "wmemset", "wcscpy", "wcsncpy", "wcscat", "wcsncat"};
         StringRef name = callee->getName();
@@ -1167,13 +1173,17 @@ public:
         return expr->isNullPointerConstant(context_, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull;
     }
 
-    // A call of malloc, calloc or realloc (the C library functions).
+    // A call of an allocator: malloc, calloc, realloc, a function marked with
+    // the malloc or alloc_size attribute, or one whose name says alloc (the
+    // project's wrappers).
     static bool allocation(const Expr *expr) {
         const auto *call = dyn_cast<CallExpr>(expr->IgnoreParenImpCasts());
         const FunctionDecl *callee = call == nullptr ? nullptr : call->getDirectCallee();
         if (callee == nullptr || callee->getIdentifier() == nullptr) return false;
         StringRef name = callee->getName();
-        return (name == "malloc" || name == "calloc" || name == "realloc") && callee->getDeclContext()->getRedeclContext()->isTranslationUnit();
+        if (callee->hasAttr<AllocSizeAttr>() || callee->hasAttr<RestrictAttr>()) return true;
+        // allocator wrappers (sqlite3_malloc, sqlite3DbMallocZero, k_malloc ...)
+        return name.contains_insensitive("alloc");
     }
 
     // Does `part` lie at offset 0 of `whole`: its first member (any member of a
