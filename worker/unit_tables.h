@@ -1412,6 +1412,10 @@ public:
     // null pointer constant, not of malloc, calloc or realloc); the operand is marked.
     void note_implicit_cast(const ImplicitCastExpr *cast) {
         note_literal_to_mutable(cast);
+        if (!context_.getLangOpts().CPlusPlus && cast->getCastKind() == CK_ArrayToPointerDecay &&
+            isa<MemberExpr>(cast->getSubExpr()->IgnoreParens()) && temporary_base(cast->getSubExpr())) {
+            add_pending(cast->getSubExpr()->IgnoreParens(), "temporary_decay");
+        }
         if (context_.getLangOpts().CPlusPlus || cast->getCastKind() != CK_BitCast || cast->isTypeDependent()) return;
         QualType from = cast->getSubExpr()->getType();
         QualType to = cast->getType();
@@ -3113,6 +3117,187 @@ public:
         return false;
     }
 
+    static bool sizeof_operand(const Expr *expr) {
+        const auto *size = dyn_cast<UnaryExprOrTypeTraitExpr>(expr->IgnoreParenImpCasts());
+        return size != nullptr && size->getKind() == UETT_SizeOf;
+    }
+
+    // Pointer + or - (also += and -=) with an offset `n * sizeof ...` while the
+    // pointee is larger than one byte (shape scaled_offset on the product).
+    void note_scaled_offset(const BinaryOperator *binary) {
+        BinaryOperatorKind kind = binary->getOpcode();
+        if (kind != BO_Add && kind != BO_Sub && kind != BO_AddAssign && kind != BO_SubAssign) return;
+        if (binary->isTypeDependent() || binary->isValueDependent()) return;
+        const Expr *pointer = binary->getLHS(), *offset = binary->getRHS();
+        if (!pointer->getType()->isPointerType()) std::swap(pointer, offset);
+        if (!pointer->getType()->isPointerType() || !offset->getType()->isIntegerType()) return;
+        QualType pointee = pointer->getType()->getPointeeType();
+        if (pointee.isNull() || pointee->isVoidType() || pointee->isIncompleteType() || pointee->isFunctionType() ||
+            pointee->isDependentType() || context_.getTypeSizeInChars(pointee).getQuantity() <= 1) return;
+        const auto *product = dyn_cast<BinaryOperator>(offset->IgnoreParenImpCasts());
+        if (product == nullptr || product->getOpcode() != BO_Mul) return;
+        if (!sizeof_operand(product->getLHS()) && !sizeof_operand(product->getRHS())) return;
+        add_pending(product, "scaled_offset");
+    }
+
+    // The alignment known for what a pointer expression points to: the declared
+    // alignment of a variable or field it names (array decay or &), else the
+    // alignment of the pointee type.
+    CharUnits known_alignment(const Expr *source) const {
+        const Expr *bare = source->IgnoreParenImpCasts();
+        if (const auto *address = dyn_cast<UnaryOperator>(bare)) {
+            if (address->getOpcode() == UO_AddrOf) bare = address->getSubExpr()->IgnoreParens();
+        }
+        if (const auto *ref = dyn_cast<DeclRefExpr>(bare)) {
+            if (isa<VarDecl>(ref->getDecl())) return context_.getDeclAlign(ref->getDecl());
+        }
+        if (const auto *member = dyn_cast<MemberExpr>(bare)) {
+            if (isa<FieldDecl>(member->getMemberDecl())) return member_alignment(member);
+        }
+        return context_.getTypeAlignInChars(source->getType()->getPointeeType());
+    }
+
+    // The alignment of a member object: what its offset in an aligned enclosing
+    // object guarantees, at least the field's own alignment.
+    CharUnits member_alignment(const MemberExpr *member) const {
+        const auto *field = cast<FieldDecl>(member->getMemberDecl());
+        CharUnits own = context_.getDeclAlign(field);
+        const RecordDecl *record = field->getParent();
+        if (record == nullptr || record->isInvalidDecl() || record->getDefinition() == nullptr || record->isDependentType()) return own;
+        const Expr *base = member->getBase()->IgnoreParenImpCasts();
+        CharUnits outer;
+        if (member->isArrow()) {
+            outer = context_.getTypeAlignInChars(base->getType()->getPointeeType());
+        } else if (const auto *inner = dyn_cast<MemberExpr>(base)) {
+            outer = isa<FieldDecl>(inner->getMemberDecl()) ? member_alignment(inner) : context_.getTypeAlignInChars(base->getType());
+        } else if (const auto *ref = dyn_cast<DeclRefExpr>(base)) {
+            outer = std::max(context_.getTypeAlignInChars(base->getType()),
+                             isa<VarDecl>(ref->getDecl()) && !ref->getDecl()->getType()->isReferenceType() ? context_.getDeclAlign(ref->getDecl()) : CharUnits::One());
+        } else {
+            outer = context_.getTypeAlignInChars(base->getType());
+        }
+        uint64_t offset = context_.toCharUnitsFromBits(context_.getFieldOffset(field)).getQuantity();
+        uint64_t guaranteed = static_cast<uint64_t>(outer.getQuantity());
+        while (guaranteed > 1 && offset % guaranteed != 0) guaranteed /= 2;
+        return std::max(own, CharUnits::fromQuantity(static_cast<int64_t>(guaranteed)));
+    }
+
+    // container_of: `(type *)((char *)ptr - offsetof(type, field))`.
+    static bool container_of(const Expr *source) {
+        const auto *minus = dyn_cast<BinaryOperator>(source->IgnoreParenImpCasts());
+        if (minus == nullptr || minus->getOpcode() != BO_Sub) return false;
+        const Expr *offset = minus->getRHS()->IgnoreParenImpCasts();
+        return isa<OffsetOfExpr>(offset);
+    }
+
+    // An explicit cast between object pointers that raises the alignment the
+    // pointee needs (not from void pointers, not of allocation results).
+    bool alignment_increase(const ExplicitCastExpr *cast) const {
+        if (isa<CXXStaticCastExpr>(cast) || isa<CXXConstCastExpr>(cast) || isa<CXXDynamicCastExpr>(cast)) return false;
+        QualType target = cast->getType();
+        const Expr *source = cast->getSubExpr()->IgnoreParenImpCasts();
+        QualType held = source->getType();
+        if (target.isNull() || held.isNull() || !target->isPointerType() || !held->isPointerType()) return false;
+        QualType to = target->getPointeeType(), from = held->getPointeeType();
+        for (QualType one : {to, from}) {
+            if (one->isVoidType() || one->isIncompleteType() || one->isFunctionType() || one->isDependentType() ||
+                one->isSizelessType()) return false;
+        }
+        if (allocation(source) || container_of(source)) return false;
+        return context_.getTypeAlignInChars(to) > known_alignment(source);
+    }
+
+    // A non-placement new whose result is not handed at once to a smart pointer
+    // (constructor or reset).
+    bool unmanaged_new(const CXXNewExpr *fresh) const {
+        if (fresh->getNumPlacementArgs() > 0 || fresh->isTypeDependent()) return false;
+        if (fresh->getOperatorNew() != nullptr && fresh->getOperatorNew()->getNumParams() > 1 && !fresh->passAlignment()) {
+            // a user operator new with extra parameters (an arena) is a placement form
+            return false;
+        }
+        DynTypedNode node = DynTypedNode::create(*static_cast<const Expr *>(fresh));
+        while (true) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return true;
+            node = parents[0];
+            const Expr *outer = node.get<Expr>();
+            if (outer != nullptr && (isa<ImplicitCastExpr>(outer) || isa<ParenExpr>(outer) || isa<ExprWithCleanups>(outer))) continue;
+            if (const auto *make = dyn_cast_or_null<CXXConstructExpr>(outer)) {
+                if (std_class(make->getType(), "unique_ptr") || std_class(make->getType(), "shared_ptr")) return false;
+                // std::locale(loc, new facet) and other owners: a class with a
+                // destructor of its own whose constructor takes the pointer
+                const CXXRecordDecl *owner = make->getType()->getAsCXXRecordDecl();
+                return !(owner != nullptr && owner->hasDefinition() && owner->getDestructor() != nullptr &&
+                         !owner->getDestructor()->isTrivial() && make->getNumArgs() >= 1);
+            }
+            if (const auto *member_call = dyn_cast_or_null<CXXMemberCallExpr>(outer)) {
+                const CXXMethodDecl *method = member_call->getMethodDecl();
+                QualType object = member_call->getImplicitObjectArgument() == nullptr ? QualType() : member_call->getImplicitObjectArgument()->getType();
+                bool smart = std_class(object, "unique_ptr") || std_class(object, "shared_ptr");
+                return !(smart && method != nullptr && method->getIdentifier() != nullptr && method->getName() == "reset");
+            }
+            return true;
+        }
+    }
+
+    // C: a prvalue structure (the result of a call) whose member array is
+    // reached through `.` chains.
+    static bool temporary_base(const Expr *expr) {
+        expr = expr->IgnoreParens();
+        while (const auto *member = dyn_cast<MemberExpr>(expr)) {
+            if (member->isArrow()) return false;
+            expr = member->getBase()->IgnoreParens();
+        }
+        return isa<CallExpr>(expr) && expr->isPRValue() && expr->getType()->isRecordType();
+    }
+
+    // C: an array member of a temporary that decays (shape temporary_decay on the
+    // member) and a write to such an array's element or to a temporary's member
+    // (shape temporary_write on the assignment or ++/--).
+    void note_temporary_use(const Expr *expr, NodeRec &rec) {
+        if (context_.getLangOpts().CPlusPlus) return;
+        const Expr *target = nullptr;
+        if (const auto *binary = dyn_cast<BinaryOperator>(expr)) {
+            if (binary->isAssignmentOp()) target = binary->getLHS();
+        } else if (const auto *unary = dyn_cast<UnaryOperator>(expr)) {
+            if (unary->isIncrementDecrementOp()) target = unary->getSubExpr();
+        }
+        if (target == nullptr) return;
+        target = target->IgnoreParens();
+        if (const auto *element = dyn_cast<ArraySubscriptExpr>(target)) {
+            const Expr *base = element->getBase()->IgnoreParenImpCasts();
+            if (isa<MemberExpr>(base) && temporary_base(base)) add_shape(rec, "temporary_write");
+        } else if (isa<MemberExpr>(target) && temporary_base(target)) {
+            add_shape(rec, "temporary_write");
+        }
+    }
+
+    // C++: a non-static member or member function of the object, used through
+    // this inside a handler of a constructor's or destructor's function-try-block.
+    bool member_in_ctor_handler(const MemberExpr *member) const {
+        const ValueDecl *used = member->getMemberDecl();
+        bool instance = isa<FieldDecl>(used) || isa<IndirectFieldDecl>(used);
+        if (const auto *method = dyn_cast<CXXMethodDecl>(used)) instance = !method->isStatic();
+        if (!instance || !isa<CXXThisExpr>(member->getBase()->IgnoreParenImpCasts())) return false;
+        DynTypedNode node = DynTypedNode::create(*static_cast<const Expr *>(member));
+        bool in_handler = false;
+        while (true) {
+            auto parents = context_.getParents(node);
+            if (parents.empty()) return false;
+            node = parents[0];
+            if (node.get<CXXCatchStmt>() != nullptr) in_handler = true;
+            if (node.get<LambdaExpr>() != nullptr) return false;
+            if (const auto *attempt = node.get<CXXTryStmt>()) {
+                if (!in_handler) return false;
+                auto up = context_.getParents(*attempt);
+                if (up.size() != 1) return false;
+                const auto *fn = up[0].get<FunctionDecl>();
+                return fn != nullptr && (isa<CXXConstructorDecl>(fn) || isa<CXXDestructorDecl>(fn)) && fn->getBody() == attempt;
+            }
+            if (node.get<FunctionDecl>() != nullptr) return false;
+        }
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -3161,6 +3346,17 @@ public:
             if (small_bitwise(small)) add_shape(rec, "small_bitwise");
         }
         if (const auto *lambda = dyn_cast<LambdaExpr>(stmt)) note_lambda(lambda, rec);
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) note_scaled_offset(binary);
+        if (const auto *explicit_cast = dyn_cast<ExplicitCastExpr>(stmt)) {
+            if (alignment_increase(explicit_cast)) add_shape(rec, "align_increase");
+        }
+        if (const auto *fresh = dyn_cast<CXXNewExpr>(stmt)) {
+            if (unmanaged_new(fresh)) add_shape(rec, "unmanaged_new");
+        }
+        if (const auto *expr = dyn_cast<Expr>(stmt)) note_temporary_use(expr, rec);
+        if (const auto *member = dyn_cast<MemberExpr>(stmt)) {
+            if (member_in_ctor_handler(member)) add_shape(rec, "handler_member");
+        }
         if (const auto *expr = dyn_cast<Expr>(stmt)) {
             if (char_widened(expr)) add_shape(rec, "char_widened");
         }

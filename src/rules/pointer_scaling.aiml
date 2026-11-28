@@ -1,0 +1,43 @@
+# OC-0402 no_scaled_pointer_arith and OC-0424 no_alignment_increasing_cast,
+# catalogue in Pymann/coding-rules.  Read from IrNode.shape (doc/ir.md):
+# scaled_offset on an offset `n * sizeof` of a typed pointer, align_increase on
+# an explicit pointer cast that raises the alignment.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: ScaledPointerArithRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 402, "security.c90-.10.1.no_scaled_pointer_arith", "An offset added to a typed pointer is not already scaled by the element size", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "scaled_offset", 402, "pointer arithmetic already scales by the element size; this offset multiplied by sizeof skips too far", out]
+
+- class:
+    name: AlignmentIncreasingCastRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 424, "safety.c90-.8.3.no_alignment_increasing_cast", "A pointer is not cast to a pointer to a more strictly aligned type", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "align_increase", 424, "the cast gives a pointer to a type with stricter alignment than what it points to; copy with memcpy instead", out]

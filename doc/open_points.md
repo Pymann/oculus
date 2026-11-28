@@ -173,3 +173,20 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0409**: any enclosing loop counts; whether its condition re-tests the
   awaited predicate is not checked. `pthread_cond_wait` is not in the rule text
   and not reported.
+- **OC-0094** and **OC-0098** (side effects in initializer lists and after
+  `&&`/`||`) are not implemented yet: almost every finding would be a call,
+  and the rule texts exempt functions without side effects, which needs a
+  configuration key (pure functions, project getters) first.
+- **OC-0365**: only `new` is reported. The rule text also reports every
+  `delete`, but the catalogue's bad example expects no finding at its
+  `delete`; to be decided. A pointer given to a constructor of a class with a
+  destructor of its own counts as handed to an owner (`std::locale`); owners
+  reached through a function call (`listeners()->Append(new L)`) are not
+  recognised, and the resource-manager configuration key does not exist yet.
+- **OC-0424**: "known to be aligned" is: an allocation result, a variable or
+  field with enough declared alignment, a member whose offset in an aligned
+  object is a multiple of the target alignment, and container_of with
+  `offsetof`. Byte offsets that are aligned by construction (sqlite's
+  `ROUND8` layouts within one allocation) are reported.
+- **OC-0296** (explicit instantiation after a specialisation) is not
+  implemented: Clang keeps no node for such an instantiation, only a warning.

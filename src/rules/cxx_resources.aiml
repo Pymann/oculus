@@ -1,0 +1,42 @@
+# OC-0365 managed_dynamic_memory and OC-0308 no_members_in_ctor_try_handler
+# (C++), catalogue in Pymann/coding-rules.  Read from IrNode.shape (doc/ir.md):
+# unmanaged_new, handler_member.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: ManagedDynamicMemoryRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 365, "safety.cpp11-.14.1.managed_dynamic_memory", "Dynamic memory is owned by objects that release it automatically", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "unmanaged_new", 365, "the result of new is not handed to an owner at once; use std::make_unique, std::make_shared or a container", out]
+
+- class:
+    name: CtorTryHandlerMemberRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 308, "safety.cpp98-.17.2.no_members_in_ctor_try_handler", "Handlers of a constructor or destructor function-try-block do not use non-static members", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "handler_member", 308, "the members are already destroyed in the handler of a constructor or destructor function-try-block", out]

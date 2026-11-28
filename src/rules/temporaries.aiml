@@ -1,0 +1,43 @@
+# OC-0197 no_temporary_array_decay and OC-0423 no_temporary_modification (C),
+# catalogue in Pymann/coding-rules.  Read from IrNode.shape (doc/ir.md):
+# temporary_decay on a member array of a structure returned by value that
+# decays, temporary_write on a write to such a structure's member.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: TemporaryArrayDecayRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 197, "safety.c11-.10.3.no_temporary_array_decay", "Arrays in temporaries do not decay to pointers", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "temporary_decay", 197, "the array belongs to a temporary returned by value; the pointer it decays to dangles after this expression", out]
+
+- class:
+    name: TemporaryModificationRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 423, "safety.c11-.10.3.no_temporary_modification", "Objects with temporary lifetime are not modified", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "temporary_write", 423, "this writes to a temporary returned by value; the change is lost at the end of the expression", out]

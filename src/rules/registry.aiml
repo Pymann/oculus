@@ -80,6 +80,9 @@
 - import: "src/rules/expression_effects.aiml"
 - import: "src/rules/lambda_captures.aiml"
 - import: "src/rules/library_threads.aiml"
+- import: "src/rules/pointer_scaling.aiml"
+- import: "src/rules/temporaries.aiml"
+- import: "src/rules/cxx_resources.aiml"
 
 - class:
     name: RuleRegistry
@@ -483,6 +486,18 @@
             - call: [<.rules.push, wait_loop]
             - decl: [float_cmp, ptr<Rule>, { new: FloatMemcmpRule }]
             - call: [<.rules.push, float_cmp]
+            - decl: [scaled_arith, ptr<Rule>, { new: ScaledPointerArithRule }]
+            - call: [<.rules.push, scaled_arith]
+            - decl: [align_cast, ptr<Rule>, { new: AlignmentIncreasingCastRule }]
+            - call: [<.rules.push, align_cast]
+            - decl: [temp_decay, ptr<Rule>, { new: TemporaryArrayDecayRule }]
+            - call: [<.rules.push, temp_decay]
+            - decl: [temp_write, ptr<Rule>, { new: TemporaryModificationRule }]
+            - call: [<.rules.push, temp_write]
+            - decl: [managed_new, ptr<Rule>, { new: ManagedDynamicMemoryRule }]
+            - call: [<.rules.push, managed_new]
+            - decl: [handler_member, ptr<Rule>, { new: CtorTryHandlerMemberRule }]
+            - call: [<.rules.push, handler_member]
       - def:
           name: rule_count
           args: []

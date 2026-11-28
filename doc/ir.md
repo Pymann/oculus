@@ -578,6 +578,20 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   that is returned, assigned to a member or a static variable, given to
   `std::thread`, `std::jthread` or `std::async`, or added to a member container,
   and `escaping_this` when such a lambda captures `this` implicitly.
+  `scaled_offset` on an offset `n * sizeof ...` added to or subtracted from a
+  pointer to a type larger than one byte, `align_increase` on a C-style,
+  functional or reinterpret cast between object pointers whose target needs a
+  stricter alignment than the source is known to have (the declared alignment
+  of a named variable, or what a member's offset in an aligned object
+  guarantees; not from void pointers, not of allocation results, not for
+  container_of with `offsetof`), `unmanaged_new` (C++) on a non-placement new
+  not handed at once to `std::unique_ptr`/`std::shared_ptr` (constructor or
+  `reset`) or to the constructor of a class with a non-trivial destructor
+  (`std::locale(loc, new facet)`), `temporary_decay` (C) on a member array of
+  a structure returned by value that decays, `temporary_write` (C) on an
+  assignment or `++`/`--` of such a member, and `handler_member` (C++) on a
+  member access through `this` inside a handler of a constructor's or
+  destructor's function-try-block.
   `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
   the for header, `exposed_data` on a named public or protected field of a C++
   class that is not an aggregate and has a user-provided constructor or
