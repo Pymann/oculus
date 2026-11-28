@@ -74,6 +74,9 @@
 - import: "src/rules/switch_clauses.aiml"
 - import: "src/rules/pp_layout.aiml"
 - import: "src/rules/reserved_names.aiml"
+- import: "src/rules/aggregate_shapes.aiml"
+- import: "src/rules/thread_calls.aiml"
+- import: "src/rules/vector_bool.aiml"
 
 - class:
     name: RuleRegistry
@@ -447,6 +450,20 @@
             - call: [<.rules.push, literal_const]
             - decl: [reserved, ptr<Rule>, { new: ReservedIdentifierRule }]
             - call: [<.rules.push, reserved]
+            - decl: [braced, ptr<Rule>, { new: BracedAggregateInitRule }]
+            - call: [<.rules.push, braced]
+            - decl: [flexible, ptr<Rule>, { new: FlexibleStructDynamicRule }]
+            - call: [<.rules.push, flexible]
+            - decl: [qualified_fn, ptr<Rule>, { new: QualifiedFunctionTypeRule }]
+            - call: [<.rules.push, qualified_fn]
+            - decl: [thread_kill, ptr<Rule>, { new: SignalThreadKillRule }]
+            - call: [<.rules.push, thread_kill]
+            - decl: [async_cancel, ptr<Rule>, { new: AsyncCancelRule }]
+            - call: [<.rules.push, async_cancel]
+            - decl: [atomic_once, ptr<Rule>, { new: SingleAtomicReferenceRule }]
+            - call: [<.rules.push, atomic_once]
+            - decl: [vector_bool, ptr<Rule>, { new: NoVectorBoolRule }]
+            - call: [<.rules.push, vector_bool]
       - def:
           name: rule_count
           args: []

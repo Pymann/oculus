@@ -1,0 +1,26 @@
+# OC-0375 no_vector_bool (C++), catalogue in Pymann/coding-rules.  Reads the mark
+# vector_bool of IrFile.lexical_marks: a written std::vector whose element type
+# is bool (also through a typedef or alias), at the template argument.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: NoVectorBoolRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 375, "style.cpp98-.13.6.no_vector_bool", "std::vector is not instantiated with bool", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "vector_bool", 375, "std::vector<bool> packs bits and is no real container; use std::vector<char>, std::bitset or a wrapper type", out]

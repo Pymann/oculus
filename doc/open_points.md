@@ -76,6 +76,9 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0255** array decay: only calls of functions not declared in a system header
   (no builtins, no operator calls, no constructors). A `va_list` argument and a
   `?:` that picks between string literals are not reported.
+  Project wrappers that take a buffer and its count (imgui's
+  `ImFormatString(buf, IM_COUNTOF(buf), ...)`) are reported as the rule text says;
+  open: a configuration key for such pointer-and-count functions.
 - **OC-0284** and **OC-0049**: a member or definition whose name a macro made with
   `##` (gmock's MOCK_METHOD, Zephyr's K_*_DEFINE buffers) is not reported.
 - **OC-0330**: only `T name();` with nothing between the parentheses. A
@@ -135,3 +138,18 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0369** constant assert: only arguments made of literals, `true`, `false`,
   `!`, `&&`, `||` and parentheses. `assert(sizeof(int) == 4)` is not seen. An
   assert written in a macro body is reported once, at the definition.
+- **OC-0061** braced initializers: only the outermost written list is judged,
+  and each written list gives at most one finding (at its first sub-object
+  without braces). Not checked: lists with designators, the zero initializer,
+  anonymous structure or union members, and the members of system-header classes
+  (`std::array<int, 3> a = {1, 2, 3}`). A sub-list whose first value is itself a
+  braced list is taken as braced.
+- **OC-0412** single atomic reference: only `_Atomic` variables named directly
+  (not members, not C++ `std::atomic`). A repeat inside a system macro's
+  expression (`atomic_store(&a, atomic_load(&a) + 1)`) is not reported, because
+  the operand is spelled in the header.
+- **OC-0463**: only `pthread_kill` with a constant signal other than 0; `raise`
+  and `kill` from a thread function are not checked (no notion of thread
+  functions yet).
+- **OC-0375**: only written `std::vector<...>` types; an instantiation reached
+  only through a template parameter is not reported.

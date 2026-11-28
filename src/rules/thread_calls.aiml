@@ -1,0 +1,62 @@
+# OC-0463 no_signal_thread_kill, OC-0464 no_async_cancel and OC-0412
+# single_atomic_reference (C), catalogue in Pymann/coding-rules.  0463 and 0464
+# read the marks thread_signal and async_cancel of IrFile.lexical_marks, which the
+# frontend sets from the calls of the system's pthread_kill and
+# pthread_setcanceltype; 0412 reads IrNode.shape atomic_again (doc/ir.md).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: SignalThreadKillRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 463, "safety.c90-.21.1.no_signal_thread_kill", "Signals are not used to terminate threads", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "thread_signal", 463, "pthread_kill with a signal acts on the whole process; stop the thread by cancellation or a flag it checks", out]
+
+- class:
+    name: AsyncCancelRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 464, "safety.c90-.21.1.no_async_cancel", "Threads are not made asynchronously cancellable", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "async_cancel", 464, "an asynchronously cancellable thread can stop inside any call and leave shared state broken; keep deferred cancellation", out]
+
+- class:
+    name: SingleAtomicReferenceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 412, "safety.c11-.18.1.single_atomic_reference", "An expression refers to an atomic object at most once", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "atomic_again", 412, "the atomic object is accessed again in the same expression, and another thread can change it in between; use one atomic operation", out]

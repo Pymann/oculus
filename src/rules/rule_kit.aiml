@@ -182,3 +182,22 @@
                 then:
                   - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, node.pos] }, rule_id, message] }]
             - set: [idx, { "+": [idx, 1] }]
+
+# Reports every user declaration whose IrDecl.shape lists `shape`, at its name.
+- def:
+    name: decl_shape_findings
+    args: [[unit, IrUnit], [shape, string], [rule_id, i32], [message, string], [out, list<Finding>]]
+    return: void
+    body:
+      - decl: [info, RuleInformation, unit.info]
+      - decl: [pattern, string, "(^|,)${shape}(,|$)"]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, info.decls.len] }
+          body:
+            - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+            - if:
+                condition: { "&&": [{ call: [user_decl, rec] }, { gte: [{ call: [regex.search, pattern, rec.shape] }, 0] }] }
+                then:
+                  - call: [out.push, { call: [pos_finding, unit, rec.name_pos, rule_id, message] }]
+            - set: [idx, { "+": [idx, 1] }]

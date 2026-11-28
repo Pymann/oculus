@@ -718,6 +718,8 @@ public:
         if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
             if (vexing_function(fn)) rec.shape = "vexing_function";
         }
+        if (flexible_object(decl)) add_shape(rec, "flexible_object");
+        if (qualified_function(decl)) add_shape(rec, "qualified_function");
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
         note_override_defaults(decl, rec);
@@ -890,6 +892,7 @@ public:
             bool text = count == 1 && isa<StringLiteral>(without_implicit_casts(list->getInit(0)));
             if (!designated && count > 0 && count < size && !text && !zero_init(list)) rec.shape = "partial";
         }
+        note_brace_elision(semantic, list);
         if (chained) {
             for (const Expr *item : list->inits()) {
                 if (item != nullptr && !isa<DesignatedInitExpr>(item)) pending_shape_[without_implicit_casts(item)] = "undesignated";
@@ -927,6 +930,75 @@ public:
                     break;
                 }
             }
+        }
+    }
+
+    // A written list or designator below this syntactic list.
+    static bool has_designator(const InitListExpr *list) {
+        for (const Expr *item : list->inits()) {
+            if (item == nullptr) continue;
+            if (isa<DesignatedInitExpr>(item)) return true;
+            if (const auto *inner = dyn_cast<InitListExpr>(item->IgnoreImplicit())) {
+                if (has_designator(inner)) return true;
+            }
+        }
+        return false;
+    }
+
+    // The source character at a location (spelled), or 0.
+    char char_at(SourceLocation loc) const {
+        SourceLocation spelled = sm_.getSpellingLoc(loc);
+        if (spelled.isInvalid() || sm_.isWrittenInScratchSpace(spelled)) return 0;
+        bool invalid = false;
+        const char *data = sm_.getCharacterData(spelled, &invalid);
+        return invalid || data == nullptr ? 0 : *data;
+    }
+
+    static bool system_record(const SourceManager &sm, QualType type) {
+        const auto *record = type.isNull() ? nullptr : type->getAsRecordDecl();
+        if (record == nullptr) return false;
+        SourceLocation spelled = sm.getSpellingLoc(record->getLocation());
+        return spelled.isValid() && sm.isInSystemHeader(spelled);
+    }
+
+    // Brace elision (shape brace_elision on the first element of the first
+    // implicit sub-list of each written list): a sub-aggregate of the semantic form whose list starts at no
+    // written brace.  Only the outermost written list is judged; lists with
+    // designators, the zero initializer and members of system-header classes
+    // (std::array) are left out.
+    void note_brace_elision(const InitListExpr *visited, const InitListExpr *written) {
+        const InitListExpr *semantic = visited;
+        if (semantic->isSyntacticForm() && semantic->getSemanticForm() != nullptr) semantic = semantic->getSemanticForm();
+        auto parents = context_.getParents(*visited);
+        if (parents.size() != 1 || parents[0].get<InitListExpr>() != nullptr || parents[0].get<DesignatedInitExpr>() != nullptr) return;
+        if (zero_init(written) || has_designator(written)) return;
+        elided_lists(semantic);
+    }
+
+    void elided_lists(const InitListExpr *semantic) {
+        if (semantic->getType().isNull() || semantic->getType()->isDependentType()) return;
+        bool system_parent = system_record(sm_, semantic->getType());
+        bool reported = false;
+        for (const Expr *item : semantic->inits()) {
+            const auto *inner = dyn_cast_or_null<InitListExpr>(item == nullptr ? nullptr : item->IgnoreImplicit());
+            if (inner == nullptr || inner->getNumInits() == 0) continue;
+            QualType held = inner->getType();
+            if (held.isNull() || !(held->isArrayType() || held->isRecordType())) continue;
+            const RecordDecl *member = held->getAsRecordDecl();
+            if (member != nullptr && member->isAnonymousStructOrUnion()) continue;
+            if (char_at(inner->getLBraceLoc()) == '{' || system_parent) {
+                elided_lists(inner);
+                continue;
+            }
+            const Expr *first = inner->getInit(0);
+            while (const auto *nested = dyn_cast_or_null<InitListExpr>(first == nullptr ? nullptr : first->IgnoreImplicit())) {
+                if (nested->getNumInits() == 0) break;
+                first = nested->getInit(0);
+            }
+            if (first == nullptr || isa<ImplicitValueInitExpr>(first) || first->getBeginLoc().isInvalid()) continue;
+            if (reported) continue;
+            add_pending(without_implicit_casts(first), "brace_elision");
+            reported = true;
         }
     }
 
@@ -1162,7 +1234,7 @@ public:
     }
 
     // Shapes of one node are a comma-separated list.
-    static void add_shape(NodeRec &rec, const std::string &shape) {
+    template <typename Rec> static void add_shape(Rec &rec, const std::string &shape) {
         if (shape.empty()) return;
         std::string list = "," + rec.shape + ",";
         if (list.find("," + shape + ",") != std::string::npos) return;
@@ -2358,6 +2430,8 @@ public:
             if (rec.kind == "system_header" || !sm_.getFileEntryRefForID(entry.first)) continue;
             rec.line_classes = line_classes(entry.first, lang);
             rec.lexical_marks = lexical_marks(entry.first, lang);
+            auto ast = ast_marks_.find(entry.first);
+            if (ast != ast_marks_.end()) rec.lexical_marks += ast->second;
         }
     }
 
@@ -2592,6 +2666,184 @@ public:
         return classes;
     }
 
+    // A mark from the AST (FileRec.lexical_marks): at the expansion of `loc`, once.
+    void add_ast_mark(const char *code, SourceLocation loc) {
+        SourceLocation at = sm_.getExpansionLoc(loc);
+        if (at.isInvalid() || sm_.isInSystemHeader(at)) return;
+        std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
+        if (!ast_mark_seen_.insert(place).second) return;
+        add_mark(ast_marks_[place.first], code, place.first, place.second);
+    }
+
+    // A function declared in a system header with this name.
+    bool system_function(const FunctionDecl *callee, const char *name) const {
+        if (callee == nullptr || callee->getIdentifier() == nullptr || callee->getName() != name) return false;
+        SourceLocation spelled = sm_.getSpellingLoc(callee->getLocation());
+        return spelled.isValid() && sm_.isInSystemHeader(spelled);
+    }
+
+    // The source text of an expression at its expansion.
+    std::string expansion_text(const Expr *expr) const {
+        CharSourceRange range = sm_.getExpansionRange(expr->getSourceRange());
+        return Lexer::getSourceText(range, sm_, context_.getLangOpts()).str();
+    }
+
+    // pthread_kill with a signal that is a constant other than 0 (mark
+    // thread_signal at the signal), pthread_setcanceltype with
+    // PTHREAD_CANCEL_ASYNCHRONOUS (mark async_cancel at the argument).
+    void note_thread_calls(const CallExpr *call) {
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (call->getNumArgs() == 2 && system_function(callee, "pthread_kill")) {
+            const Expr *signal = call->getArg(1);
+            Expr::EvalResult value;
+            if (!signal->isValueDependent() && signal->EvaluateAsInt(value, context_) && value.Val.getInt() != 0) {
+                add_ast_mark("thread_signal", signal->getBeginLoc());
+            }
+        }
+        if (call->getNumArgs() == 2 && system_function(callee, "pthread_setcanceltype")) {
+            const Expr *kind = call->getArg(0);
+            const auto *ref = dyn_cast<DeclRefExpr>(kind->IgnoreParenImpCasts());
+            bool named = ref != nullptr && ref->getDecl()->getIdentifier() != nullptr &&
+                         ref->getDecl()->getName() == "PTHREAD_CANCEL_ASYNCHRONOUS";
+            if (named || expansion_text(kind) == "PTHREAD_CANCEL_ASYNCHRONOUS") add_ast_mark("async_cancel", kind->getBeginLoc());
+        }
+    }
+
+    // A written std::vector<bool> (mark vector_bool at the argument).
+    void note_vector_bool(TemplateSpecializationTypeLoc loc) {
+        const auto *type = loc.getTypePtr();
+        if (type == nullptr || loc.getNumArgs() < 1) return;
+        const TemplateDecl *tmpl = type->getTemplateName().getAsTemplateDecl();
+        if (tmpl == nullptr || tmpl->getIdentifier() == nullptr || tmpl->getName() != "vector" || !tmpl->isInStdNamespace()) return;
+        TemplateArgumentLoc first = loc.getArgLoc(0);
+        const TemplateArgument &arg = first.getArgument();
+        if (arg.getKind() != TemplateArgument::Type || arg.getAsType().isNull() || arg.getAsType()->isDependentType()) return;
+        if (!arg.getAsType().getCanonicalType()->isBooleanType()) return;
+        add_ast_mark("vector_bool", first.getLocation());
+    }
+
+    static const RecordDecl *flexible_record(QualType type) {
+        if (type.isNull()) return nullptr;
+        const auto *record = type->getAsRecordDecl();
+        if (record == nullptr || record->getDefinition() == nullptr) return nullptr;
+        return record->getDefinition()->hasFlexibleArrayMember() ? record : nullptr;
+    }
+
+    // C: `a = b` of a structure with a flexible array member.
+    bool flexible_copy(const BinaryOperator *binary) const {
+        if (context_.getLangOpts().CPlusPlus || binary->getOpcode() != BO_Assign) return false;
+        return flexible_record(binary->getLHS()->getType()) != nullptr;
+    }
+
+    // C: an object, parameter or return type by value of a structure with a
+    // flexible array member (not an extern declaration, not a pointer).
+    bool flexible_object(const Decl *decl) const {
+        if (context_.getLangOpts().CPlusPlus) return false;
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) return flexible_record(fn->getReturnType()) != nullptr;
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || flexible_record(var->getType()) == nullptr) return false;
+        if (isa<ParmVarDecl>(var)) return true;
+        return var->isThisDeclarationADefinition() != VarDecl::DeclarationOnly;
+    }
+
+    // The expression a reference belongs to: up through parent expressions.
+    const Expr *full_expression(const Expr *expr) const {
+        const Expr *top = expr;
+        while (true) {
+            auto parents = context_.getParents(*top);
+            if (parents.size() != 1) return top;
+            const auto *outer = parents[0].get<Expr>();
+            if (outer == nullptr) return top;
+            top = outer;
+        }
+    }
+
+    static void refs_to(const Stmt *stmt, const ValueDecl *decl, std::vector<const DeclRefExpr *> &out) {
+        if (stmt == nullptr) return;
+        if (const auto *unary = dyn_cast<UnaryExprOrTypeTraitExpr>(stmt)) {
+            (void)unary;
+            return;
+        }
+        if (isa<GenericSelectionExpr>(stmt)) return;
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) {
+            if (ref->getDecl() == decl) out.push_back(ref);
+        }
+        for (const Stmt *child : stmt->children()) refs_to(child, decl, out);
+    }
+
+    static bool contains(const Stmt *stmt, const Stmt *part) {
+        if (stmt == nullptr) return false;
+        if (stmt == part) return true;
+        for (const Stmt *child : stmt->children()) {
+            if (contains(child, part)) return true;
+        }
+        return false;
+    }
+
+    // C: at the first reference to an atomic variable in its full expression,
+    // each later reference marks (shape atomic_again) the operand of the
+    // innermost expression holding both that holds the later one.
+    void note_atomic_refs(const DeclRefExpr *ref) {
+        if (context_.getLangOpts().CPlusPlus) return;
+        const auto *var = dyn_cast<VarDecl>(ref->getDecl());
+        if (var == nullptr || var->getType().isNull() || !var->getType()->isAtomicType()) return;
+        std::vector<const DeclRefExpr *> refs;
+        refs_to(full_expression(ref), var, refs);
+        if (refs.size() < 2 || refs.front() != ref) return;
+        for (size_t later = 1; later < refs.size(); ++later) {
+            const Stmt *below = refs[later];
+            while (true) {
+                auto parents = context_.getParents(*below);
+                if (parents.size() != 1) break;
+                const auto *outer = parents[0].get<Expr>();
+                if (outer == nullptr) break;
+                if (contains(outer, ref)) {
+                    const Stmt *operand = isa<Expr>(below) ? without_implicit_casts(cast<Expr>(below)) : below;
+                    std::string &pending = pending_shape_[operand];
+                    if (pending.find("atomic_again") == std::string::npos) add_pending(operand, "atomic_again");
+                    break;
+                }
+                below = outer;
+            }
+        }
+    }
+
+    // A qualifier written on a function type taken from a typedef
+    // (`const handler process;`): Clang drops it, the tokens keep it.
+    bool qualified_function(const Decl *decl) const {
+        if (context_.getLangOpts().CPlusPlus) return false;
+        const TypeSourceInfo *written = nullptr;
+        QualType held;
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            written = fn->getTypeSourceInfo();
+            held = fn->getType();
+        } else if (const auto *alias = dyn_cast<TypedefNameDecl>(decl)) {
+            written = alias->getTypeSourceInfo();
+            held = alias->getUnderlyingType();
+        }
+        if (written == nullptr || held.isNull() || !held->isFunctionType()) return false;
+        TypeLoc loc = written->getTypeLoc().getUnqualifiedLoc();
+        if (loc.getAs<FunctionTypeLoc>() || loc.getAs<ParenTypeLoc>() || loc.getAs<AttributedTypeLoc>()) return false;
+        SourceLocation begin = decl->getBeginLoc(), name = decl->getLocation();
+        if (begin.isMacroID() || name.isMacroID()) return false;
+        std::pair<FileID, unsigned> from = sm_.getDecomposedLoc(begin), to = sm_.getDecomposedLoc(name);
+        if (from.first != to.first || to.second <= from.second) return false;
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(from.first, &invalid);
+        if (invalid) return false;
+        Lexer lexer(sm_.getLocForStartOfFile(from.first), context_.getLangOpts(), buffer.begin(), buffer.begin() + from.second, buffer.end());
+        Token token;
+        int depth = 0;
+        while (!lexer.LexFromRawLexer(token) && sm_.getFileOffset(token.getLocation()) < to.second) {
+            if (token.is(tok::l_paren)) ++depth;
+            if (token.is(tok::r_paren)) --depth;
+            if (depth != 0 || !token.is(tok::raw_identifier)) continue;
+            llvm::StringRef word = token.getRawIdentifier();
+            if (word == "const" || word == "volatile" || word == "restrict" || word == "_Atomic") return true;
+        }
+        return false;
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -2619,6 +2871,11 @@ public:
             if (unused_result(call)) add_shape(rec, "unused_result");
         }
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) note_precedence(binary);
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            if (flexible_copy(binary)) add_shape(rec, "flexible_copy");
+        }
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) note_atomic_refs(ref);
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) note_thread_calls(call);
         note_float_counter(stmt);
         if (isa<IntegerLiteral>(stmt) || isa<GNUNullExpr>(stmt)) {
             if (const char *null = null_shape(cast<Expr>(stmt))) rec.shape = null;
@@ -3319,6 +3576,8 @@ private:
     std::set<const VarDecl *> errno_saved_;
     std::set<const Stmt *> shadowed_handlers_;
     std::map<const Stmt *, std::string> pending_shape_;
+    std::map<FileID, std::string> ast_marks_;
+    std::set<std::pair<FileID, unsigned>> ast_mark_seen_;
     std::map<FileID, std::vector<std::pair<unsigned, unsigned>>> argument_ranges_;
     struct ScopeRange {
         FileID fid;
@@ -3433,6 +3692,11 @@ public:
                 tables_.base_node(base, class_uid);
             }
         }
+        return true;
+    }
+
+    bool VisitTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc loc) {
+        tables_.note_vector_bool(loc);
         return true;
     }
 

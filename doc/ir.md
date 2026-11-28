@@ -559,6 +559,13 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   lexical mark `late_include` (an #include after code).
   `literal_to_mutable` (C) on a string literal assigned, initialised, passed or
   returned as a pointer to non-const char.
+  `brace_elision` on the first element of the first sub-aggregate of a written
+  list that has no braces of its own (outermost lists only; not with
+  designators, not for the zero initializer, not for anonymous members or the
+  members of system-header classes such as `std::array`), `flexible_copy` (C) on
+  an assignment of a structure with a flexible array member, `atomic_again` (C)
+  on the operand that holds a second reference to an `_Atomic` variable in one
+  full expression (operand of the innermost expression holding both).
   `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
   the for header, `exposed_data` on a named public or protected field of a C++
   class that is not an aggregate and has a user-provided constructor or
@@ -567,7 +574,11 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   between its parentheses, `pasted_name` on a function or variable whose name a
   macro made with `##` (such a field is never `exposed_data`), `macro_body_name`
   on a declaration whose name a macro body writes, `redeclares_system` on a
-  function or variable that a system header declares before.  Decl shapes are a
+  function or variable that a system header declares before, `flexible_object`
+  (C) on a definition, parameter or function returning by value of a structure
+  with a flexible array member, `qualified_function` (C) on a function or typedef
+  whose function type from a typedef is written with const, volatile, restrict or
+  _Atomic (Clang drops the qualifier; the tokens keep it).  Decl shapes are a
   comma-separated list too.
   `IrDecl.missing_base_init`: a user-provided, non-delegating
   constructor of a non-dependent class does not name a direct or virtual base
@@ -579,7 +590,11 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `comment_splice` (a line comment continued by a backslash), `trigraph`,
   `open_escape` (at a literal whose octal or hex escape runs into a plain
   character), `odd_escape` (an escape the standard does not define, at the
-  backslash) and `digraph` (adjacent digraphs such as `<::>` give one mark).  Literals in skipped code and on `#include`,
+  backslash) and `digraph` (adjacent digraphs such as `<::>` give one mark).
+  Marks from the AST: `thread_signal` (the constant non-zero signal of a call
+  of the system's `pthread_kill`), `async_cancel` (`PTHREAD_CANCEL_ASYNCHRONOUS`
+  passed to `pthread_setcanceltype`) and `vector_bool` (the template argument of
+  a written `std::vector` whose element type is `bool`).  Literals in skipped code and on `#include`,
   `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;
   `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`

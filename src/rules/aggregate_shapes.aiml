@@ -1,0 +1,72 @@
+# OC-0061 braced_aggregate_init, OC-0448 flexible_struct_dynamic (C) and OC-0196
+# no_qualified_function_type (C), catalogue in Pymann/coding-rules.  Read from
+# IrNode.shape (doc/ir.md): brace_elision on the first element of a sub-aggregate
+# written without its braces, flexible_copy on an assignment; IrDecl.shape:
+# flexible_object, qualified_function.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: BracedAggregateInitRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 61, "safety.c90-.7.2.braced_aggregate_init", "Aggregate and union initializers use braces that follow the structure", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "brace_elision", 61, "a nested aggregate is initialized without its own braces; put braces around the values of each sub-object", out]
+
+- class:
+    name: FlexibleStructDynamicRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 448, "safety.c99-.14.1.flexible_struct_dynamic", "Structures with a flexible array member are allocated dynamically and not copied by assignment", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "flexible_object", 448, "a structure with a flexible array member held by value has no room for the array; allocate it and use a pointer", out]
+            - call: [node_shape_findings, unit, "flexible_copy", 448, "assigning a structure with a flexible array member does not copy the array elements", out]
+
+- class:
+    name: QualifiedFunctionTypeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 196, "safety.c90-.11.1.no_qualified_function_type", "Function types carry no qualifier", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { gte: [{ call: [regex.search, "(^|,)qualified_function(,|$)", rec.shape] }, 0] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 196, "a qualifier on a function type named by a typedef has undefined behaviour; leave it out"] }]
+                  - set: [idx, { "+": [idx, 1] }]
