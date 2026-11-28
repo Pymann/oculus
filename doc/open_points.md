@@ -5,17 +5,6 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 
 ## Decisions needed
 
-- **OC-0022 terminated_escape, strict reading.** An octal or hex escape must be
-  followed by the end of the literal or by another escape, as the catalogue text
-  says. That also reports unambiguous cases such as `"One\0Two"` (imgui combo
-  lists) and `"\x1b[0m"` (fmt colours). Those make up most of its findings in the
-  real projects. Option: no report when the next character cannot continue the
-  escape (not a hex digit after `\x`, not an octal digit after an octal escape).
-  This needs a catalogue change.
-- **OC-0343 no_unary_plus.** Reports every built-in unary `+`, including the
-  deliberate `+1.0f` style in imgui (84 findings). It is correct by the rule text.
-  Open: should written literals (`+1.0f`, `+0`) be exempt?
-
 - **OC-0315 macros_at_global_scope.** Every #define or #undef inside a namespace
   counts, including the configuration macros fmt and gtest define between
   their namespace macros (239 findings in fmt, 206 of them in gtest). It is correct
@@ -28,11 +17,6 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   functions (`setuid`, `seteuid`, `setreuid`, `setresuid`) are reported until
   the catalogue says whether the gid functions count too. A path that goes on
   without testing a stored result is not checked yet.
-- **OC-0470 no_signal_in_handler, platform option.** The rule allows a
-  configuration for platforms that keep handlers installed (glibc's `signal`
-  does). There is no configuration key yet, so every reinstalling call is
-  reported; `signal(sig, SIG_DFL)` and `SIG_IGN` in a handler are not.
-
 - **OC-0451 seeded_prng, test code.** The rule exempts tests that seed with a
   constant on purpose when the project configuration marks the file as test
   code. There is no such key yet, so every constant `srand` seed is reported.
@@ -271,3 +255,8 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0470**: `signal(sig, SIG_DFL)` and `SIG_IGN` in a handler are not
   reported; `handlers_persist: true` in oculus.json turns the rule off for
   platforms that keep handlers installed.
+- **OC-0022**: the strict reading stays (decided): an octal or hex escape must
+  be followed by the end of the literal or another escape, also where the next
+  character could not continue it (`"\x1b[0m"`, `"One\0Two"`).
+- **OC-0343**: every built-in unary `+` is reported, written literals such as
+  `+1.0f` included (decided).
