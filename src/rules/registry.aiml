@@ -127,6 +127,10 @@
 - import: "src/rules/declaration_forms.aiml"
 - import: "src/rules/mutex_use.aiml"
 - import: "src/rules/template_files.aiml"
+- import: "src/rules/const_candidates.aiml"
+- import: "src/rules/order_and_macros.aiml"
+- import: "src/rules/arithmetic_ranges.aiml"
+- import: "src/rules/variadic_formats.aiml"
 
 - class:
     name: RuleRegistry
@@ -744,6 +748,24 @@
             - call: [<.rules.push, r0296]
             - decl: [r0297, ptr<Rule>, { new: SpecializationFileRule }]
             - call: [<.rules.push, r0297]
+            - decl: [r0054, ptr<Rule>, { new: SingleFunctionStaticRule }]
+            - call: [<.rules.push, r0054]
+            - decl: [r0058, ptr<Rule>, { new: PointerConstRule }]
+            - call: [<.rules.push, r0058]
+            - decl: [r0260, ptr<Rule>, { new: ConstLocalRule }]
+            - call: [<.rules.push, r0260]
+            - decl: [r0147, ptr<Rule>, { new: MacroParamParenRule }]
+            - call: [<.rules.push, r0147]
+            - decl: [r0211, ptr<Rule>, { new: SeqCstOrderRule }]
+            - call: [<.rules.push, r0211]
+            - decl: [r0091, ptr<Rule>, { new: ShiftRangeRule }]
+            - call: [<.rules.push, r0091]
+            - decl: [r0445, ptr<Rule>, { new: ZeroDivisorRule }]
+            - call: [<.rules.push, r0445]
+            - decl: [r0429, ptr<Rule>, { new: VaArgTypeRule }]
+            - call: [<.rules.push, r0429]
+            - decl: [r0437, ptr<Rule>, { new: FormatStringRule }]
+            - call: [<.rules.push, r0437]
             - decl: [r0141, ptr<Rule>, { new: HeaderNameCharsRule }]
             - call: [<.rules.push, r0141]
             - decl: [r0142, ptr<Rule>, { new: IncludeFormRule }]

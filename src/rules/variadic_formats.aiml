@@ -1,0 +1,42 @@
+# OC-0429, OC-0437 (catalogue in Pymann/coding-rules). They read marks that the
+# frontend sets (doc/ir.md): va_arg_promoted, format_mismatch.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: VaArgTypeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 429, "safety.c90-.11.1.va_arg_type", "va_arg reads each argument with the type it was passed as after promotion", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "va_arg_promoted", 429, "va_arg reads a type that variadic arguments are never passed as after promotion", out]
+
+- class:
+    name: FormatStringRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 437, "safety.c90-.13.4.valid_format_string", "Format strings match the number and types of their arguments", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "format_mismatch", 437, "the format string does not match the arguments of this call", out]

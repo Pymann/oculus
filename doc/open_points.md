@@ -335,3 +335,23 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0222, OC-0224, OC-0404**: within one function (OC-0224 also one call
   deep); OC-0222 only in functions that also unlock the mutex, so lock
   wrappers are not reported.
+- **OC-0054**: C only, objects at file scope of the main file; statics that
+  a macro defines (Zephyr's LOG_MODULE_REGISTER and the like) are skipped.
+- **OC-0058**: definitions in the main file; a parameter passed on to a
+  function that takes a pointer to mutable counts as written.
+- **OC-0260**: C++ locals of scalar or pointer type with an initializer;
+  record and array objects are not checked yet.
+- **OC-0147**: parameters next to `<`, `>`, `&`, `*`, `::` and `:` are not
+  reported in C++ (template arguments, declarators), nor a parameter that
+  is followed by `*` or `&` as a declarator or cast, the whole right side of
+  an assignment or initializer, or the middle operand of `?:`.
+- **OC-0211**: only the `__c11_atomic` builtins and C11 fences, as stdatomic.h
+  maps them; GNU `__atomic` builtins (sqlite) are not reported.
+- **OC-0091**: only constant shift amounts; variable amounts need value
+  ranges from data flow.
+- **OC-0445**: constant zero divisors, and divisions by a parameter that the
+  function never checks (any comparison or test of it counts as a guard);
+  other variables need value ranges. `-1` with the most negative value is
+  not checked yet.
+- **OC-0437**: from Clang's format checks, so only functions declared with
+  a format attribute (the C library and wrappers that say so).

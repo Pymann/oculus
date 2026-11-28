@@ -1,0 +1,59 @@
+# OC-0054, OC-0058, OC-0260 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): single_function_static, pointer_could_be_const, could_be_const.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: SingleFunctionStaticRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 54, "style.c90-.6.4.block_scope_if_single_function", "An object used in one function only is defined in that function", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "single_function_static", 54, "this object is used in one function only; define it inside that function", out]
+
+- class:
+    name: PointerConstRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 58, "style.c90-.6.6.pointer_to_const_if_possible", "A pointer that is never used to modify points to a const type", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "pointer_could_be_const", 58, "this pointer is never used to modify what it points to; make that const", out]
+
+- class:
+    name: ConstLocalRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 260, "style.cpp98-.6.6.const_if_unmodified", "A variable that is never modified is declared const", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "could_be_const", 260, "this variable is never modified; declare it const", out]

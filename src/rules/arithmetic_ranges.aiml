@@ -1,0 +1,42 @@
+# OC-0091, OC-0445 (catalogue in Pymann/coding-rules). They read marks that the
+# frontend sets (doc/ir.md): shift_out_of_range, zero_divisor.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ShiftRangeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 91, "safety.c90-.9.2.shift_in_range", "A shift distance is between zero and the operand width minus one", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "shift_out_of_range", 91, "this shift amount is negative or not less than the width of the shifted type", out]
+
+- class:
+    name: ZeroDivisorRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 445, "security.c90-.9.2.no_division_by_zero", "Divisors of / and % are never zero", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "zero_divisor", 445, "this divisor can be zero", out]

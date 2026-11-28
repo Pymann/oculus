@@ -344,6 +344,23 @@ inline int rule_errors(const std::vector<DiagSeen> &seen) {
     return count;
 }
 
+inline bool format_diagnostic(unsigned id);
+
+// The warnings that rules read stay on whatever the project's flags say
+// (batch 44): -w and -Werror are dropped, the rule warnings appended.
+inline tooling::ArgumentsAdjuster rule_warning_adjuster() {
+    return [](const tooling::CommandLineArguments &args, llvm::StringRef) {
+        tooling::CommandLineArguments out;
+        for (const std::string &arg : args) {
+            llvm::StringRef flag(arg);
+            if (flag == "-w" || flag == "-Werror" || flag.starts_with("-Werror=") || flag == "-pedantic-errors") continue;
+            out.push_back(arg);
+        }
+        for (const char *flag : {"-Wformat", "-Wshift-count-overflow", "-Wshift-count-negative", "-Wdivision-by-zero", "-Wvarargs"}) out.push_back(flag);
+        return out;
+    };
+}
+
 inline bool kept_diagnostic(unsigned id) {
     static const unsigned kept[] = {
         diag::ext_missing_type_specifier, diag::ext_implicit_function_decl_c99,
@@ -360,7 +377,21 @@ inline bool kept_diagnostic(unsigned id) {
         diag::ext_mismatched_exception_spec, diag::ext_register_storage_class, diag::warn_deprecated_register,
         diag::warn_cannot_pass_non_pod_arg_to_vararg, diag::warn_non_pod_vararg_with_format_string,
         diag::err_cannot_pass_to_vararg, diag::err_cannot_pass_to_vararg_format,
-        diag::err_cannot_pass_non_trivial_c_struct_to_vararg, diag::warn_explicit_instantiation_after_specialization};
+        diag::err_cannot_pass_non_trivial_c_struct_to_vararg, diag::warn_explicit_instantiation_after_specialization,
+        diag::warn_shift_gt_typewidth, diag::warn_shift_negative, diag::warn_remainder_division_by_zero};
+    for (unsigned one : kept) {
+        if (one == id) return true;
+    }
+    return format_diagnostic(id);
+}
+
+// The format string diagnostics that OC-0437 reports.
+inline bool format_diagnostic(unsigned id) {
+    static const unsigned kept[] = {
+        diag::warn_format_conversion_argument_type_mismatch, diag::warn_printf_insufficient_data_args,
+        diag::warn_printf_data_arg_not_used, diag::warn_format_invalid_conversion, diag::warn_printf_incomplete_specifier,
+        diag::warn_format_nonsensical_length, diag::warn_printf_asterisk_missing_arg, diag::warn_printf_asterisk_wrong_type,
+        diag::warn_printf_positional_arg_exceeds_data_args};
     for (unsigned one : kept) {
         if (one == id) return true;
     }
@@ -800,6 +831,9 @@ public:
         note_function_paths(decl);
         note_obsolescent(decl);
         note_batch42_decl(decl);
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            if (fn->doesThisDeclarationHaveABody() && user_location(sm_, fn->getLocation())) defined_functions_.push_back(fn);
+        }
         if (decl->getLocation().isValid()) decl_begins_[decl->getLocation().getRawEncoding()] = decl->getBeginLoc();
         note_graph_function(decl);
         if (unused_static(decl)) add_shape(rec, "unused_static");
@@ -2607,6 +2641,8 @@ public:
         finish_batch40();
         finish_batch41();
         finish_batch42();
+        finish_batch43();
+        finish_batch44();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -4694,6 +4730,7 @@ public:
                 auto parents = context_.getParents(*decay);
                 const CallExpr *call = parents.size() == 1 ? parents[0].get<CallExpr>() : nullptr;
                 bool called = call != nullptr && call->getCallee() == decay;
+                if (!called) decayed_functions_.insert(cast<FunctionDecl>(ref->getDecl())->getCanonicalDecl());
                 if (!called && !system_spelled(ref->getBeginLoc())) add_ast_mark("function_designator", sm_.getFileLoc(ref->getBeginLoc()));
             }
             return;
@@ -5232,6 +5269,368 @@ public:
                 if (sequenced_before(lock.stmt, call.second) && unconditional_below(lock.stmt, call.second) && !unlocked_between(lock.key, lock.stmt, call.second)) {
                     add_ast_mark("lock_twice", call.second->getBeginLoc());
                 }
+            }
+        }
+    }
+
+    // OC-0147: macro_param_bare at a use of a parameter in the body of a user
+    // function-like macro that stands next to an operator without parentheses
+    // (not after # or ##, not after an identifier or keyword, not `t *name`).
+    void note_macro_params(const Token &name, const MacroInfo *info) {
+        if (info == nullptr || !info->isFunctionLike() || !user_file_loc(name.getLocation())) return;
+        llvm::ArrayRef<Token> body = info->tokens();
+        if (body.size() < 2) return;
+        auto is_param = [&](const Token &tok) {
+            const IdentifierInfo *ident = tok.getIdentifierInfo();
+            if (ident == nullptr || ident->getName() == "__VA_ARGS__") return false;
+            for (const IdentifierInfo *param : info->params()) {
+                if (param == ident) return true;
+            }
+            return false;
+        };
+        auto binds = [](const Token &tok) {
+            return tok.isOneOf(tok::plus, tok::minus, tok::star, tok::slash, tok::percent, tok::lessless, tok::greatergreater,
+                               tok::less, tok::greater, tok::lessequal, tok::greaterequal, tok::equalequal, tok::exclaimequal,
+                               tok::amp, tok::caret, tok::pipe, tok::ampamp, tok::pipepipe, tok::question, tok::colon, tok::equal,
+                               tok::plusequal, tok::minusequal, tok::starequal, tok::slashequal, tok::percentequal, tok::ampequal,
+                               tok::pipeequal, tok::caretequal, tok::lesslessequal, tok::greatergreaterequal, tok::exclaim,
+                               tok::tilde, tok::plusplus, tok::minusminus);
+        };
+        for (size_t at = 0; at < body.size(); ++at) {
+            if (!is_param(body[at])) continue;
+            const Token *before = at > 0 ? &body[at - 1] : nullptr;
+            const Token *after = at + 1 < body.size() ? &body[at + 1] : nullptr;
+            if (before != nullptr && (before->isOneOf(tok::hash, tok::hashhash) || before->getIdentifierInfo() != nullptr)) continue;
+            if (after != nullptr && after->is(tok::hashhash)) continue;
+            // `t *name`, `(t *)`, `t &`: a declarator or cast, the parameter is a type.
+            const Token *next = at + 2 < body.size() ? &body[at + 2] : nullptr;
+            if (after != nullptr && after->isOneOf(tok::star, tok::amp, tok::ampamp) &&
+                (next == nullptr || next->getIdentifierInfo() != nullptr || next->isOneOf(tok::r_paren, tok::comma, tok::star, tok::amp))) continue;
+            // The whole right side of an assignment or initializer, or the middle of ?:, binds as a whole.
+            bool assigned = before != nullptr && before->isOneOf(tok::equal, tok::plusequal, tok::minusequal, tok::starequal, tok::slashequal,
+                                                                 tok::percentequal, tok::ampequal, tok::pipeequal, tok::caretequal,
+                                                                 tok::lesslessequal, tok::greatergreaterequal);
+            if (assigned && (after == nullptr || after->isOneOf(tok::semi, tok::comma, tok::r_paren, tok::r_brace))) continue;
+            if (before != nullptr && before->is(tok::question) && after != nullptr && after->is(tok::colon)) continue;
+            // C++: angle brackets, references and initializer colons are ambiguous in a macro body.
+            bool cxx = context_.getLangOpts().CPlusPlus;
+            auto ambiguous = [&](const Token *tok) {
+                return tok != nullptr && cxx && tok->isOneOf(tok::less, tok::greater, tok::amp, tok::ampamp, tok::star, tok::colon, tok::coloncolon);
+            };
+            bool ternary = false;
+            for (size_t back = 0; back < at; ++back) ternary = ternary || body[back].is(tok::question);
+            auto counts = [&](const Token *tok) {
+                if (tok == nullptr || !binds(*tok) || ambiguous(tok)) return false;
+                return !(tok->is(tok::colon) && !ternary);
+            };
+            bool bare = counts(before) || counts(after);
+            if (bare) {
+                add_spelled_mark("macro_param_bare", body[at].getLocation());
+                break;
+            }
+        }
+    }
+
+    // Batch 43 statement facts: relaxed_order (OC-0211, C: an atomic operation
+    // or fence with a constant order other than seq_cst) and the uses of
+    // file-scope static objects (OC-0054).
+    void note_batch43(const Stmt *stmt) {
+        const LangOptions &lang = context_.getLangOpts();
+        if (const auto *atomic = dyn_cast<AtomicExpr>(stmt)) {
+            bool invalid = false;
+            const char *spelled = sm_.getCharacterData(sm_.getSpellingLoc(atomic->getBuiltinLoc()), &invalid);
+            if (lang.CPlusPlus || invalid || spelled == nullptr || std::strncmp(spelled, "__c11_atomic", 12) != 0) return;
+            note_order(atomic->getOrder());
+            if (atomic->getOp() == AtomicExpr::AO__c11_atomic_compare_exchange_strong || atomic->getOp() == AtomicExpr::AO__c11_atomic_compare_exchange_weak) {
+                note_order(atomic->getOrderFail());
+            }
+            return;
+        }
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            unsigned builtin = call->getBuiltinCallee();
+            if (!lang.CPlusPlus && (builtin == Builtin::BI__c11_atomic_thread_fence || builtin == Builtin::BI__c11_atomic_signal_fence) && call->getNumArgs() == 1) {
+                note_order(call->getArg(0));
+            }
+            return;
+        }
+        if (const auto *address = dyn_cast<UnaryOperator>(stmt)) {
+            if (address->getOpcode() != UO_AddrOf) return;
+            const auto *ref = dyn_cast<DeclRefExpr>(address->getSubExpr()->IgnoreParenImpCasts());
+            if (ref == nullptr) return;
+            if (const auto *fn = dyn_cast<FunctionDecl>(ref->getDecl())) decayed_functions_.insert(fn->getCanonicalDecl());
+            if (const auto *var = dyn_cast<VarDecl>(ref->getDecl())) static_escapes_.insert(var);
+            return;
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(stmt);
+        // A function named other than as the callee of a call can be stored as a pointer.
+        if (const auto *named = ref != nullptr ? dyn_cast<FunctionDecl>(ref->getDecl()) : nullptr) {
+            auto parents = context_.getParents(*ref);
+            const auto *decay = parents.size() == 1 ? parents[0].get<ImplicitCastExpr>() : nullptr;
+            bool callee = false;
+            if (decay != nullptr) {
+                auto above = context_.getParents(*decay);
+                const auto *call = above.size() == 1 ? above[0].get<CallExpr>() : nullptr;
+                callee = call != nullptr && call->getCallee() == decay;
+            }
+            if (!callee) decayed_functions_.insert(named->getCanonicalDecl());
+            return;
+        }
+        const auto *var = ref != nullptr ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+        if (var == nullptr || !var->hasGlobalStorage() || !var->isFileVarDecl() || var->isExternallyVisible() || !sm_.isInMainFile(sm_.getExpansionLoc(var->getLocation()))) return;
+        const Decl *home = enclosing_function_decl(ref);
+        if (const auto *fn = dyn_cast_or_null<FunctionDecl>(home)) home = fn->getCanonicalDecl();
+        static_users_[var->getCanonicalDecl()].insert(home);
+        // An array passed on (decayed, not subscripted) lets its address escape.
+        auto parents = context_.getParents(*ref);
+        if (parents.size() == 1) {
+            if (const auto *decay = parents[0].get<ImplicitCastExpr>()) {
+                auto above = context_.getParents(*decay);
+                bool subscript = above.size() == 1 && above[0].get<ArraySubscriptExpr>() != nullptr;
+                if (decay->getCastKind() == CK_ArrayToPointerDecay && !subscript) static_escapes_.insert(var);
+            }
+        }
+    }
+
+    // Is this use only cast to void ((void)p, ARG_UNUSED)?
+    bool voided(const Expr *use) const {
+        const Expr *node = use;
+        for (int step = 0; step < 6; ++step) {
+            auto parents = context_.getParents(*node);
+            if (parents.size() != 1) return false;
+            const Expr *above = parents[0].get<Expr>();
+            if (above == nullptr) return false;
+            if (const auto *cast = dyn_cast<CStyleCastExpr>(above)) return cast->getCastKind() == CK_ToVoid;
+            if (!isa<ParenExpr>(above) && !isa<ImplicitCastExpr>(above)) return false;
+            node = above;
+        }
+        return false;
+    }
+
+    void note_order(const Expr *order) {
+        if (order == nullptr || order->isValueDependent()) return;
+        Expr::EvalResult value;
+        if (!order->EvaluateAsInt(value, context_)) return;
+        if (value.Val.getInt().getExtValue() != 5) add_ast_mark("relaxed_order", sm_.getFileLoc(order->getBeginLoc()));
+    }
+
+    // OC-0058: is this use of a pointer parameter provably read only (state
+    // 0: the pointer variable, 1: the pointer value, 2: the object pointed to)?
+    bool read_only_use(const Expr *expr, int state, int depth) const {
+        if (depth > 16) return false;
+        auto parents = context_.getParents(*expr);
+        if (parents.size() != 1) return false;
+        const Expr *above = parents[0].get<Expr>();
+        if (above == nullptr) return state == 1 && parents[0].get<IfStmt>() != nullptr;
+        if (isa<ParenExpr>(above)) return read_only_use(above, state, depth + 1);
+        if (isa<UnaryExprOrTypeTraitExpr>(above)) return true;
+        const auto *cast = dyn_cast<ImplicitCastExpr>(above);
+        const auto *unary = dyn_cast<UnaryOperator>(above);
+        const auto *binary = dyn_cast<BinaryOperator>(above);
+        if (state == 0) {
+            if (cast != nullptr && cast->getCastKind() == CK_LValueToRValue) return read_only_use(cast, 1, depth + 1);
+            if (unary != nullptr && unary->isIncrementDecrementOp()) return true;
+            if (binary != nullptr && binary->isAssignmentOp() && binary->getLHS()->IgnoreParens() == expr) return true;
+            return false;
+        }
+        if (state == 1) {
+            if (cast != nullptr) {
+                if (cast->getCastKind() == CK_PointerToBoolean) return true;
+                QualType target = cast->getType();
+                if ((cast->getCastKind() == CK_NoOp || cast->getCastKind() == CK_BitCast) && target->isPointerType() && target->getPointeeType().isConstQualified()) return true;
+                return false;
+            }
+            if (const auto *cstyle = dyn_cast<CStyleCastExpr>(above)) return cstyle->getCastKind() == CK_ToVoid;
+            if (unary != nullptr) {
+                if (unary->getOpcode() == UO_Deref) return read_only_use(unary, 2, depth + 1);
+                return unary->getOpcode() == UO_LNot;
+            }
+            if (const auto *element = dyn_cast<ArraySubscriptExpr>(above)) {
+                return element->getBase()->IgnoreParenImpCasts() == expr->IgnoreParenImpCasts() || element->getBase() == expr ? read_only_use(element, 2, depth + 1) : true;
+            }
+            if (const auto *member = dyn_cast<MemberExpr>(above)) return member->isArrow() && read_only_use(member, 2, depth + 1);
+            if (binary != nullptr) {
+                if (binary->isComparisonOp() || binary->isLogicalOp()) return true;
+                if (binary->isAdditiveOp() && binary->getType()->isPointerType()) return read_only_use(binary, 1, depth + 1);
+                return binary->isAdditiveOp() && binary->getType()->isIntegerType();
+            }
+            if (const auto *choice = dyn_cast<ConditionalOperator>(above)) {
+                return choice->getCond()->IgnoreParenImpCasts() == expr->IgnoreParenImpCasts() || read_only_use(choice, 1, depth + 1);
+            }
+            if (const auto *call = dyn_cast<CallExpr>(above)) {
+                const FunctionDecl *callee = call->getDirectCallee();
+                if (callee == nullptr) return false;
+                for (unsigned at = 0; at < call->getNumArgs() && at < callee->getNumParams(); ++at) {
+                    if (call->getArg(at) == expr) {
+                        QualType param = callee->getParamDecl(at)->getType();
+                        return param->isPointerType() && param->getPointeeType().isConstQualified();
+                    }
+                }
+                return false;
+            }
+            return false;
+        }
+        if (cast != nullptr) {
+            if (cast->getCastKind() == CK_LValueToRValue) return true;
+            if (cast->getCastKind() == CK_ArrayToPointerDecay) return read_only_use(cast, 1, depth + 1);
+            return false;
+        }
+        if (const auto *member = dyn_cast<MemberExpr>(above)) return !member->isArrow() && read_only_use(member, 2, depth + 1);
+        if (unary != nullptr && unary->getOpcode() == UO_AddrOf) return read_only_use(unary, 1, depth + 1);
+        if (const auto *call = dyn_cast<CXXMemberCallExpr>(above)) {
+            const CXXMethodDecl *method = call->getMethodDecl();
+            return method != nullptr && method->isConst() && call->getImplicitObjectArgument() == expr;
+        }
+        return false;
+    }
+
+    // Batch 44 statement facts: the operator and right operand of shifts and
+    // divisions (OC-0091, OC-0445, matched with Clang's diagnostics, which
+    // leave out unreachable code), divisions by an unchecked parameter
+    // (OC-0445) and va_arg of a promotable type (OC-0429).
+    void note_batch44(const Stmt *stmt) {
+        if (const auto *arg = dyn_cast<VAArgExpr>(stmt)) {
+            QualType type = arg->getWrittenTypeInfo() != nullptr ? arg->getWrittenTypeInfo()->getType() : arg->getType();
+            type = type.getCanonicalType().getUnqualifiedType();
+            bool promoted = !type->isDependentType() && (context_.isPromotableIntegerType(type) || type->isSpecificBuiltinType(BuiltinType::Float));
+            if (promoted) add_ast_mark("va_arg_promoted", arg->getBeginLoc());
+            return;
+        }
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            BinaryOperatorKind kind = binary->getOpcode();
+            const Expr *rhs = binary->getRHS();
+            bool shift = kind == BO_Shl || kind == BO_Shr || kind == BO_ShlAssign || kind == BO_ShrAssign;
+            bool divide = kind == BO_Div || kind == BO_Rem || kind == BO_DivAssign || kind == BO_RemAssign;
+            if (!shift && !divide) return;
+            operator_rhs_[binary->getOperatorLoc()] = rhs->getBeginLoc();
+            if (!divide || !rhs->getType()->isIntegerType() || binary->isValueDependent() || binary->isTypeDependent()) return;
+            const auto *ref = dyn_cast<DeclRefExpr>(rhs->IgnoreParenImpCasts());
+            const auto *param = ref != nullptr ? dyn_cast<ParmVarDecl>(ref->getDecl()) : nullptr;
+            const auto *fn = dyn_cast_or_null<FunctionDecl>(enclosing_function_decl(binary));
+            if (param == nullptr || fn == nullptr || fn->isTemplateInstantiation() || param->getDeclContext() != fn) return;
+            parameter_divisors_.push_back({param, rhs->getBeginLoc()});
+            return;
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(stmt);
+        const auto *param = ref != nullptr ? dyn_cast<ParmVarDecl>(ref->getDecl()) : nullptr;
+        if (param == nullptr || checked_params_.count(param) > 0) return;
+        // A parameter that is compared, tested, written or has its address taken counts as checked.
+        const Stmt *node = ref;
+        for (int step = 0; step < 8; ++step) {
+            auto parents = context_.getParents(*node);
+            if (parents.size() != 1) {
+                checked_params_.insert(param);
+                return;
+            }
+            const Stmt *above = parents[0].get<Stmt>();
+            if (above == nullptr) return;
+            if (isa<ParenExpr>(above) || isa<ImplicitCastExpr>(above) || isa<ExplicitCastExpr>(above)) {
+                node = above;
+                continue;
+            }
+            bool tested = false;
+            if (const auto *binary = dyn_cast<BinaryOperator>(above)) {
+                tested = binary->isComparisonOp() || binary->isLogicalOp() || (binary->isAssignmentOp() && binary->getLHS() == node);
+            }
+            if (const auto *unary = dyn_cast<UnaryOperator>(above)) {
+                tested = unary->getOpcode() == UO_LNot || unary->getOpcode() == UO_AddrOf || unary->isIncrementDecrementOp();
+            }
+            if (const auto *branch = dyn_cast<IfStmt>(above)) tested = branch->getCond() == node;
+            if (const auto *loop = dyn_cast<WhileStmt>(above)) tested = loop->getCond() == node;
+            if (const auto *loop = dyn_cast<DoStmt>(above)) tested = loop->getCond() == node;
+            if (const auto *loop = dyn_cast<ForStmt>(above)) tested = loop->getCond() == node;
+            if (const auto *choice = dyn_cast<SwitchStmt>(above)) tested = choice->getCond() == node;
+            if (const auto *choice = dyn_cast<ConditionalOperator>(above)) tested = choice->getCond() == node;
+            if (isa<BinaryConditionalOperator>(above)) tested = true;
+            if (tested) checked_params_.insert(param);
+            return;
+        }
+    }
+
+    // Batch 44 unit facts: shift_out_of_range and zero_divisor from Clang's
+    // diagnostics at the right operand, unchecked parameter divisors, and
+    // format_mismatch (OC-0437) from the format string diagnostics.
+    void finish_batch44() {
+        if (diag_sink != nullptr) {
+            for (const DiagSeen &one : *diag_sink) {
+                unsigned id = one.id;
+                if (one.loc.isInvalid()) continue;
+                auto found = operator_rhs_.find(one.loc);
+                SourceLocation rhs = found != operator_rhs_.end() ? found->second : one.loc;
+                if (id == diag::warn_shift_gt_typewidth || id == diag::warn_shift_negative) add_ast_mark("shift_out_of_range", rhs);
+                if (id == diag::warn_remainder_division_by_zero) add_ast_mark("zero_divisor", rhs);
+                if (format_diagnostic(id)) add_ast_mark("format_mismatch", one.loc);
+            }
+        }
+        for (const auto &divisor : parameter_divisors_) {
+            if (checked_params_.count(divisor.first) == 0) add_ast_mark("zero_divisor", divisor.second);
+        }
+    }
+
+    // Batch 43 unit facts: single_function_static (OC-0054), pointer_could_be_const
+    // (OC-0058: a pointer parameter of a defined function whose address is not
+    // taken, not virtual, pointing to a non-const object type that is not void,
+    // a pointer or written through a typedef, every use of it read only) and
+    // could_be_const (OC-0260, C++: a local never modified per Clang's
+    // ExprMutationAnalyzer).
+    void finish_batch43() {
+        for (const auto &entry : static_users_) {
+            const VarDecl *var = entry.first;
+            bool placed = var->getLocation().isMacroID() || var->hasAttr<SectionAttr>() || var->hasAttr<UsedAttr>();
+            if (entry.second.size() == 1 && *entry.second.begin() != nullptr && static_escapes_.count(var) == 0 && !var->getType().isVolatileQualified() && !placed) {
+                add_ast_mark("single_function_static", var->getLocation());
+            }
+        }
+        for (const FunctionDecl *fn : defined_functions_) {
+            const auto *method = dyn_cast<CXXMethodDecl>(fn);
+            bool fixed = (method != nullptr && (method->isVirtual() || method->getParent()->isLambda())) || decayed_functions_.count(fn->getCanonicalDecl()) > 0 || fn->isMain() ||
+                         fn->isDependentContext() || fn->isTemplateInstantiation() || fn->getLocation().isMacroID();
+            const Stmt *body = fn->getBody();
+            if (fixed || body == nullptr) continue;
+            std::map<const ParmVarDecl *, std::vector<const DeclRefExpr *>> uses;
+            std::vector<const Stmt *> work = {body};
+            std::vector<const VarDecl *> locals;
+            while (!work.empty()) {
+                const Stmt *node = work.back();
+                work.pop_back();
+                if (node == nullptr) continue;
+                if (const auto *ref = dyn_cast<DeclRefExpr>(node)) {
+                    if (const auto *param = dyn_cast<ParmVarDecl>(ref->getDecl())) uses[param].push_back(ref);
+                }
+                if (const auto *group = dyn_cast<DeclStmt>(node)) {
+                    for (const Decl *one : group->decls()) {
+                        if (const auto *var = dyn_cast<VarDecl>(one)) locals.push_back(var);
+                    }
+                }
+                if (isa<LambdaExpr>(node)) continue;
+                for (const Stmt *child : node->children()) work.push_back(child);
+            }
+            for (const ParmVarDecl *param : fn->parameters()) {
+                QualType type = param->getType();
+                if (!type->isPointerType() || isa<TypedefType>(type.getTypePtr()) || param->getTypeSourceInfo() == nullptr) continue;
+                QualType pointee = type->getPointeeType();
+                if (pointee.isConstQualified() || pointee->isVoidType() || pointee->isPointerType() || pointee->isFunctionType() || pointee->isDependentType()) continue;
+                if (isa<TypedefType>(param->getTypeSourceInfo()->getType().getTypePtr())) continue;
+                auto found = uses.find(param);
+                if (found == uses.end() || found->second.empty()) continue;
+                bool read_only = true;
+                bool used = false;
+                for (const DeclRefExpr *use : found->second) {
+                    read_only = read_only && read_only_use(use, 0, 0);
+                    used = used || !voided(use);
+                }
+                if (read_only && used) add_ast_mark("pointer_could_be_const", param->getBeginLoc());
+            }
+            if (!context_.getLangOpts().CPlusPlus) continue;
+            std::unique_ptr<ExprMutationAnalyzer> analyzer;
+            for (const VarDecl *var : locals) {
+                QualType type = var->getType();
+                bool candidate = var->hasLocalStorage() && !isa<ParmVarDecl>(var) && var->getInit() != nullptr && !type.isConstQualified() &&
+                                 !type->isReferenceType() && !type.isVolatileQualified() && !type->isDependentType() && !isa<DecompositionDecl>(var) &&
+                                 !var->isExceptionVariable() && !var->getLocation().isMacroID() && !var->isCXXForRangeDecl() &&
+                                 user_location(sm_, var->getLocation()) && !type->isRecordType() && !type->isArrayType();
+                if (!candidate) continue;
+                if (!analyzer) analyzer = std::make_unique<ExprMutationAnalyzer>(*body, context_);
+                if (!analyzer->isMutated(var)) add_ast_mark("could_be_const", var->getLocation());
             }
         }
     }
@@ -6453,6 +6852,8 @@ public:
         note_batch40(stmt);
         note_batch41(stmt);
         note_batch42(stmt);
+        note_batch43(stmt);
+        note_batch44(stmt);
         if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
@@ -7225,6 +7626,13 @@ private:
     std::set<unsigned> ctype_args_;
     std::map<std::string, std::string> macro_prefixes_;
     std::map<std::string, std::string> external_prefixes_;
+    std::map<const VarDecl *, std::set<const Decl *>> static_users_;   // nullptr: used outside a function
+    std::set<const VarDecl *> static_escapes_;
+    std::map<SourceLocation, SourceLocation> operator_rhs_;
+    std::vector<std::pair<const ParmVarDecl *, SourceLocation>> parameter_divisors_;
+    std::set<const ParmVarDecl *> checked_params_;
+    std::set<const FunctionDecl *> decayed_functions_;
+    std::vector<const FunctionDecl *> defined_functions_;
     struct MutexOp {
         int kind = 0;   // 1 lock, 2 unlock, 3 destroy, 4 call of a function that locks
         std::pair<const ValueDecl *, bool> key;   // the variable and whether it was written as &variable
@@ -7298,6 +7706,7 @@ public:
         tables_->note_define(pp_, name, directive);
         tables_->note_main_define(name, directive != nullptr ? directive->getMacroInfo() : nullptr);
         tables_->note_macro_prefix(name);
+        tables_->note_macro_params(name, directive != nullptr ? directive->getMacroInfo() : nullptr);
     }
     void MacroUndefined(const Token &name, const MacroDefinition &definition,
                         const MacroDirective *) override {
@@ -7632,6 +8041,7 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
         tooling::ClangTool tool(database, {file});
         tool.appendArgumentsAdjuster(tooling::getClangStripOutputAdjuster());
         tool.appendArgumentsAdjuster(tooling::getClangStripDependencyFileAdjuster());
+        tool.appendArgumentsAdjuster(rule_warning_adjuster());
         tool.setDiagnosticConsumer(&quiet);
         tool.setPrintErrorMessage(false);
         UnitActionFactory factory(result);

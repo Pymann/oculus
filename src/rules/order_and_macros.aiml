@@ -1,0 +1,42 @@
+# OC-0147, OC-0211 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): macro_param_bare, relaxed_order.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: MacroParamParenRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 147, "safety.c90-.12.2.parenthesized_macro_params", "Macro parameters that form expressions are parenthesized in the body", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "macro_param_bare", 147, "this macro parameter is used in an expression without parentheses", out]
+
+- class:
+    name: SeqCstOrderRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 211, "safety.c11-.18.1.sequentially_consistent", "Memory synchronization uses sequentially consistent ordering", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "relaxed_order", 211, "this atomic operation uses a memory order other than memory_order_seq_cst", out]

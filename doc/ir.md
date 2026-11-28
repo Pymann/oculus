@@ -821,7 +821,29 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   statement with no unlock in between, in a function that unlocks that mutex
   elsewhere) and `lock_twice` (C11 mutexes not initialized recursive: a
   second lock, or a call of a unit function that locks the same global
-  mutex, while it is held).  IrDecl shape `unused_static` (C): a static object of
+  mutex, while it is held).
+  Batch 43 marks: `single_function_static` (C: a static object at file scope
+  of the main file used in exactly one function, not written by a macro, not
+  in a section, not `used`, whose address is not taken outside that
+  function), `pointer_could_be_const` (a pointer parameter of a definition
+  in the main file through which nothing is written or passed on as
+  mutable, used other than in a `(void)` cast), `could_be_const` (C++: a
+  local of scalar or pointer type with an initializer that
+  ExprMutationAnalyzer finds never changed), `macro_param_bare` (a function
+  macro parameter in the body next to an operator without parentheses;
+  declarators, casts and in C++ template and scope tokens are skipped) and
+  `relaxed_order` (a `__c11_atomic` builtin or C11 fence with an order other
+  than seq_cst).
+  Batch 44 marks: `shift_out_of_range` and `zero_divisor` (at the right
+  operand of a shift or division that Clang's warnings find out of range or
+  zero in reachable code), `zero_divisor` also for an integer division by a
+  parameter of the function that is never compared, tested, written or has
+  its address taken there, `va_arg_promoted` (va_arg of a promotable
+  integer type or float) and `format_mismatch` (Clang's format string
+  warnings: argument type, missing or unused arguments, invalid or
+  incomplete conversions, nonsensical length, `*` arguments). The frontend
+  drops `-w`, `-Werror` and `-pedantic-errors` from the unit's command and
+  appends the warnings these marks read.  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,
