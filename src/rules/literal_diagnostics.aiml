@@ -1,0 +1,59 @@
+# OC-0182, OC-0189, OC-0329 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): constant_macro_arg, atomic_void, mixed_string_prefix.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ConstantMacroArgRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 182, "safety.c99-.3.3.integer_constant_macro_form", "The argument of an INTn_C style macro is a plain fitting literal", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "constant_macro_arg", 182, "the argument of this integer constant macro is not a plain unsuffixed literal that fits the type", out]
+
+- class:
+    name: AtomicVoidRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 189, "safety.c11-.18.1.no_atomic_void", "_Atomic is not applied to void", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "atomic_void", 189, "_Atomic is applied to void", out]
+
+- class:
+    name: MixedStringPrefixRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 329, "safety.c90-.3.3.no_mixed_prefix_concatenation", "String literals with different encoding prefixes are not concatenated", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "mixed_string_prefix", 329, "string literals with different encoding prefixes are concatenated", out]

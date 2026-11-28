@@ -111,6 +111,10 @@
 - import: "src/rules/return_paths.aiml"
 - import: "src/rules/local_lifetime.aiml"
 - import: "src/rules/stream_objects.aiml"
+- import: "src/rules/declaration_diagnostics.aiml"
+- import: "src/rules/include_directives.aiml"
+- import: "src/rules/literal_diagnostics.aiml"
+- import: "src/rules/handler_jumps.aiml"
 
 - class:
     name: RuleRegistry
@@ -646,6 +650,14 @@
             - call: [<.rules.push, noreturn_returns]
             - decl: [eof_raw, ptr<Rule>, { new: EofRawResultRule }]
             - call: [<.rules.push, eof_raw]
+            - call: [<.register_third]
+
+      # The third part of the built-in rules.
+      - def:
+          name: register_third
+          args: []
+          return: void
+          body:
             - decl: [r0123, ptr<Rule>, { new: MissingReturnRule }]
             - call: [<.rules.push, r0123]
             - decl: [r0194, ptr<Rule>, { new: MarkNoreturnRule }]
@@ -660,6 +672,28 @@
             - call: [<.rules.push, r0176]
             - decl: [r0177, ptr<Rule>, { new: ClosedStreamRule }]
             - call: [<.rules.push, r0177]
+            - decl: [r0046, ptr<Rule>, { new: ImplicitIntRule }]
+            - call: [<.rules.push, r0046]
+            - decl: [r0122, ptr<Rule>, { new: UndeclaredCallRule }]
+            - call: [<.rules.push, r0122]
+            - decl: [r0414, ptr<Rule>, { new: LinkageConflictRule }]
+            - call: [<.rules.push, r0414]
+            - decl: [r0141, ptr<Rule>, { new: HeaderNameCharsRule }]
+            - call: [<.rules.push, r0141]
+            - decl: [r0142, ptr<Rule>, { new: IncludeFormRule }]
+            - call: [<.rules.push, r0142]
+            - decl: [r0154, ptr<Rule>, { new: OrphanConditionalRule }]
+            - call: [<.rules.push, r0154]
+            - decl: [r0182, ptr<Rule>, { new: ConstantMacroArgRule }]
+            - call: [<.rules.push, r0182]
+            - decl: [r0189, ptr<Rule>, { new: AtomicVoidRule }]
+            - call: [<.rules.push, r0189]
+            - decl: [r0329, ptr<Rule>, { new: MixedStringPrefixRule }]
+            - call: [<.rules.push, r0329]
+            - decl: [r0302, ptr<Rule>, { new: JumpIntoTryRule }]
+            - call: [<.rules.push, r0302]
+            - decl: [r0386, ptr<Rule>, { new: EarlyCatchAllRule }]
+            - call: [<.rules.push, r0386]
       - def:
           name: rule_count
           args: []

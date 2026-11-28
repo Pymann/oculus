@@ -1,0 +1,42 @@
+# OC-0302, OC-0386 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): jump_into_try, early_catch_all.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: JumpIntoTryRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 302, "safety.cpp98-.17.1.no_jump_into_try", "goto and switch do not jump into a try block or handler", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "jump_into_try", 302, "this jump enters a try block or handler", out]
+
+- class:
+    name: EarlyCatchAllRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 386, "safety.cpp98-.17.2.catch_all_handler_last", "A catch(...) handler is the last handler of its try block", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "early_catch_all", 386, "catch(...) is not the last handler of its try block", out]

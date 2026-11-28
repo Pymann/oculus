@@ -1,0 +1,59 @@
+# OC-0046, OC-0122, OC-0414 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): implicit_int, undeclared_call, linkage_conflict.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ImplicitIntRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 46, "safety.c90-.6.2.explicit_types", "Every declaration names its type; no implicit int", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "implicit_int", 46, "this declaration has no type specifier and defaults to int; name the type", out]
+
+- class:
+    name: UndeclaredCallRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 122, "safety.c90-c17.11.1.no_implicit_declaration", "Every called function has been declared", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "undeclared_call", 122, "this function is called without a prior declaration", out]
+
+- class:
+    name: LinkageConflictRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 414, "safety.c90-.6.3.consistent_linkage", "An identifier is not declared with both internal and external linkage", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "linkage_conflict", 414, "this identifier is declared with both internal and external linkage", out]

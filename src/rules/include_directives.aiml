@@ -1,0 +1,59 @@
+# OC-0141, OC-0142, OC-0154 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): header_name_chars, include_form, orphan_conditional.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: HeaderNameCharsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 141, "safety.c90-.12.1.plain_header_name", "Header names contain no quote, backslash or comment characters", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "header_name_chars", 141, "this header name contains a quote, a backslash or comment characters", out]
+
+- class:
+    name: IncludeFormRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 142, "safety.c90-.12.1.include_form", "#include is followed by <name> or \"name\"", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "include_form", 142, "#include is not followed by <name> or \"name\"", out]
+
+- class:
+    name: OrphanConditionalRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 154, "safety.c90-.12.3.conditional_in_one_file", "#else, #elif and #endif are in the same file as their #if", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "orphan_conditional", 154, "this directive has no matching #if in the same file", out]

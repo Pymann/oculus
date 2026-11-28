@@ -21,6 +21,8 @@
 #include "clang/Analysis/Analyses/ExprMutationAnalyzer.h"
 #include "clang/Analysis/CFG.h"
 #include "clang/Basic/Builtins.h"
+#include "clang/Basic/DiagnosticLex.h"
+#include "clang/Basic/DiagnosticSema.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/Version.h"
@@ -306,6 +308,56 @@ struct NodeRec {
     // pointer constant)
     std::string shape;
 };
+
+// Diagnostics that rules report (batch 38): the consumer keeps the ones listed
+// in kept_diagnostic, the tables turn them into marks at the end of the unit.
+struct DiagSeen {
+    unsigned id = 0;
+    SourceLocation loc;
+    bool atomic_void = false;   // err_atomic_specifier_bad_type on void
+    bool try_scope = false;     // a jump whose notes name a try block or handler
+    bool odd_name = false;      // err_pp_file_not_found of a name with ' \\ " /* or //
+    bool error = false;         // reported as an error (not a warning)
+};
+inline thread_local std::vector<DiagSeen> *diag_sink = nullptr;
+
+// The kept errors that a rule reports as a finding (batch 38).  They do not
+// make the unit unclean: Clang recovers from them, and the finding says what
+// is wrong.  An unterminated #if counts only when an #endif or #else without
+// #if was seen too (the conditional spans files, OC-0154).
+inline int rule_errors(const std::vector<DiagSeen> &seen) {
+    bool orphan = false;
+    for (const DiagSeen &one : seen) {
+        if (one.id == diag::err_pp_endif_without_if || one.id == diag::pp_err_else_without_if || one.id == diag::pp_err_elif_without_if) orphan = true;
+    }
+    int count = 0;
+    for (const DiagSeen &one : seen) {
+        if (!one.error) continue;
+        bool reported = true;
+        if (one.id == diag::err_atomic_specifier_bad_type) reported = one.atomic_void;
+        if (one.id == diag::err_goto_into_protected_scope || one.id == diag::err_switch_into_protected_scope) reported = one.try_scope;
+        if (one.id == diag::err_pp_file_not_found) reported = one.odd_name;
+        if (one.id == diag::err_pp_unterminated_conditional) reported = orphan;
+        if (reported) ++count;
+    }
+    return count;
+}
+
+inline bool kept_diagnostic(unsigned id) {
+    static const unsigned kept[] = {
+        diag::ext_missing_type_specifier, diag::ext_implicit_function_decl_c99,
+        diag::warn_implicit_function_decl, diag::ext_implicit_lib_function_decl,
+        diag::ext_implicit_lib_function_decl_c99, diag::err_pp_expects_filename,
+        diag::err_pp_endif_without_if, diag::pp_err_else_without_if, diag::pp_err_elif_without_if,
+        diag::err_atomic_specifier_bad_type, diag::err_goto_into_protected_scope,
+        diag::err_switch_into_protected_scope, diag::err_early_catch_all,
+        diag::err_unsupported_string_concat, diag::err_static_non_static, diag::err_non_static_static,
+        diag::err_pp_file_not_found, diag::err_pp_unterminated_conditional};
+    for (unsigned one : kept) {
+        if (one == id) return true;
+    }
+    return false;
+}
 
 // The tables of one TU, filled while the AST is alive.
 class Tables {
@@ -738,6 +790,7 @@ public:
         note_throwing_bodies(decl);
         note_noreturn_returns(decl);
         note_function_paths(decl);
+        if (decl->getLocation().isValid()) decl_begins_[decl->getLocation().getRawEncoding()] = decl->getBeginLoc();
         note_graph_function(decl);
         if (unused_static(decl)) add_shape(rec, "unused_static");
         if (throwing_static(decl)) add_shape(rec, "throwing_static");
@@ -2296,6 +2349,10 @@ public:
         rec.name_pos = pos_of(sm_.getExpansionLoc(name.getLocation()));
         rec.function_like = info->isFunctionLike();
         rec.defined_file_uid = file_of(defined);
+        static const llvm::Regex constant_macro("^U?INT(8|16|32|64|MAX)_C$");
+        if (args != nullptr && info->getNumParams() == 1 && args->getNumMacroArguments() == 1 && constant_macro.match(rec.name)) {
+            note_constant_macro(pp, rec.name, args);
+        }
         if (args != nullptr && info->getNumParams() == 1 && args->getNumMacroArguments() == 1) {
             const Token *tok = args->getUnexpArgument(0);
             if (tok != nullptr && tok->isNot(tok::eof)) rec.argument_pos = pos_of(sm_.getSpellingLoc(tok->getLocation()));
@@ -2535,6 +2592,7 @@ public:
         finish_batch35();
         finish_batch36();
         finish_batch37();
+        finish_diagnostics();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -2621,6 +2679,48 @@ public:
         return -1;
     }
 
+    // OC-0141: a header name of an #include that holds ', \\, /* or // (and "
+    // between < and >): mark header_name_chars at the opening " or <.
+    void note_header_name(std::string &out, FileID fid, llvm::StringRef buffer, unsigned from) const {
+        size_t eol = buffer.find('\n', from);
+        if (eol == llvm::StringRef::npos) eol = buffer.size();
+        llvm::StringRef rest = buffer.slice(from, eol).ltrim(" \t");
+        if (rest.empty() || (rest[0] != '"' && rest[0] != '<')) return;
+        size_t stop = rest.find(rest[0] == '<' ? '>' : '"', 1);
+        if (stop == llvm::StringRef::npos) return;
+        llvm::StringRef name = rest.substr(1, stop - 1);
+        bool odd = name.contains('\'') || name.contains('\\') || name.contains("/*") || name.contains("//") ||
+                   (rest[0] == '<' && name.contains('"'));
+        if (odd) add_mark(out, "header_name_chars", fid, static_cast<unsigned>(rest.data() - buffer.data()));
+    }
+
+    // OC-0182: the argument of INTn_C, UINTn_C, INTMAX_C or UINTMAX_C that is
+    // not one unsuffixed integer literal within the range of the type.
+    void note_constant_macro(Preprocessor &pp, llvm::StringRef macro, const MacroArgs *args) {
+        const Token *tok = args->getUnexpArgument(0);
+        if (tok == nullptr || tok->is(tok::eof)) return;
+        // A macro name as the whole argument: what it expands to is not looked at.
+        if (tok->isAnyIdentifier() && (tok + 1)->is(tok::eof)) return;
+        bool plain = tok->is(tok::numeric_constant) && (tok + 1)->is(tok::eof);
+        if (plain) {
+            std::string spelling = pp.getSpelling(*tok);
+            static const llvm::Regex digits("^(0[xX][0-9a-fA-F]+|[0-9]+)$");
+            unsigned long long value = 0;
+            plain = digits.match(spelling) && !llvm::StringRef(spelling).getAsInteger(0, value);
+            bool wide = macro.contains("MAX");
+            unsigned bits = 64;
+            if (!wide) {
+                llvm::StringRef width = macro.drop_front(macro.starts_with("U") ? 4 : 3);
+                width = width.drop_back(2);
+                if (width.getAsInteger(10, bits)) bits = 64;
+            }
+            bool is_unsigned = macro.starts_with("U");
+            unsigned long long limit = is_unsigned ? (bits >= 64 ? ~0ULL : (1ULL << bits) - 1) : (1ULL << (bits - 1)) - 1;
+            plain = plain && value <= limit;
+        }
+        if (!plain) add_ast_mark("constant_macro_arg", tok->getLocation());
+    }
+
     static bool known_directive(llvm::StringRef name) {
         static const char *const names[] = {"if", "ifdef", "ifndef", "elif", "elifdef", "elifndef", "else",
                                             "endif", "define", "undef", "include", "include_next", "import",
@@ -2696,6 +2796,7 @@ public:
                     if (!known_directive(name)) add_mark(out, "invalid_directive", fid, hash_offset);
                     bool include = name == "include" || name == "include_next" || name == "import";
                     if (include && code_seen && !offset_skipped(fid, hash_offset)) add_mark(out, "late_include", fid, hash_offset);
+                    if (include && !offset_skipped(fid, hash_offset)) note_header_name(out, fid, buffer, offset + static_cast<unsigned>(text.size()));
                 } else if (!tok.isOneOf(tok::numeric_constant, tok::comment)) {
                     add_mark(out, "invalid_directive", fid, hash_offset);
                 }
@@ -4466,6 +4567,47 @@ public:
             }
         }
         return false;
+    }
+
+    // Batch 38 marks from diagnostics (DiagSeen): implicit_int,
+    // undeclared_call, include_form, orphan_conditional, atomic_void,
+    // jump_into_try, early_catch_all, mixed_string_prefix, linkage_conflict.
+    void finish_diagnostics() {
+        if (diag_sink == nullptr) return;
+        for (const DiagSeen &one : *diag_sink) {
+            unsigned id = one.id;
+            if (one.loc.isInvalid()) continue;
+            if (id == diag::ext_missing_type_specifier) add_ast_mark("implicit_int", declaration_begin(one.loc));
+            if (id == diag::err_static_non_static || id == diag::err_non_static_static) add_ast_mark("linkage_conflict", declaration_begin(one.loc));
+            if (id == diag::ext_implicit_function_decl_c99 || id == diag::warn_implicit_function_decl || id == diag::ext_implicit_lib_function_decl || id == diag::ext_implicit_lib_function_decl_c99) {
+                add_ast_mark("undeclared_call", one.loc);
+            }
+            if (id == diag::err_pp_expects_filename) add_ast_mark("include_form", one.loc);
+            if (id == diag::err_pp_endif_without_if || id == diag::pp_err_else_without_if || id == diag::pp_err_elif_without_if) add_ast_mark("orphan_conditional", directive_hash(one.loc));
+            if (id == diag::err_atomic_specifier_bad_type && one.atomic_void) add_ast_mark("atomic_void", one.loc);
+            if ((id == diag::err_goto_into_protected_scope || id == diag::err_switch_into_protected_scope) && one.try_scope) add_ast_mark("jump_into_try", one.loc);
+            if (id == diag::err_early_catch_all) add_ast_mark("early_catch_all", one.loc);
+            if (id == diag::err_unsupported_string_concat) add_ast_mark("mixed_string_prefix", one.loc);
+        }
+    }
+
+    // The start of the declaration whose name is at `loc`, else `loc`.
+    SourceLocation declaration_begin(SourceLocation loc) const {
+        auto found = decl_begins_.find(loc.getRawEncoding());
+        return found != decl_begins_.end() && found->second.isValid() ? found->second : loc;
+    }
+
+    // The # of the directive whose name is at `loc` (same line), else `loc`.
+    SourceLocation directive_hash(SourceLocation loc) const {
+        SourceLocation at = sm_.getExpansionLoc(loc);
+        std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(place.first, &invalid);
+        if (invalid || place.second > buffer.size()) return loc;
+        unsigned offset = place.second;
+        while (offset > 0 && buffer[offset - 1] != '\n' && buffer[offset - 1] != '#') --offset;
+        if (offset == 0 || buffer[offset - 1] != '#') return loc;
+        return sm_.getComposedLoc(place.first, offset - 1);
     }
 
     void finish_batch37() {
@@ -6372,6 +6514,7 @@ private:
     std::set<const Stmt *> shadowed_handlers_;
     std::map<const Stmt *, std::string> pending_shape_;
     std::map<FileID, std::string> ast_marks_;
+    std::map<unsigned, SourceLocation> decl_begins_;
     std::set<std::pair<const void *, std::string>> long_names_;
     std::vector<const UsingDecl *> usings_;
     std::vector<SourceLocation> unsafe_calls_;
@@ -6573,6 +6716,7 @@ private:
 class CountingDiagConsumer : public DiagnosticConsumer {
 public:
     void HandleDiagnostic(DiagnosticsEngine::Level level, const Diagnostic &info) override {
+        note_seen(level, info);
         if (level < DiagnosticsEngine::Error) {
             return;
         }
@@ -6600,9 +6744,38 @@ public:
             first += text.str().str();
         }
     }
+    // Keeps the diagnostics rules report (DiagSeen); a jump error is marked
+    // when one of its notes names a try block or handler.
+    void note_seen(DiagnosticsEngine::Level level, const Diagnostic &info) {
+        unsigned id = info.getID();
+        if (level == DiagnosticsEngine::Note) {
+            if (last_jump && (id == diag::note_protected_by_cxx_try || id == diag::note_protected_by_cxx_catch)) seen.back().try_scope = true;
+            return;
+        }
+        last_jump = false;
+        if (!kept_diagnostic(id)) return;
+        DiagSeen one;
+        one.id = id;
+        one.loc = info.getLocation();
+        one.error = level >= DiagnosticsEngine::Error;
+        if (id == diag::err_pp_file_not_found && info.getNumArgs() > 0 && info.getArgKind(0) == DiagnosticsEngine::ak_std_string) {
+            llvm::StringRef name = info.getArgStdStr(0);
+            one.odd_name = name.contains('\'') || name.contains('\\') || name.contains('"') || name.contains("/*") || name.contains("//");
+        }
+        if (id == diag::err_atomic_specifier_bad_type) {
+            llvm::SmallString<128> text;
+            info.FormatDiagnostic(text);
+            llvm::StringRef message = llvm::StringRef(text).rtrim();
+            one.atomic_void = message.ends_with(" 'void'") || message.ends_with(" void'");
+        }
+        seen.push_back(one);
+        last_jump = id == diag::err_goto_into_protected_scope || id == diag::err_switch_into_protected_scope;
+    }
     int errors = 0;
     std::string first;
     std::vector<std::string> unknown_args;
+    std::vector<DiagSeen> seen;
+    bool last_jump = false;
 };
 
 // Exactly the one command Oculus was given, no lookup.
@@ -6732,6 +6905,7 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
     for (int attempt = 0; attempt < 4; ++attempt) {
         result = UnitResult();
         quiet = CountingDiagConsumer();
+        diag_sink = &quiet.seen;
         SingleCommandDatabase database(tooling::CompileCommand(directory, file, command_argv, ""));
         tooling::ClangTool tool(database, {file});
         tool.appendArgumentsAdjuster(tooling::getClangStripOutputAdjuster());
@@ -6740,6 +6914,7 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
         tool.setPrintErrorMessage(false);
         UnitActionFactory factory(result);
         tool.run(&factory);
+        diag_sink = nullptr;
         if (quiet.unknown_args.empty()) {
             break;
         }
@@ -6758,7 +6933,7 @@ inline UnitResult parse_unit(const std::string &directory, const std::string &fi
         result.problem = "clang could not parse " + file;
         return result;
     }
-    result.compile_errors = quiet.errors;
+    result.compile_errors = std::max(0, quiet.errors - rule_errors(quiet.seen));
     result.first_error = quiet.first;
     return result;
 }

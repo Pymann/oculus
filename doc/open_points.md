@@ -300,3 +300,9 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0194**: within one unit; a function counts as non-returning only when
   the CFG shows it, so calls to functions not declared noreturn keep it
   returning.
+- **OC-0182**: an argument that is a single macro name is not expanded and
+  not reported (Zephyr passes devicetree macros); a minus sign makes the
+  argument an expression and is reported.
+- **OC-0046, OC-0122, OC-0142, OC-0154, OC-0189, OC-0302, OC-0329, OC-0386,
+  OC-0414**: taken from Clang's diagnostics, so they depend on Clang
+  reporting the construct; such a unit is still checked by all rules.

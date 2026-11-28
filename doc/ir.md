@@ -759,7 +759,21 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   array or the address of a non-pointer variable), `file_dereference` (`*fp`,
   `fp->` or a copy of a FILE object) and `closed_stream_use` (a use of a FILE
   pointer variable that an unconditional `fclose` of it is sequenced before,
-  with no assignment to the variable in between).  IrDecl shape `unused_static` (C): a static object of
+  with no assignment to the variable in between).
+  Batch 38 marks from Clang's diagnostics: `implicit_int` (at the start of
+  the declaration), `undeclared_call`, `include_form` (#include not followed
+  by <name> or "name"), `orphan_conditional` (the # of an #endif, #else or
+  #elif without #if in its file), `atomic_void`, `jump_into_try` (a goto or
+  switch whose notes name a try block or handler), `early_catch_all`,
+  `mixed_string_prefix` and `linkage_conflict` (at the start of the
+  declaration). These errors do not count in `compile_errors`: the unit is
+  checked and the finding says what is wrong (likewise a header that was not
+  found because its name holds ' \ " /* or //, and an unterminated #if when
+  an #endif without #if was seen too). Lexical mark `header_name_chars` (the
+  opening " or < of an #include header name with ', \, /* or //, or " between
+  < and >); mark `constant_macro_arg` (the argument of INTn_C, UINTn_C,
+  INTMAX_C or UINTMAX_C that is not one unsuffixed decimal, octal or hex
+  literal within the range of the type; a lone macro name is not looked at).  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,
