@@ -1,0 +1,24 @@
+# OC-0307 catch_all_in_main (C++), catalogue in Pymann/coding-rules.  Reads
+# IrDecl.shape unguarded_main (doc/ir.md).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: CatchAllInMainRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 307, "safety.cpp98-.17.2.catch_all_in_main", "A top-level handler catches every otherwise unhandled exception", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "unguarded_main", 307, "an exception leaving main ends the program without unwinding for sure; put the body in try with catch (...)", out]

@@ -1,0 +1,61 @@
+# OC-0230 generic_fitting_type (C), OC-0231 generic_no_pointer_conversion (C)
+# and OC-0446 correct_integer_precision, catalogue in Pymann/coding-rules.  Read
+# the marks generic_type and generic_pointer of IrFile.lexical_marks and
+# IrNode.shape width_from_size (doc/ir.md).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: GenericFittingTypeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 230, "safety.c11-.9.5.generic_fitting_type", "Each _Generic association names a fitting type", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "generic_type", 230, "a qualified, array, function or atomic type never matches a _Generic controlling expression", out]
+
+- class:
+    name: GenericPointerConversionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 231, "safety.c11-.9.5.generic_no_pointer_conversion", "A _Generic does not rely on implicit pointer conversion", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "generic_pointer", 231, "this pointer reaches default, not the association its conversion would fit; list its own type", out]
+
+- class:
+    name: IntegerPrecisionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 446, "safety.c90-.9.2.correct_integer_precision", "The precision of an integer type is not derived from its size in bytes", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "width_from_size", 446, "sizeof times CHAR_BIT counts padding bits too; take the width from the limits macros", out]

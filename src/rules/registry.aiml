@@ -89,6 +89,9 @@
 - import: "src/rules/generic_macros.aiml"
 - import: "src/rules/cxx_hierarchy.aiml"
 - import: "src/rules/volatile_use.aiml"
+- import: "src/rules/generic_types.aiml"
+- import: "src/rules/cxx_lookup.aiml"
+- import: "src/rules/main_handler.aiml"
 
 - class:
     name: RuleRegistry
@@ -534,6 +537,20 @@
             - call: [<.rules.push, open_template]
             - decl: [volatile_use, ptr<Rule>, { new: VolatileAppropriateRule }]
             - call: [<.rules.push, volatile_use]
+            - decl: [generic_type, ptr<Rule>, { new: GenericFittingTypeRule }]
+            - call: [<.rules.push, generic_type]
+            - decl: [generic_pointer, ptr<Rule>, { new: GenericPointerConversionRule }]
+            - call: [<.rules.push, generic_pointer]
+            - decl: [precision, ptr<Rule>, { new: IntegerPrecisionRule }]
+            - call: [<.rules.push, precision]
+            - decl: [inherited_names, ptr<Rule>, { new: UnambiguousInheritedNamesRule }]
+            - call: [<.rules.push, inherited_names]
+            - decl: [late_call, ptr<Rule>, { new: PriorDeclarationCallRule }]
+            - call: [<.rules.push, late_call]
+            - decl: [straddled, ptr<Rule>, { new: StraddledUsingRule }]
+            - call: [<.rules.push, straddled]
+            - decl: [main_catch, ptr<Rule>, { new: CatchAllInMainRule }]
+            - call: [<.rules.push, main_catch]
       - def:
           name: rule_count
           args: []

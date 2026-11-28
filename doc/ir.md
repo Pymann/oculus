@@ -629,7 +629,19 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `written_generic` (C) on a `_Generic` not from a macro expansion and
   `generic_side_effect` on its controlling expression with side effects; the
   lexical mark `generic_reuse` at a `_Generic` association of a function-like
-  macro that uses one parameter twice.  IrNode `member_handle` (C++) on a returned
+  macro that uses one parameter twice; marks `generic_type` (at a qualified,
+  array, function or atomic association type, in the macro body) and
+  `generic_pointer` (a pointer controlling expression that reaches `default`
+  while an association takes it by conversion to `void *` or by added
+  qualifiers); IrNode `width_from_size` on `sizeof(integer) * CHAR_BIT`;
+  IrDecl `ambiguous_inherited` (C++) on a class inheriting one member name from
+  two bases that are not one shared virtual base, without declaring or using
+  it, `unguarded_main` (C++ with exceptions) on a main whose statements that
+  can throw are not inside a try with `catch (...)`, `straddled_using` (C++)
+  on a function declared in a namespace after a using-declaration of its name
+  from there; mark `late_call` (C++) at a named non-member call of an
+  implicit instantiation whose function (the user's) is first declared after
+  the template.  IrNode `member_handle` (C++) on a returned
   member of the object as a non-const reference or pointer.  Decl shapes are a
   comma-separated list too.
   `IrDecl.missing_base_init`: a user-provided, non-delegating

@@ -222,3 +222,14 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   count as leaving the function only through `&` and by-reference lambda
   captures.
 - **OC-0293** (dependent base names) is not implemented yet.
+- **OC-0294**: only named non-member calls (operators and member calls are not
+  checked) to functions of the user's. Customisation points meant to be found
+  later (fmt's `format_as`, ADL `begin`/`end`) are reported until the
+  configuration list exists.
+- **OC-0307**: "can throw" is a throw, a new, or a call or construction of
+  something not noexcept; destructors of temporaries are not considered.
+- **OC-0230**: "a type that cannot match" is not checked, only qualified,
+  array, function and atomic association types.
+- **OC-0280**: private members of bases do not count.
+- **OC-0299** (uniform viable set) is not implemented: the candidate set of
+  overload resolution is not kept in the AST.

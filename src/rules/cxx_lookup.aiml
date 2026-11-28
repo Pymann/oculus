@@ -1,0 +1,61 @@
+# OC-0280 unambiguous_inherited_names, OC-0294 call_resolves_to_prior_declaration
+# and OC-0266 no_straddled_using_declaration (C++), catalogue in
+# Pymann/coding-rules.  Read IrDecl.shape ambiguous_inherited and
+# straddled_using, and the mark late_call of IrFile.lexical_marks (doc/ir.md).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: UnambiguousInheritedNamesRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 280, "safety.cpp98-.15.2.unambiguous_inherited_names", "Names inherited from base classes are unambiguous", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "ambiguous_inherited", 280, "the class inherits a member name from two bases; declare it or bring one in with using", out]
+
+- class:
+    name: PriorDeclarationCallRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 294, "safety.cpp98-.16.1.call_resolves_to_prior_declaration", "Overload resolution in a template picks a function declared before the template", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "late_call", 294, "in an instantiation this call picks a function declared after the template; qualify the call or declare the function first", out]
+
+- class:
+    name: StraddledUsingRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 266, "safety.cpp98-.6.9.no_straddled_using_declaration", "Declarations of one name in a namespace are not split by a using-declaration of it", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "straddled_using", 266, "a using-declaration of this name comes before this declaration and does not see it", out]

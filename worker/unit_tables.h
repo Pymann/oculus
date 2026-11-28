@@ -730,6 +730,10 @@ public:
         if (repeated_overrider(decl)) add_shape(rec, "repeated_overrider");
         if (open_function_template(decl)) add_shape(rec, "open_template");
         if (pointless_volatile(decl)) add_shape(rec, "pointless_volatile");
+        if (ambiguous_inherited(decl)) add_shape(rec, "ambiguous_inherited");
+        if (unguarded_main(decl)) add_shape(rec, "unguarded_main");
+        if (straddled_by_using(decl)) add_shape(rec, "straddled_using");
+        note_late_calls(decl);
         if (qualified_function(decl)) add_shape(rec, "qualified_function");
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
@@ -3825,6 +3829,247 @@ public:
         return false;
     }
 
+    // The start of qualifier keywords written right before `loc` (`const int`:
+    // the const), at the spelling.
+    SourceLocation leading_qualifiers(SourceLocation loc) const {
+        SourceLocation at = sm_.getSpellingLoc(loc);
+        if (at.isInvalid()) return loc;
+        std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(place.first, &invalid);
+        if (invalid) return loc;
+        unsigned start = place.second;
+        while (true) {
+            unsigned back = start;
+            while (back > 0 && (buffer[back - 1] == ' ' || buffer[back - 1] == '\t')) --back;
+            unsigned word_end = back;
+            while (back > 0 && (isalnum(static_cast<unsigned char>(buffer[back - 1])) || buffer[back - 1] == '_')) --back;
+            llvm::StringRef word = buffer.substr(back, word_end - back);
+            if (word != "const" && word != "volatile" && word != "restrict" && word != "_Atomic") break;
+            start = back;
+        }
+        return sm_.getComposedLoc(place.first, start);
+    }
+
+    // A mark at the spelling of `loc` (a macro body's own line), once.
+    void add_spelled_mark(const char *code, SourceLocation loc) {
+        SourceLocation at = sm_.getSpellingLoc(loc);
+        if (at.isInvalid() || sm_.isInSystemHeader(at) || sm_.isWrittenInScratchSpace(at)) return;
+        std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
+        if (!ast_mark_seen_.insert(place).second) return;
+        add_mark(ast_marks_[place.first], code, place.first, place.second);
+    }
+
+    // _Generic: an association type that is qualified, an array, a function or
+    // atomic (generic_type at the type), and a pointer controlling expression
+    // that reaches `default` although an association takes it by implicit
+    // conversion (generic_pointer at the _Generic).
+    void note_generic_types(const GenericSelectionExpr *generic) {
+        if (generic->isResultDependent() || context_.getLangOpts().CPlusPlus) return;
+        bool default_picked = false;
+        for (const auto association : generic->associations()) {
+            const TypeSourceInfo *written = association.getTypeSourceInfo();
+            if (written == nullptr) {
+                default_picked = association.isSelected();
+                continue;
+            }
+            QualType type = written->getType();
+            if (type.isNull() || type->isDependentType()) continue;
+            if (type.hasQualifiers() || type->isArrayType() || type->isFunctionType() || type->isAtomicType()) {
+                add_spelled_mark("generic_type", leading_qualifiers(written->getTypeLoc().getBeginLoc()));
+            }
+        }
+        if (!default_picked || !generic->isExprPredicate() || generic->getControllingExpr() == nullptr) return;
+        QualType held = generic->getControllingExpr()->getType();
+        if (held.isNull() || !held->isPointerType()) return;
+        QualType from = held->getPointeeType();
+        unsigned have = from.getCVRQualifiers();
+        for (const auto association : generic->associations()) {
+            const TypeSourceInfo *written = association.getTypeSourceInfo();
+            if (written == nullptr || !written->getType()->isPointerType()) continue;
+            QualType to = written->getType()->getPointeeType();
+            unsigned want = to.getCVRQualifiers();
+            bool keeps = (want & have) == have;
+            bool to_void = to->isVoidType() && !from->isVoidType() && keeps;
+            bool more_qualified = context_.hasSameUnqualifiedType(to, from) && keeps && want != have;
+            if (to_void || more_qualified) {
+                add_ast_mark("generic_pointer", generic->getBeginLoc());
+                return;
+            }
+        }
+    }
+
+    // sizeof(...) * CHAR_BIT (either order) of an integer type.
+    bool width_from_size(const BinaryOperator *product) const {
+        if (product->getOpcode() != BO_Mul) return false;
+        for (int side = 0; side < 2; ++side) {
+            const Expr *size = (side == 0 ? product->getLHS() : product->getRHS())->IgnoreParenImpCasts();
+            const Expr *bits = (side == 0 ? product->getRHS() : product->getLHS())->IgnoreParenImpCasts();
+            const auto *of = dyn_cast<UnaryExprOrTypeTraitExpr>(size);
+            if (of == nullptr || of->getKind() != UETT_SizeOf) continue;
+            QualType measured = of->getTypeOfArgument();
+            if (measured.isNull() || !measured->isIntegerType()) continue;
+            if (!bits->getBeginLoc().isMacroID()) continue;
+            std::string spelled = expansion_text(bits);
+            if (spelled == "CHAR_BIT" || spelled == "__CHAR_BIT__") return true;
+        }
+        return false;
+    }
+
+    // Member names a base brings, with the record that declares each (virtual
+    // bases by their canonical record, so a shared one is one origin).
+    static void inherited_names(const CXXRecordDecl *record, std::map<std::string, std::set<const void *>> &names,
+                                std::set<const void *> &origin_of_path, int depth) {
+        if (depth > 16 || record == nullptr || !record->hasDefinition()) return;
+        record = record->getDefinition();
+        for (const Decl *inner : record->decls()) {
+            const auto *named = dyn_cast<NamedDecl>(inner);
+            if (named == nullptr || named->isImplicit() || named->getIdentifier() == nullptr) continue;
+            if (!(isa<FieldDecl>(named) || isa<CXXMethodDecl>(named) || isa<FunctionTemplateDecl>(named) || isa<VarDecl>(named))) continue;
+            if (isa<CXXConstructorDecl>(named) || isa<CXXDestructorDecl>(named)) continue;
+            if (named->getAccess() == AS_private) continue;
+            for (const void *origin : origin_of_path) names[named->getName().str()].insert(origin);
+        }
+        for (const CXXBaseSpecifier &base : record->bases()) {
+            const CXXRecordDecl *parent = base.getType()->getAsCXXRecordDecl();
+            if (parent == nullptr || base.getAccessSpecifier() == AS_private) continue;
+            std::set<const void *> path = origin_of_path;
+            if (base.isVirtual()) path = {parent->getCanonicalDecl()};
+            inherited_names(parent, names, path, depth + 1);
+        }
+    }
+
+    // C++: a class that inherits one member name from two different bases (not
+    // one shared virtual base) and does not declare or bring in the name.
+    bool ambiguous_inherited(const Decl *decl) const {
+        const auto *record = dyn_cast<CXXRecordDecl>(decl);
+        if (record == nullptr || !record->isThisDeclarationADefinition() || record->isDependentType() || record->isLambda() ||
+            record->getNumBases() < 2 || !user_location(sm_, record->getLocation())) return false;
+        std::map<std::string, std::set<const void *>> names;
+        for (const CXXBaseSpecifier &base : record->bases()) {
+            const CXXRecordDecl *parent = base.getType()->getAsCXXRecordDecl();
+            if (parent == nullptr) return false;
+            if (base.getAccessSpecifier() == AS_private) continue;
+            std::set<const void *> path = {base.isVirtual() ? static_cast<const void *>(parent->getCanonicalDecl()) : static_cast<const void *>(&base)};
+            inherited_names(parent, names, path, 0);
+        }
+        for (const auto &entry : names) {
+            if (entry.second.size() < 2) continue;
+            bool own = false;
+            for (const NamedDecl *found : record->lookup(DeclarationName(&context_.Idents.get(entry.first)))) {
+                own = own || found->getDeclContext() == record;
+            }
+            for (const Decl *inner : record->decls()) {
+                if (const auto *brought = dyn_cast<UsingDecl>(inner)) own = own || brought->getName() == entry.first;
+            }
+            if (!own) return true;
+        }
+        return false;
+    }
+
+    // Can a statement throw: a throw, or a call, construction or new of
+    // something not noexcept.
+    bool may_throw(const Stmt *stmt) const {
+        if (stmt == nullptr) return false;
+        if (isa<CXXThrowExpr>(stmt) || isa<CXXNewExpr>(stmt)) return true;
+        if (isa<LambdaExpr>(stmt) || isa<UnaryExprOrTypeTraitExpr>(stmt) || isa<CXXNoexceptExpr>(stmt)) return false;
+        auto nothrow = [](const FunctionDecl *fn) {
+            if (fn == nullptr) return false;
+            const auto *proto = fn->getType()->getAs<FunctionProtoType>();
+            return proto != nullptr && !isUnresolvedExceptionSpec(proto->getExceptionSpecType()) && proto->isNothrow();
+        };
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            if (call->getBuiltinCallee() == 0 && !nothrow(call->getDirectCallee())) return true;
+        }
+        if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
+            if (!make->getConstructor()->isTrivial() && !nothrow(make->getConstructor())) return true;
+        }
+        for (const Stmt *child : stmt->children()) {
+            if (may_throw(child)) return true;
+        }
+        return false;
+    }
+
+    static bool catches_all(const CXXTryStmt *attempt) {
+        for (unsigned at = 0; at < attempt->getNumHandlers(); ++at) {
+            if (attempt->getHandler(at)->getExceptionDecl() == nullptr) return true;
+        }
+        return false;
+    }
+
+    // C++ with exceptions: a main whose statements that can throw are not all
+    // inside a try block with a catch (...) handler.
+    bool unguarded_main(const Decl *decl) const {
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || !context_.getLangOpts().CPlusPlus || !context_.getLangOpts().CXXExceptions || !fn->isMain() ||
+            !fn->doesThisDeclarationHaveABody() || fn->getBody() == nullptr) return false;
+        if (const auto *whole = dyn_cast<CXXTryStmt>(fn->getBody())) return !catches_all(whole);
+        const auto *body = dyn_cast<CompoundStmt>(fn->getBody());
+        if (body == nullptr) return false;
+        for (const Stmt *item : body->body()) {
+            if (const auto *attempt = dyn_cast<CXXTryStmt>(item)) {
+                if (catches_all(attempt)) continue;
+            }
+            if (may_throw(item)) return true;
+        }
+        return false;
+    }
+
+    // C++: a declaration in a namespace after a using-declaration of its name
+    // from that namespace (the using-declaration does not see it).
+    bool straddled_by_using(const Decl *decl) {
+        if (!context_.getLangOpts().CPlusPlus) return false;
+        if (const auto *brought = dyn_cast<UsingDecl>(decl)) {
+            if (user_location(sm_, brought->getLocation())) usings_.push_back(brought);
+            return false;
+        }
+        const auto *named = dyn_cast<NamedDecl>(decl);
+        if (named == nullptr || named->getIdentifier() == nullptr || named->isImplicit() || !user_location(sm_, named->getLocation())) return false;
+        if (!(isa<FunctionDecl>(named) || isa<FunctionTemplateDecl>(named))) return false;
+        const auto *space = dyn_cast<NamespaceDecl>(named->getDeclContext());
+        if (space == nullptr) return false;
+        for (const UsingDecl *brought : usings_) {
+            if (brought->getDeclName() != named->getDeclName()) continue;
+            const NamespaceDecl *target = nullptr;
+            for (const UsingShadowDecl *shadow : brought->shadows()) {
+                target = dyn_cast<NamespaceDecl>(shadow->getTargetDecl()->getDeclContext());
+                if (target != nullptr) break;
+            }
+            if (target != nullptr && target->getCanonicalDecl() == space->getCanonicalDecl() &&
+                sm_.isBeforeInTranslationUnit(brought->getLocation(), named->getLocation())) return true;
+        }
+        return false;
+    }
+
+    // C++: in an implicit instantiation, a named non-member call whose function
+    // (its first declaration, the user's) comes after the template's definition
+    // (mark late_call at the call).
+    void note_late_calls(const Decl *decl) {
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || !context_.getLangOpts().CPlusPlus || fn->getTemplateSpecializationKind() != TSK_ImplicitInstantiation) return;
+        const FunctionDecl *pattern = fn->getTemplateInstantiationPattern();
+        if (pattern == nullptr || fn->getBody() == nullptr || !user_location(sm_, pattern->getLocation())) return;
+        late_calls_in(fn->getBody(), pattern->getLocation());
+    }
+
+    void late_calls_in(const Stmt *stmt, SourceLocation defined) {
+        if (stmt == nullptr) return;
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            const FunctionDecl *callee = call->getDirectCallee();
+            if (callee != nullptr && !isa<CXXOperatorCallExpr>(call) && !isa<CXXMemberCallExpr>(call) && !isa<CXXMethodDecl>(callee) &&
+                callee->getIdentifier() != nullptr) {
+                const FunctionDecl *first = callee->getCanonicalDecl();
+                if (const FunctionTemplateDecl *primary = callee->getPrimaryTemplate()) first = primary->getCanonicalDecl()->getTemplatedDecl();
+                SourceLocation declared = first->getLocation();
+                if (declared.isValid() && user_location(sm_, declared) && call->getBeginLoc().isValid() &&
+                    sm_.isBeforeInTranslationUnit(defined, declared)) {
+                    add_ast_mark("late_call", call->getBeginLoc());
+                }
+            }
+        }
+        for (const Stmt *child : stmt->children()) late_calls_in(child, defined);
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -3874,6 +4119,10 @@ public:
         }
         if (const auto *lambda = dyn_cast<LambdaExpr>(stmt)) note_lambda(lambda, rec);
         if (const auto *back = dyn_cast<ReturnStmt>(stmt)) note_member_handle(back);
+        if (const auto *generic = dyn_cast<GenericSelectionExpr>(stmt)) note_generic_types(generic);
+        if (const auto *product = dyn_cast<BinaryOperator>(stmt)) {
+            if (width_from_size(product)) add_shape(rec, "width_from_size");
+        }
         if (const auto *generic = dyn_cast<GenericSelectionExpr>(stmt)) {
             if (!generic->getBeginLoc().isMacroID()) {
                 add_shape(rec, "written_generic");
@@ -4607,6 +4856,7 @@ private:
     std::map<const Stmt *, std::string> pending_shape_;
     std::map<FileID, std::string> ast_marks_;
     std::set<std::pair<const void *, std::string>> long_names_;
+    std::vector<const UsingDecl *> usings_;
     std::vector<SourceLocation> unsafe_calls_;
     bool creates_threads_ = false;
     std::set<std::pair<FileID, unsigned>> ast_mark_seen_;
