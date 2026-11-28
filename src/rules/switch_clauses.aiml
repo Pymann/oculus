@@ -1,0 +1,60 @@
+# OC-0111 well_formed_switch, OC-0113 break_ends_clause and OC-0090
+# explicit_precedence, catalogue in Pymann/coding-rules.  Read from IrNode.shape
+# (doc/ir.md): switch_structure, fallthrough (switches with code skipped by #if
+# are not judged), mixed_precedence.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: WellFormedSwitchRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 111, "safety.c90-.4.5.well_formed_switch", "A switch follows the structure: clauses with labels, each ended by break", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "switch_structure", 111, "the switch body breaks the clause structure here: only case or default labels start the body, and labels are not nested in other statements", out]
+
+- class:
+    name: BreakEndsClauseRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 113, "safety.c90-.4.5.break_ends_clause", "Every non-empty switch clause ends with an unconditional break", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "fallthrough", 113, "the clause before this label falls through into it; end that clause with break", out]
+
+- class:
+    name: ExplicitPrecedenceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 90, "style.c90-.9.1.explicit_precedence", "Mixed operators carry parentheses where precedence is not obvious", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "mixed_precedence", 90, "put this operand in parentheses; its operators mix with the one outside in a precedence that is easy to get wrong", out]

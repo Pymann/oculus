@@ -91,6 +91,18 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   header. In C++ only `uintptr_t` is allowed. For OC-0082 no function is marked as
   a callback, and only `malloc`, `calloc` and `realloc` are exempt, not wrappers
   such as `sqlite3_malloc`.
+- **OC-0090** explicit_precedence: `&&` against `||`, and shifts or bitwise
+  operators against another binary operator. The conditional operator and
+  `sizeof` of a non-primary expression are not checked yet. `sizeof *p` is the
+  usual idiom, so that part needs a decision first. An operand that one macro
+  spells and the outer operator another file position spells is left out.
+- **OC-0111** and **OC-0113**: switches with code skipped by `#if` are not judged.
+  OC-0113 only knows how a clause ends when the last statement is a jump, a
+  throw, a noreturn call, a block or an if/else of such statements. A clause
+  ending in a loop, a nested switch or try is not reported. `goto` counts as an
+  end. `[[fallthrough]]` is reported: the configuration key does not exist yet.
+- **OC-0140**: the `extern "C" {` and `}` around includes do not count as code,
+  and neither does code skipped by `#if`. X-macro files cannot be configured yet.
 - **OC-0126** use_return_value: the ignorable list of the rule text is not a
   configuration key yet. Built in: `printf`, `vprintf`, `wprintf`, `vwprintf`
   (the catalogue reports `fprintf`) and the C functions that return their first

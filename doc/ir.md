@@ -550,6 +550,13 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `undefined_condition` (name: the identifier), at the `#` of `#if`/`#elif`;
   `IrFile.lexical_marks` codes `directive_in_args` (the first `#` line inside
   the arguments of a function-like macro call) and `invalid_directive`.
+  `switch_structure` (the first statement before a switch's first label, a label
+  nested in another statement, or a body that is no compound statement),
+  `fallthrough` on a label that the clause before it can fall into,
+  `mixed_precedence` on an unparenthesised binary operand (&& with ||, shift or
+  bitwise with another binary operator). `IrMacro` kind `mixed_param` (name: a
+  parameter used with # or ## and also expanded; pos: the expanded use) and the
+  lexical mark `late_include` (an #include after code).
   `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
   the for header, `exposed_data` on a named public or protected field of a C++
   class that is not an aggregate and has a user-provided constructor or

@@ -1,0 +1,53 @@
+# OC-0140 includes_first and OC-0152 expanded_param_only_with_operators,
+# catalogue in Pymann/coding-rules.  0140 reads the lexical mark late_include,
+# 0152 the IrMacro kind mixed_param (doc/ir.md).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: IncludesFirstRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 140, "style.c90-.12.1.includes_first", "#include comes only after other directives or comments", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "late_include", 140, "code comes before this #include; put the includes first", out]
+
+- class:
+    name: ExpandedParameterRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 152, "safety.c90-.12.2.expanded_param_only_with_operators", "A parameter used with # or ## that is itself a macro appears only with those operators", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { eq: [{ call: [regex.search, "^mixed_param$", rec.kind] }, 0] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.pos, 152, "parameter '${rec.name}' is used with # or ## and also expanded here; the same argument means two things"] }]
+                  - set: [idx, { "+": [idx, 1] }]

@@ -1108,6 +1108,37 @@ public:
         return false;
     }
 
+    static bool bit_operator(BinaryOperatorKind op) {
+        return op == BO_Shl || op == BO_Shr || op == BO_And || op == BO_Or || op == BO_Xor;
+    }
+
+    // OC-0090: an operand of a binary operator that is itself a binary operator
+    // written without parentheses, where && meets ||, or a shift or bitwise
+    // operator meets a different binary operator (assignments and the comma
+    // operator do not count).  The operand is marked mixed_precedence.
+    void note_precedence(const BinaryOperator *outer) {
+        BinaryOperatorKind op = outer->getOpcode();
+        if (outer->isAssignmentOp() || op == BO_Comma || outer->isTypeDependent()) return;
+        for (const Expr *side : {outer->getLHS(), outer->getRHS()}) {
+            const auto *inner = dyn_cast<BinaryOperator>(side->IgnoreImpCasts());
+            if (inner == nullptr || inner->isAssignmentOp() || inner->getOpcode() == BO_Comma) continue;
+            BinaryOperatorKind sub = inner->getOpcode();
+            if (sub == op) continue;
+            bool logic = (op == BO_LAnd && sub == BO_LOr) || (op == BO_LOr && sub == BO_LAnd);
+            bool bits = bit_operator(op) || bit_operator(sub);
+            if (!logic && !bits) continue;
+            // a macro argument or body may hold the operand: only report what
+            // one file spells in one piece
+            if (inner->getBeginLoc().isMacroID() != outer->getBeginLoc().isMacroID()) continue;
+            add_pending(inner, "mixed_precedence");
+        }
+    }
+
+    void add_pending(const Stmt *stmt, const char *shape) {
+        std::string &pending = pending_shape_[stmt];
+        pending = pending.empty() ? shape : pending + "," + shape;
+    }
+
     // Shapes of one node are a comma-separated list.
     static void add_shape(NodeRec &rec, const std::string &shape) {
         if (shape.empty()) return;
@@ -2158,6 +2189,38 @@ public:
         }
         if (rec.uses_call_site) call_site_macros_.insert(rec.name);
         macros.push_back(rec);
+        if (rec.function_like) note_mixed_params(info);
+    }
+
+    // A parameter that is an operand of # or ## and also used where it is
+    // expanded: kind mixed_param at the first expanded use (name the parameter).
+    void note_mixed_params(const MacroInfo *info) {
+        llvm::ArrayRef<Token> tokens = info->tokens();
+        for (const IdentifierInfo *param : info->params()) {
+            bool operand = false;
+            int plain = -1;
+            for (size_t at = 0; at < tokens.size(); ++at) {
+                if (tokens[at].getIdentifierInfo() != param) continue;
+                bool stringized = at > 0 && tokens[at - 1].is(tok::hash);
+                bool pasted = (at > 0 && tokens[at - 1].is(tok::hashhash)) ||
+                              (at + 1 < tokens.size() && tokens[at + 1].is(tok::hashhash));
+                if (stringized || pasted) {
+                    operand = true;
+                } else if (plain < 0) {
+                    plain = static_cast<int>(at);
+                }
+            }
+            if (!operand || plain < 0) continue;
+            SourceLocation loc = tokens[static_cast<size_t>(plain)].getLocation();
+            if (!loc.isFileID()) continue;
+            MacroRec rec;
+            rec.uid = static_cast<int>(macros.size());
+            rec.kind = "mixed_param";
+            rec.name = param->getName().str();
+            rec.pos = pos_of(loc);
+            rec.name_pos = rec.pos;
+            macros.push_back(rec);
+        }
     }
 
     void note_undef(Preprocessor &pp, const Token &name, const MacroDefinition &definition) {
@@ -2333,6 +2396,12 @@ public:
         bool after_hash = false;
         unsigned hash_offset = 0;
         std::set<int> reported_ranges;
+        // OC-0140: has code (not a directive, a comment, skipped code, or the
+        // `extern "C" {` and `}` around includes) come before an #include?
+        bool in_directive = false;
+        bool code_seen = false;
+        int extern_stage = 0;
+        int extern_open = 0;
         unsigned digraph_end = ~0u;
         while (true) {
             lexer.LexFromRawLexer(tok);
@@ -2354,6 +2423,7 @@ public:
             if (tok.isAtStartOfLine()) {
                 directive_quiet = false;
                 after_hash = tok.is(tok::hash);
+                in_directive = after_hash;
                 if (after_hash) {
                     hash_offset = offset;
                     int range = argument_range_of(fid, offset);
@@ -2366,8 +2436,24 @@ public:
                     directive_quiet = name == "include" || name == "include_next" || name == "import" ||
                                       name == "error" || name == "warning";
                     if (!known_directive(name)) add_mark(out, "invalid_directive", fid, hash_offset);
+                    bool include = name == "include" || name == "include_next" || name == "import";
+                    if (include && code_seen && !offset_skipped(fid, hash_offset)) add_mark(out, "late_include", fid, hash_offset);
                 } else if (!tok.isOneOf(tok::numeric_constant, tok::comment)) {
                     add_mark(out, "invalid_directive", fid, hash_offset);
+                }
+            }
+            if (!in_directive && !code_seen && !tok.is(tok::comment) && !offset_skipped(fid, offset)) {
+                if (extern_stage == 0 && tok.is(tok::raw_identifier) && tok.getRawIdentifier() == "extern") {
+                    extern_stage = 1;
+                } else if (extern_stage == 1 && (text == "\"C\"" || text == "\"C++\"")) {
+                    extern_stage = 2;
+                } else if (extern_stage == 2 && tok.is(tok::l_brace)) {
+                    extern_stage = 0;
+                    ++extern_open;
+                } else if (extern_stage == 0 && extern_open > 0 && tok.is(tok::r_brace)) {
+                    --extern_open;
+                } else {
+                    code_seen = true;
                 }
             }
             if (tok.is(tok::comment)) {
@@ -2461,6 +2547,7 @@ public:
             note_array_decay(call);
             if (unused_result(call)) add_shape(rec, "unused_result");
         }
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) note_precedence(binary);
         note_float_counter(stmt);
         if (isa<IntegerLiteral>(stmt) || isa<GNUNullExpr>(stmt)) {
             if (const char *null = null_shape(cast<Expr>(stmt))) rec.shape = null;
@@ -2728,6 +2815,83 @@ public:
             clauses = 1;
         }
         rec.clause_count = clauses;
+        if (!skips_inside(choice->getSourceRange())) note_switch_clauses(choice, labels);
+    }
+
+    // Can control leave this statement at its end?  Unknown shapes (loops,
+    // nested switches, try) count as no, so that nothing is reported for them.
+    bool may_fall(const Stmt *stmt) const {
+        if (stmt == nullptr) return true;
+        if (isa<BreakStmt>(stmt) || isa<ReturnStmt>(stmt) || isa<ContinueStmt>(stmt) || isa<GotoStmt>(stmt) ||
+            isa<IndirectGotoStmt>(stmt) || isa<CXXThrowExpr>(stmt)) {
+            return false;
+        }
+        if (const auto *expr = dyn_cast<Expr>(stmt)) {
+            const Expr *plain = expr->IgnoreParenImpCasts();
+            if (isa<CXXThrowExpr>(plain)) return false;
+            if (const auto *call = dyn_cast<CallExpr>(plain)) {
+                const FunctionDecl *callee = call->getDirectCallee();
+                if (callee != nullptr && (callee->isNoReturn() || callee->getBuiltinID() == Builtin::BI__builtin_unreachable)) return false;
+            }
+            return true;
+        }
+        if (const auto *block = dyn_cast<CompoundStmt>(stmt)) return block->body_empty() || may_fall(block->body_back());
+        if (const auto *branch = dyn_cast<IfStmt>(stmt)) {
+            return branch->getElse() == nullptr || may_fall(branch->getThen()) || may_fall(branch->getElse());
+        }
+        if (const auto *attributed = dyn_cast<AttributedStmt>(stmt)) return may_fall(attributed->getSubStmt());
+        if (isa<DeclStmt>(stmt) || isa<NullStmt>(stmt)) return true;
+        return false;
+    }
+
+    // OC-0111: the first part of a switch that breaks its structure
+    // (switch_structure: a statement before the first label, a label nested in
+    // another statement, a body that is no compound statement).  OC-0113: a label
+    // that the clause before it falls into (fallthrough).
+    void note_switch_clauses(const SwitchStmt *choice, const std::vector<const SwitchCase *> &labels) {
+        const auto *block = dyn_cast_or_null<CompoundStmt>(choice->getBody());
+        if (block == nullptr) {
+            if (choice->getBody() != nullptr) pending_shape_[choice->getBody()] = "switch_structure";
+            return;
+        }
+        std::set<const SwitchCase *> top;
+        for (const Stmt *item : block->body()) {
+            for (const auto *label = dyn_cast<SwitchCase>(item); label != nullptr;
+                 label = dyn_cast<SwitchCase>(label->getSubStmt())) {
+                top.insert(label);
+            }
+        }
+        const Stmt *broken = nullptr;
+        if (!block->body_empty() && !isa<SwitchCase>(block->body_front())) broken = block->body_front();
+        if (broken == nullptr) {
+            for (const SwitchCase *label : labels) {
+                if (top.count(label) == 0) {
+                    broken = label;
+                    break;
+                }
+            }
+        }
+        if (broken != nullptr) {
+            pending_shape_[broken] = "switch_structure";
+            return;
+        }
+        const Stmt *last = nullptr;
+        bool has_statements = false;
+        for (const Stmt *item : block->body()) {
+            if (const auto *label = dyn_cast<SwitchCase>(item)) {
+                if (has_statements && may_fall(last)) {
+                    std::string &pending = pending_shape_[label];
+                    pending = pending.empty() ? "fallthrough" : pending + ",fallthrough";
+                }
+                const Stmt *inner = label->getSubStmt();
+                while (const auto *chained = dyn_cast_or_null<SwitchCase>(inner)) inner = chained->getSubStmt();
+                last = inner;
+                has_statements = inner != nullptr;
+            } else {
+                last = item;
+                has_statements = true;
+            }
+        }
     }
 
     // A base specifier of a class definition, as a node of kind CXXBaseSpecifier

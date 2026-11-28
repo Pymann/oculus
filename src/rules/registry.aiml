@@ -71,6 +71,8 @@
 - import: "src/rules/qualifier_casts.aiml"
 - import: "src/rules/pp_conditions.aiml"
 - import: "src/rules/pp_lines.aiml"
+- import: "src/rules/switch_clauses.aiml"
+- import: "src/rules/pp_layout.aiml"
 
 - class:
     name: RuleRegistry
@@ -428,6 +430,16 @@
             - call: [<.rules.push, args_directive]
             - decl: [valid_directive, ptr<Rule>, { new: ValidDirectiveRule }]
             - call: [<.rules.push, valid_directive]
+            - decl: [switch_form, ptr<Rule>, { new: WellFormedSwitchRule }]
+            - call: [<.rules.push, switch_form]
+            - decl: [clause_break, ptr<Rule>, { new: BreakEndsClauseRule }]
+            - call: [<.rules.push, clause_break]
+            - decl: [precedence, ptr<Rule>, { new: ExplicitPrecedenceRule }]
+            - call: [<.rules.push, precedence]
+            - decl: [includes_first, ptr<Rule>, { new: IncludesFirstRule }]
+            - call: [<.rules.push, includes_first]
+            - decl: [mixed_param, ptr<Rule>, { new: ExpandedParameterRule }]
+            - call: [<.rules.push, mixed_param]
       - def:
           name: rule_count
           args: []
