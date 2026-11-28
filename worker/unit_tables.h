@@ -2755,6 +2755,19 @@ public:
         add_mark(ast_marks_[place.first], code, place.first, place.second);
     }
 
+    // add_ast_mark with a name as fourth part (code:line:col:name), which
+    // rules match against configured names.
+    void add_named_mark(const char *code, SourceLocation loc, llvm::StringRef name) {
+        SourceLocation at = sm_.getExpansionLoc(loc);
+        if (at.isInvalid() || sm_.isInSystemHeader(at)) return;
+        std::pair<FileID, unsigned> place = sm_.getDecomposedLoc(at);
+        if (!ast_mark_seen_.insert(place).second) return;
+        std::string &out = ast_marks_[place.first];
+        add_mark(out, code, place.first, place.second);
+        out.pop_back();
+        out += ":" + name.str() + ";";
+    }
+
     // A function declared in a system header with this name.
     bool system_function(const FunctionDecl *callee, const char *name) const {
         if (callee == nullptr || callee->getIdentifier() == nullptr || callee->getName() != name) return false;
@@ -4535,7 +4548,7 @@ public:
                 SourceLocation declared = first->getLocation();
                 if (declared.isValid() && user_location(sm_, declared) && call->getBeginLoc().isValid() &&
                     sm_.isBeforeInTranslationUnit(defined, declared)) {
-                    add_ast_mark("late_call", call->getBeginLoc());
+                    add_named_mark("late_call", call->getBeginLoc(), callee->getName());
                 }
             }
         }
@@ -4707,6 +4720,7 @@ public:
             rec.detail = typeid_expr->isTypeOperand() ? "type"
                        : !typeid_expr->isValueDependent() && typeid_expr->isPotentiallyEvaluated() ? "polymorphic" : "expr";
         } else if (const auto *removal = dyn_cast<CXXDeleteExpr>(stmt)) {
+            add_shape(rec, "raw_delete");
             QualType destroyed = removal->getDestroyedType();
             if (!destroyed.isNull() && !destroyed->isDependentType() && destroyed->isRecordType() &&
                 destroyed->isIncompleteType()) {
@@ -4719,6 +4733,9 @@ public:
             rec.detail = known != default_order_.end() ? known->second : "";
         }
         if (const auto *call = dyn_cast<CallExpr>(stmt)) {
+            if (rec.ref_uid < 0 && !isa<CXXMemberCallExpr>(call) && !isa<CXXOperatorCallExpr>(call) && call->getDirectCallee() != nullptr) {
+                rec.ref_uid = decl_of(call->getDirectCallee());
+            }
             const auto *callee = dyn_cast_or_null<FunctionDecl>(call->getCalleeDecl());
             if (callee != nullptr && !isa<CXXOperatorCallExpr>(call)) {
                 OverloadedOperatorKind op = callee->getOverloadedOperator();

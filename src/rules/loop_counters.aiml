@@ -9,6 +9,19 @@
 - import: "src/rules/rule.aiml"
 - import: "src/rules/rule_kit.aiml"
 
+# Whether the call a node is an argument of calls a function named in names.
+- def:
+    name: configured_callee
+    args: [[info, RuleInformation], [node, IrNode], [names, list<string>]]
+    return: bool
+    body:
+      - if: { condition: { eq: [names.len, 0] }, then: [{ return: false }] }
+      - if: { condition: { "||": [{ lt: [node.parent_uid, 0] }, { gte: [node.parent_uid, info.nodes.len] }] }, then: [{ return: false }] }
+      - decl: [call_node, ref<IrNode>, { at: [info.nodes, node.parent_uid] }]
+      - if: { condition: { "||": [{ lt: [call_node.ref_uid, 0] }, { gte: [call_node.ref_uid, info.decls.len] }] }, then: [{ return: false }] }
+      - decl: [callee, ref<IrDecl>, { at: [info.decls, call_node.ref_uid] }]
+      - return: { call: [names.contains, callee.name] }
+
 - class:
     name: FloatLoopCounterRule
     implements: [Rule]
@@ -68,7 +81,7 @@
                 body:
                   - decl: [node, ref<IrNode>, { at: [info.nodes, idx] }]
                   - if:
-                      condition: { "&&": [{ call: [user_node, node] }, { gte: [{ call: [regex.search, "(^|,)array_decay(,|$)", node.shape] }, 0] }] }
+                      condition: { "&&": [{ call: [user_node, node] }, { gte: [{ call: [regex.search, "(^|,)array_decay(,|$)", node.shape] }, 0] }, { eq: [{ call: [configured_callee, info, node, setting.names] }, false] }] }
                       then:
                         - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, node.pos] }, 255, "this array decays to a pointer and loses its size; pass a std::span, a std::array or a reference to the array"] }]
                   - set: [idx, { "+": [idx, 1] }]

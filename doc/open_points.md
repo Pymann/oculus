@@ -97,8 +97,8 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   (no builtins, no operator calls, no constructors). A `va_list` argument and a
   `?:` that picks between string literals are not reported.
   Project wrappers that take a buffer and its count (imgui's
-  `ImFormatString(buf, IM_COUNTOF(buf), ...)`) are reported as the rule text says;
-  open: a configuration key for such pointer-and-count functions.
+  `ImFormatString(buf, IM_COUNTOF(buf), ...)`) are reported unless listed in the
+  rule's `names` key of oculus.json.
 - **OC-0284** and **OC-0049**: a member or definition whose name a macro made with
   `##` (gmock's MOCK_METHOD, Zephyr's K_*_DEFINE buffers) is not reported.
 - **OC-0330**: only `T name();` with nothing between the parentheses. A
@@ -197,9 +197,8 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   `&&`/`||`) are not implemented yet: almost every finding would be a call,
   and the rule texts exempt functions without side effects, which needs a
   configuration key (pure functions, project getters) first.
-- **OC-0365**: only `new` is reported. The rule text also reports every
-  `delete`, but the catalogue's bad example expects no finding at its
-  `delete`; to be decided. A pointer given to a constructor of a class with a
+- **OC-0365**: every `delete` is reported, as the rule text says (decided; the
+  catalogue's bad example now expects its `delete` too). A pointer given to a constructor of a class with a
   destructor of its own counts as handed to an owner (`std::locale`); owners
   reached through a function call (`listeners()->Append(new L)`) are not
   recognised, and the resource-manager configuration key does not exist yet.
@@ -244,8 +243,8 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0293** (dependent base names) is not implemented yet.
 - **OC-0294**: only named non-member calls (operators and member calls are not
   checked) to functions of the user's. Customisation points meant to be found
-  later (fmt's `format_as`, ADL `begin`/`end`) are reported until the
-  configuration list exists.
+  later (fmt's `format_as`, ADL `begin`/`end`) are reported unless listed in the
+  rule's `names` key of oculus.json.
 - **OC-0307**: "can throw" is a throw, a new, or a call or construction of
   something not noexcept; destructors of temporaries are not considered.
 - **OC-0230**: "a type that cannot match" is not checked, only qualified,
@@ -269,3 +268,6 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   variable counts as a check.
 - **OC-0472**: only local pointers initialised from a literal and never
   changed; literals reaching a pointer otherwise are not followed.
+- **OC-0470**: `signal(sig, SIG_DFL)` and `SIG_IGN` in a handler are not
+  reported; `handlers_persist: true` in oculus.json turns the rule off for
+  platforms that keep handlers installed.

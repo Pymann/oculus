@@ -1,0 +1,1 @@
+{ "rules": [ { "rule": 255, "names": ["sum"] }, { "rule": 294, "names": ["code_of"] }, { "rule": 470, "handlers_persist": true } ] }

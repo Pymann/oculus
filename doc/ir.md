@@ -495,7 +495,8 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   the place its name is spelled). Expansions of the user's own macros are not
   recorded; there are too many of them in macro-heavy code.
 - A `CXXCatchStmt` node carries the caught type (`type_uid`) and the handler's
-  declaration (`ref_uid`).
+  declaration (`ref_uid`). A plain call (not a member or operator call) refers
+  to its direct callee (`ref_uid`).
 - `IrNode.spelling` (literals as written, for octal, suffix and escape rules),
   `IrNode.role` (`then`, `else` or `body` under an if, loop or switch; an omitted
   implicit cast passes its role to its operand) and `IrNode.before` (for an empty
@@ -587,7 +588,8 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   container_of with `offsetof`), `unmanaged_new` (C++) on a non-placement new
   not handed at once to `std::unique_ptr`/`std::shared_ptr` (constructor or
   `reset`) or to the constructor of a class with a non-trivial destructor
-  (`std::locale(loc, new facet)`), `temporary_decay` (C) on a member array of
+  (`std::locale(loc, new facet)`), `raw_delete` on every delete expression,
+  `temporary_decay` (C) on a member array of
   a structure returned by value that decays, `temporary_write` (C) on an
   assignment or `++`/`--` of such a member, and `handler_member` (C++) on a
   member access through `this` inside a handler of a constructor's or
@@ -641,7 +643,8 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   on a function declared in a namespace after a using-declaration of its name
   from there; mark `late_call` (C++) at a named non-member call of an
   implicit instantiation whose function (the user's) is first declared after
-  the template.  IrNode `member_handle` (C++) on a returned
+  the template, with the callee's name as fourth part
+  (`late_call:line:col:name`).  IrNode `member_handle` (C++) on a returned
   member of the object as a non-const reference or pointer.  Decl shapes are a
   comma-separated list too.
   `IrDecl.missing_base_init`: a user-provided, non-delegating

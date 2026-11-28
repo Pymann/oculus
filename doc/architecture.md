@@ -175,6 +175,12 @@ oculus [-p BUILD_DIR] [PATHS ...]
     { "rules": [ { "rule": 42, "enabled": false }, { "rule": 7, "severity": "error" } ] }
     ```
 
+    Keys of a rule entry besides `enabled` and `severity`: `limit` (size
+    rules), `percent` and `minimum` (OC-0388), `names` (functions a rule leaves
+    alone: pointer-and-count wrappers for OC-0255, customisation points such as
+    `format_as` for OC-0294) and `handlers_persist` (OC-0470: the platform keeps
+    signal handlers installed, as glibc's `signal` does).
+
 - Language per TU: from the compilation database (`-x`, `-std`, `clang` versus
   `clang++`). Fallback by suffix: `.c` is C; `.cc`, `.cpp`, `.cxx` are C++;
   a header takes the language of the TU that includes it. `--lang` overrides.

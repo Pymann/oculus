@@ -34,6 +34,11 @@
       # needs to be measured at all
       - [percent, i32, 0]
       - [minimum, i32, 0]
+      # OC-0255 pointer-and-count functions, OC-0294 functions meant to be found
+      # late (customisation points): calls of these names are not reported
+      - [names, list<string>]
+      # OC-0470: the platform keeps signal handlers installed (BSD/glibc signal)
+      - [handlers_persist, bool, false]
 
 - interface:
     name: Rule

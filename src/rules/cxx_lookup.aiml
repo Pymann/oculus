@@ -41,7 +41,9 @@
           args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
           return: void
           body:
-            - call: [mark_findings, unit, "late_call", 294, "in an instantiation this call picks a function declared after the template; qualify the call or declare the function first", out]
+            - decl: [query, RuleSetting, setting]
+            - set: [query.rule, 294]
+            - call: [named_mark_findings, unit, "late_call", "in an instantiation this call picks a function declared after the template; qualify the call or declare the function first", query, out]
 
 - class:
     name: StraddledUsingRule

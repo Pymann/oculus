@@ -56,4 +56,7 @@
           args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
           return: void
           body:
-            - call: [mark_findings, unit, "signal_in_handler", 470, "signal called in a signal handler leaves a window in which the signal is lost or takes the default action; use sigaction", out]
+            - if:
+                condition: { eq: [setting.handlers_persist, false] }
+                then:
+                  - call: [mark_findings, unit, "signal_in_handler", 470, "signal called in a signal handler leaves a window in which the signal is lost or takes the default action; use sigaction", out]

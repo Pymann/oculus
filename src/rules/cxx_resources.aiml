@@ -23,6 +23,7 @@
           return: void
           body:
             - call: [node_shape_findings, unit, "unmanaged_new", 365, "the result of new is not handed to an owner at once; use std::make_unique, std::make_shared or a container", out]
+            - call: [node_shape_findings, unit, "raw_delete", 365, "a raw delete leaves the release to hand-written code; let a smart pointer or container own the memory", out]
 
 - class:
     name: CtorTryHandlerMemberRule

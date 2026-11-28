@@ -44,6 +44,48 @@
                         - set: [pick, { "+": [pick, 1] }]
             - set: [idx, { "+": [idx, 1] }]
 
+# mark_findings for marks with a name as fourth part (code:line:col:name), for
+# the rule setting.rule; a mark whose name is in setting.names gives no finding.
+- def:
+    name: named_mark_findings
+    args: [[unit, IrUnit], [code, string], [message, string], [setting, RuleSetting], [out, list<Finding>]]
+    return: void
+    body:
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, unit.info.files.len] }
+          body:
+            - decl: [file, ref<IrFile>, { at: [unit.info.files, idx] }]
+            - decl: [user, bool, { eq: [{ call: [regex.search, "^(source|header)$", file.kind] }, 0] }]
+            - if:
+                condition: { "&&": [user, { gt: [file.lexical_marks.len, 0] }] }
+                then:
+                  - decl: [entries, list<string>, { call: [file.lexical_marks.split, ";"] }]
+                  - decl: [pick, i32, 0]
+                  - while:
+                      condition: { lt: [pick, entries.len] }
+                      body:
+                        - decl: [entry, string, { at: [entries, pick] }]
+                        - decl: [parts, list<string>, { call: [entry.split, ":"] }]
+                        - decl: [named, bool, { eq: [parts.len, 4] }]
+                        - if:
+                            condition: { "&&": [{ "||": [named, { eq: [parts.len, 3] }] }, { eq: [{ at: [parts, 0] }, code] }] }
+                            then:
+                              - decl: [wanted, bool, true]
+                              - if: { condition: named, then: [{ set: [wanted, { eq: [{ call: [setting.names.contains, { at: [parts, 3] }] }, false] }] }] }
+                              - if:
+                                  condition: wanted
+                                  then:
+                                    - decl: [where, IrPos]
+                                    - set: [where.file_uid, idx]
+                                    - decl: [line_text, string, { at: [parts, 1] }]
+                                    - decl: [column_text, string, { at: [parts, 2] }]
+                                    - set: [where.line, { call: [line_text.parse_i32] }]
+                                    - set: [where.column, { call: [column_text.parse_i32] }]
+                                    - call: [out.push, { call: [pos_finding, unit, where, setting.rule, message] }]
+                        - set: [pick, { "+": [pick, 1] }]
+            - set: [idx, { "+": [idx, 1] }]
+
 - class:
     name: CommentStartInCommentRule
     implements: [Rule]
