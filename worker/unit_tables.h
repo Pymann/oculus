@@ -707,6 +707,11 @@ public:
         if (const auto *ctor = dyn_cast<CXXConstructorDecl>(decl)) rec.missing_base_init = missing_base_init(ctor);
         bool pasted = pasted_name(decl);
         if (pasted && (isa<FunctionDecl>(decl) || isa<VarDecl>(decl))) rec.shape = "pasted_name";
+        if (redeclares_system(decl)) rec.shape = rec.shape.empty() ? "redeclares_system" : rec.shape + ",redeclares_system";
+        SourceLocation named = decl->getLocation();
+        if (!pasted && named.isMacroID() && !sm_.isMacroArgExpansion(named)) {
+            rec.shape = rec.shape.empty() ? "macro_body_name" : rec.shape + ",macro_body_name";
+        }
         if (const auto *field = dyn_cast<FieldDecl>(decl)) {
             if (!pasted && exposed_data(field)) rec.shape = "exposed_data";
         }
@@ -732,6 +737,17 @@ public:
             if (designated == nullptr || designated->size() == 0) continue;
             const DesignatedInitExpr::Designator *first = designated->getDesignator(0);
             if (first->isArrayDesignator() || first->isArrayRangeDesignator()) return true;
+        }
+        return false;
+    }
+
+    // A function or variable that an earlier declaration in a system header
+    // declares already (a library function declared again by the user).
+    bool redeclares_system(const Decl *decl) const {
+        if (!isa<FunctionDecl>(decl) && !isa<VarDecl>(decl)) return false;
+        for (const Decl *earlier = decl->getPreviousDecl(); earlier != nullptr; earlier = earlier->getPreviousDecl()) {
+            SourceLocation spelled = sm_.getSpellingLoc(earlier->getLocation());
+            if (spelled.isValid() && sm_.isInSystemHeader(spelled)) return true;
         }
         return false;
     }
@@ -1266,9 +1282,54 @@ public:
         for (const std::string &shape : shapes) add_shape(rec, shape);
     }
 
+    // C: a string literal stored through a pointer to non-const char: assigned,
+    // initialised (also in a braced list), passed (not to a function declared in a
+    // system header) or returned.  The literal is marked literal_to_mutable.
+    void note_literal_to_mutable(const ImplicitCastExpr *cast) {
+        if (context_.getLangOpts().CPlusPlus || cast->getCastKind() != CK_ArrayToPointerDecay) return;
+        const auto *literal = dyn_cast<StringLiteral>(cast->getSubExpr()->IgnoreParens());
+        if (literal == nullptr) return;
+        DynTypedNode node = DynTypedNode::create(*static_cast<const Stmt *>(cast));
+        const Expr *top = cast;
+        for (int depth = 0; depth < 8; ++depth) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return;
+            const auto *above = parents[0].get<ImplicitCastExpr>();
+            if (above == nullptr) break;
+            top = above;
+            node = parents[0];
+        }
+        QualType held = top->getType();
+        if (!held->isPointerType() || held->getPointeeType().isConstQualified()) return;
+        auto parents = context_.getParents(node);
+        if (parents.size() != 1) return;
+        bool stored = false;
+        if (const auto *binary = parents[0].get<BinaryOperator>()) {
+            stored = binary->getOpcode() == BO_Assign && binary->getRHS() == top;
+        } else if (parents[0].get<VarDecl>() != nullptr || parents[0].get<InitListExpr>() != nullptr ||
+                   parents[0].get<ReturnStmt>() != nullptr) {
+            stored = true;
+        } else if (const auto *call = parents[0].get<CallExpr>()) {
+            const FunctionDecl *callee = call->getDirectCallee();
+            stored = callee != nullptr && call->getCallee() != top;
+            if (stored) {
+                SourceLocation declared = sm_.getSpellingLoc(callee->getFirstDecl()->getLocation());
+                if (declared.isInvalid() || sm_.isInSystemHeader(declared)) stored = false;
+            }
+            // a variadic argument keeps char *: the callee's format decides
+            if (stored) {
+                unsigned index = 0;
+                for (; index < call->getNumArgs() && call->getArg(index) != top; ++index) {}
+                if (index >= callee->getNumParams()) stored = false;
+            }
+        }
+        if (stored) add_pending(literal, "literal_to_mutable");
+    }
+
     // C: an implicit conversion of a void pointer to an object pointer (not of a
     // null pointer constant, not of malloc, calloc or realloc); the operand is marked.
     void note_implicit_cast(const ImplicitCastExpr *cast) {
+        note_literal_to_mutable(cast);
         if (context_.getLangOpts().CPlusPlus || cast->getCastKind() != CK_BitCast || cast->isTypeDependent()) return;
         QualType from = cast->getSubExpr()->getType();
         QualType to = cast->getType();

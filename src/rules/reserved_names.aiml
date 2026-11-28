@@ -1,0 +1,113 @@
+# OC-0043 unsigned_literal_suffix, OC-0045 string_literal_to_const (C) and
+# OC-0161 no_reserved_identifier, catalogue in Pymann/coding-rules.  0043 reads
+# integer literal nodes (spelling and type), 0045 the node shape
+# literal_to_mutable (doc/ir.md), 0161 the names of the user's declarations.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# An integer literal of unsigned type written without u or U (only literals
+# spelled as digits: the implicit length argument of a string literal operator
+# carries the operator's spelling).
+- def:
+    name: hidden_unsigned
+    args: [[info, RuleInformation], [rec, ref<IrNode>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^IntegerLiteral$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { neq: [{ call: [regex.search, "^[0-9][0-9a-fA-FxXbB']*[lL]*$", rec.spelling] }, 0] }, then: [{ return: false }] }
+      - decl: [canon_uid, i32, { call: [canonical_of, info, rec.type_uid] }]
+      - if: { condition: { lt: [canon_uid, 0] }, then: [{ return: false }] }
+      - decl: [canon, ref<IrType>, { at: [info.types, canon_uid] }]
+      - return: { "&&": [canon.is_integer, { eq: [canon.is_bool, false] }, { eq: [canon.int_signed, false] }] }
+
+# A reserved name: _ and an upper-case letter or a second _, _ at file scope,
+# __ anywhere in C++, a C library function or object declared at file scope (not
+# a declaration again of what a system header declares).  Names that a macro
+# body writes or pastes are left to the macro's own file.
+- def:
+    name: reserved_name
+    args: [[info, RuleInformation], [rec, ref<IrDecl>]]
+    return: bool
+    body:
+      - if: { condition: { neq: [{ call: [regex.search, "^(Var|Function|Field|Record|CXXRecord|Enum|EnumConstant|Typedef|TypeAlias|Label|ParmVar)$", rec.kind] }, 0] }, then: [{ return: false }] }
+      - if: { condition: { "||": [{ eq: [rec.name.len, 0] }, { gte: [{ call: [regex.search, "(^|,)(pasted|macro_body)_name(,|$)", rec.shape] }, 0] }] }, then: [{ return: false }] }
+      - if: { condition: { eq: [{ call: [regex.search, "^_[A-Z_]", rec.name] }, 0] }, then: [{ return: true }] }
+      - decl: [file_scope, bool, { eq: [{ call: [info_has_decl, info, rec.parent_uid] }, false] }]
+      - if: { condition: { "&&": [file_scope, { eq: [{ call: [regex.search, "^_", rec.name] }, 0] }] }, then: [{ return: true }] }
+      - if: { condition: { "&&": [{ eq: [{ call: [regex.search, "^c\\+\\+$", info.language] }, 0] }, { gte: [{ call: [regex.search, "__", rec.name] }, 0] }] }, then: [{ return: true }] }
+      - if: { condition: { "||": [{ eq: [file_scope, false] }, { gte: [{ call: [regex.search, "(^|,)redeclares_system(,|$)", rec.shape] }, 0] }, { neq: [{ call: [regex.search, "^(Var|Function)$", rec.kind] }, 0] }] }, then: [{ return: false }] }
+      - return: { eq: [{ call: [regex.search, "^(printf|fprintf|sprintf|snprintf|scanf|fscanf|sscanf|fopen|fclose|fread|fwrite|fgets|fputs|puts|gets|getc|putc|getchar|putchar|fflush|fseek|ftell|rewind|remove|rename|tmpfile|tmpnam|perror|fgetc|fputc|ungetc|setvbuf|setbuf|feof|ferror|clearerr|freopen|vprintf|vfprintf|vsprintf|vsnprintf|strlen|strcpy|strncpy|strcat|strncat|strcmp|strncmp|strchr|strrchr|strstr|strtok|memcpy|memmove|memset|memcmp|memchr|strerror|strspn|strcspn|strpbrk|strcoll|strxfrm|malloc|calloc|realloc|free|abort|exit|atexit|atoi|atol|atof|strtol|strtoul|strtod|strtoll|strtoull|getenv|system|qsort|bsearch|abs|labs|div|ldiv|rand|srand|isalpha|isdigit|isalnum|isspace|isupper|islower|toupper|tolower|isprint|ispunct|isxdigit|iscntrl|isgraph|sqrt|pow|exp|log|log10|sin|cos|tan|floor|ceil|fabs|fmod|atan|atan2|asin|acos|sinh|cosh|tanh|frexp|ldexp|modf|time|clock|difftime|mktime|strftime|localtime|gmtime|asctime|ctime|signal|raise|setjmp|longjmp|errno|stdin|stdout|stderr)$", rec.name] }, 0] }
+
+- class:
+    name: UnsignedLiteralSuffixRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 43, "safety.c90-.3.3.unsigned_literal_suffix", "An integer literal of unsigned type carries the U suffix", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.nodes.len] }
+                body:
+                  - decl: [rec, ref<IrNode>, { at: [info.nodes, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_node, rec] }, { call: [hidden_unsigned, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, { call: [written_pos, rec.pos] }, 43, "literal ${rec.spelling} has an unsigned type; write the U suffix"] }]
+                  - set: [idx, { "+": [idx, 1] }]
+
+- class:
+    name: StringLiteralConstRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 45, "safety.c90-.3.3.string_literal_to_const", "A string literal is only stored through a pointer to const char", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "literal_to_mutable", 45, "a string literal goes to a pointer to non-const char; make the pointer const char *", out]
+
+- class:
+    name: ReservedIdentifierRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 161, "safety.c90-.13.1.no_reserved_identifier", "Reserved names are not declared", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.decls.len] }
+                body:
+                  - decl: [rec, ref<IrDecl>, { at: [info.decls, idx] }]
+                  - if:
+                      condition: { "&&": [{ call: [user_decl, rec] }, { call: [reserved_name, info, rec] }] }
+                      then:
+                        - call: [out.push, { call: [pos_finding, unit, rec.name_pos, 161, "'${rec.name}' is a reserved name; choose another"] }]
+                  - set: [idx, { "+": [idx, 1] }]

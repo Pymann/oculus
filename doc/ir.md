@@ -557,13 +557,18 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   bitwise with another binary operator). `IrMacro` kind `mixed_param` (name: a
   parameter used with # or ## and also expanded; pos: the expanded use) and the
   lexical mark `late_include` (an #include after code).
+  `literal_to_mutable` (C) on a string literal assigned, initialised, passed or
+  returned as a pointer to non-const char.
   `IrDecl.shape` (ABI 23): `float_loop_counter` on such a variable declared in
   the for header, `exposed_data` on a named public or protected field of a C++
   class that is not an aggregate and has a user-provided constructor or
   destructor (or a constructor template), a virtual function, a base or a private
   field, `vexing_function` on a block-scope function declaration with nothing
   between its parentheses, `pasted_name` on a function or variable whose name a
-  macro made with `##` (such a field is never `exposed_data`).
+  macro made with `##` (such a field is never `exposed_data`), `macro_body_name`
+  on a declaration whose name a macro body writes, `redeclares_system` on a
+  function or variable that a system header declares before.  Decl shapes are a
+  comma-separated list too.
   `IrDecl.missing_base_init`: a user-provided, non-delegating
   constructor of a non-dependent class does not name a direct or virtual base
   that has data members (its own or inherited; a vtable pointer does not count).  `IrMacro` kind `condition`: a `#if` or `#elif` whose condition

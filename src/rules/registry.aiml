@@ -73,6 +73,7 @@
 - import: "src/rules/pp_lines.aiml"
 - import: "src/rules/switch_clauses.aiml"
 - import: "src/rules/pp_layout.aiml"
+- import: "src/rules/reserved_names.aiml"
 
 - class:
     name: RuleRegistry
@@ -440,6 +441,12 @@
             - call: [<.rules.push, includes_first]
             - decl: [mixed_param, ptr<Rule>, { new: ExpandedParameterRule }]
             - call: [<.rules.push, mixed_param]
+            - decl: [unsigned_suffix, ptr<Rule>, { new: UnsignedLiteralSuffixRule }]
+            - call: [<.rules.push, unsigned_suffix]
+            - decl: [literal_const, ptr<Rule>, { new: StringLiteralConstRule }]
+            - call: [<.rules.push, literal_const]
+            - decl: [reserved, ptr<Rule>, { new: ReservedIdentifierRule }]
+            - call: [<.rules.push, reserved]
       - def:
           name: rule_count
           args: []

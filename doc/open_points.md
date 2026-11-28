@@ -103,6 +103,14 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   end. `[[fallthrough]]` is reported: the configuration key does not exist yet.
 - **OC-0140**: the `extern "C" {` and `}` around includes do not count as code,
   and neither does code skipped by `#if`. X-macro files cannot be configured yet.
+- **OC-0045**: a literal passed to a function declared in a system header is not
+  reported (the configurable list does not exist yet), and neither is a variadic
+  argument or a `?:` that picks a literal.
+- **OC-0161**: library names only for functions and variables at file scope that
+  do not declare again what a system header declares. The list of names is a
+  fixed set of common C library functions and objects, not the full library.
+  Names that a macro body writes or pastes (Zephyr's `LOG_MODULE_REGISTER`) are
+  not reported at the macro's use.
 - **OC-0126** use_return_value: the ignorable list of the rule text is not a
   configuration key yet. Built in: `printf`, `vprintf`, `wprintf`, `vwprintf`
   (the catalogue reports `fprintf`) and the C functions that return their first
