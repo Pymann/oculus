@@ -1,0 +1,42 @@
+# OC-0468, OC-0469 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): unsafe_in_handler, handler_shared_object.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: AsyncSafeHandlerRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 468, "security.c90-.13.2.async_safe_signal_handlers", "Signal handlers call only async-signal-safe functions", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unsafe_in_handler", 468, "this function is not async-signal-safe and is called in a signal handler; set a volatile sig_atomic_t flag and do the work outside", out]
+
+- class:
+    name: HandlerSharedObjectRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 469, "security.c90-.13.2.no_shared_access_in_handler", "Signal handlers only access volatile sig_atomic_t or lock-free atomic objects", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "handler_shared_object", 469, "a signal handler accesses a static object that is neither volatile sig_atomic_t nor atomic", out]

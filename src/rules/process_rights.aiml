@@ -1,0 +1,59 @@
+# OC-0419, OC-0451, OC-0459 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): stale_envp, constant_seed, late_group_drop.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: StaleEnvpRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 419, "security.c90-.13.4.envp_after_setenv", "An environment pointer is not used after a call that may change the environment", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "stale_envp", 419, "envp is used after a call that may move the environment; read the environment with getenv instead", out]
+
+- class:
+    name: ConstantSeedRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 451, "security.c90-.13.4.seeded_prng", "Pseudo-random generators are seeded with a value that changes between runs", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "constant_seed", 451, "srand with a constant seed gives the same sequence in every run; seed from time or another changing source", out]
+
+- class:
+    name: GroupDropOrderRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 459, "security.c90-.21.1.privilege_drop_order", "Group privileges are dropped before user privileges", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "late_group_drop", 459, "the group is changed after the user; once the user is dropped, the group can no longer be changed, so drop the group first", out]

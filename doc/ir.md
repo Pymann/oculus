@@ -679,7 +679,21 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `putc`, `getwc`, `putwc` with a side effect), `putenv_automatic` (a `putenv`
   argument that is a local array or `&local[i]`) and `unchecked_setuid`
   (`setuid`, `seteuid`, `setreuid` or `setresuid` whose result is cast to void
-  or dropped as a statement).  Literals in skipped code and on `#include`,
+  or dropped as a statement), `late_group_drop` (a `setgid`, `setegid`,
+  `setregid`, `setresgid` or `setgroups` call that a uid change runs before on
+  one path: an earlier statement of a common block, the left side of `&&`, `||`
+  or comma, or the condition of an enclosing `if`), `stale_envp` (a use of
+  `main`'s third parameter that `setenv`, `putenv`, `unsetenv` or `clearenv`
+  runs before in that sense), `constant_seed` (a constant argument of
+  `srand`), `unchecked_asctime` (`asctime(&t)` of a variable whose members no
+  comparison of the unit reads), `literal_write` (a write through `p[i]`, `*p`
+  or as the destination of `strcpy`, `strcat`, `strtok`, `memset` and similar,
+  where `p` is a local pointer initialised from a string literal and never
+  assigned or taken by address), `unsafe_in_handler` (a library function
+  outside the C and POSIX async-signal-safe lists called directly in a function
+  passed to `signal`) and `handler_shared_object` (a reference in such a handler
+  to an object of static storage that is not const, atomic or
+  `volatile sig_atomic_t`).  Literals in skipped code and on `#include`,
   `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;
   `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`

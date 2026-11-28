@@ -2501,6 +2501,7 @@ public:
     // The line classes of every user file seen, after all records are in.
     void finish_lines(const LangOptions &lang) {
         finish_signals();
+        finish_process_calls();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -3210,6 +3211,243 @@ public:
         }
         for (const auto &entry : fgets_indexes_) {
             if (fgets_buffers_.count(entry.first) > 0 && length_checked_.count(entry.first) == 0) add_ast_mark("fgets_last_char", entry.second);
+        }
+    }
+
+    // A statement and its ancestors up to the function body.
+    std::vector<const Stmt *> stmt_chain(const Stmt *stmt) const {
+        std::vector<const Stmt *> chain{stmt};
+        DynTypedNode node = DynTypedNode::create(*stmt);
+        for (int depth = 0; depth < 256; ++depth) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) break;
+            const Stmt *parent = parents[0].get<Stmt>();
+            if (parent == nullptr) break;
+            chain.push_back(parent);
+            node = parents[0];
+        }
+        return chain;
+    }
+
+    // Whether first runs before second on one path of the same function: they
+    // meet in a block (first in an earlier statement), in the left side of &&,
+    // || or comma, or first in the condition of an if whose branch holds second.
+    bool sequenced_before(const Stmt *first, const Stmt *second) const {
+        std::vector<const Stmt *> one = stmt_chain(first);
+        std::vector<const Stmt *> two = stmt_chain(second);
+        for (size_t at = 1; at < one.size(); ++at) {
+            auto found = std::find(two.begin(), two.end(), one[at]);
+            if (found == two.end()) continue;
+            if (found == two.begin()) return false;
+            const Stmt *meet = one[at];
+            const Stmt *left = one[at - 1];
+            const Stmt *right = *(found - 1);
+            if (const auto *block = dyn_cast<CompoundStmt>(meet)) {
+                for (const Stmt *child : block->body()) {
+                    if (child == left) return true;
+                    if (child == right) return false;
+                }
+                return false;
+            }
+            if (const auto *binary = dyn_cast<BinaryOperator>(meet)) {
+                bool ordered = binary->getOpcode() == BO_LAnd || binary->getOpcode() == BO_LOr || binary->getOpcode() == BO_Comma;
+                return ordered && left == binary->getLHS() && right == binary->getRHS();
+            }
+            if (const auto *branch = dyn_cast<IfStmt>(meet)) {
+                return left == branch->getCond() && (right == branch->getThen() || right == branch->getElse());
+            }
+            return false;
+        }
+        return false;
+    }
+
+    // A library function by name that this unit only declares (also when the
+    // user's code redeclares it).
+    bool declared_library(const FunctionDecl *callee, const std::set<std::string> &names) const {
+        if (callee == nullptr || callee->getIdentifier() == nullptr || names.count(callee->getName().str()) == 0) return false;
+        if (callee->hasBody() || isa<CXXMethodDecl>(callee)) return false;
+        return callee->getDeclContext()->getRedeclContext()->isTranslationUnit() || callee->isInStdNamespace();
+    }
+
+    // Batch 33 facts: privilege changes (uid_calls_, gid_calls_), environment
+    // changes and envp uses, constant srand seeds (constant_seed), asctime of a
+    // local struct tm, writes through pointers set from a string literal.
+    void note_process_calls(const Stmt *stmt) {
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) {
+            const auto *param = dyn_cast<ParmVarDecl>(ref->getDecl());
+            const auto *owner = param != nullptr ? dyn_cast<FunctionDecl>(param->getDeclContext()) : nullptr;
+            if (owner != nullptr && owner->isMain() && param->getFunctionScopeIndex() == 2) envp_refs_.push_back(ref);
+            return;
+        }
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            if (binary->isComparisonOp()) {
+                for (const Expr *side : {binary->getLHS(), binary->getRHS()}) {
+                    const auto *member = dyn_cast<MemberExpr>(side->IgnoreParenImpCasts());
+                    const auto *base = member != nullptr ? dyn_cast<DeclRefExpr>(member->getBase()->IgnoreParenImpCasts()) : nullptr;
+                    if (base != nullptr) fields_checked_.insert(base->getDecl());
+                }
+            }
+            if (binary->isAssignmentOp()) note_literal_write(binary->getLHS(), binary->getLHS());
+            return;
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            if (unary->isIncrementDecrementOp()) note_literal_write(unary->getSubExpr(), unary);
+            if (unary->getOpcode() == UO_AddrOf) {
+                if (const auto *ref = dyn_cast<DeclRefExpr>(unary->getSubExpr()->IgnoreParenImpCasts())) literal_unsure_.insert(ref->getDecl());
+            }
+            return;
+        }
+        if (const auto *var = dyn_cast<DeclStmt>(stmt)) {
+            for (const Decl *decl : var->decls()) {
+                const auto *local = dyn_cast<VarDecl>(decl);
+                if (local == nullptr || !local->hasLocalStorage() || !local->getType()->isPointerType() || local->getInit() == nullptr) continue;
+                if (isa<StringLiteral>(local->getInit()->IgnoreParenCasts())) literal_pointers_.insert(local);
+            }
+            return;
+        }
+        const auto *call = dyn_cast<CallExpr>(stmt);
+        if (call == nullptr) return;
+        const FunctionDecl *callee = call->getDirectCallee();
+        static const std::set<std::string> uid = {"setuid", "seteuid", "setreuid", "setresuid"};
+        static const std::set<std::string> gid = {"setgid", "setegid", "setregid", "setresgid", "setgroups"};
+        static const std::set<std::string> env = {"setenv", "putenv", "unsetenv", "clearenv"};
+        static const std::set<std::string> writers = {"strcpy", "strncpy", "strcat", "strncat", "strtok", "memset", "memcpy", "memmove", "sprintf", "snprintf", "gets", "fgets"};
+        if (declared_library(callee, uid)) uid_calls_.push_back(call);
+        if (declared_library(callee, gid)) gid_calls_.push_back(call);
+        if (declared_library(callee, env)) env_calls_.push_back(call);
+        if (call->getNumArgs() == 1 && system_function(callee, "srand")) {
+            const Expr *seed = call->getArg(0);
+            Expr::EvalResult value;
+            if (!seed->isValueDependent() && seed->EvaluateAsInt(value, context_)) add_ast_mark("constant_seed", sm_.getFileLoc(seed->getBeginLoc()));
+        }
+        if (call->getNumArgs() == 1 && system_function(callee, "asctime")) {
+            const auto *address = dyn_cast<UnaryOperator>(call->getArg(0)->IgnoreParenImpCasts());
+            const auto *ref = address != nullptr && address->getOpcode() == UO_AddrOf ? dyn_cast<DeclRefExpr>(address->getSubExpr()->IgnoreParenImpCasts()) : nullptr;
+            if (ref != nullptr && isa<VarDecl>(ref->getDecl())) asctime_args_.push_back({ref->getDecl(), call->getArg(0)->getBeginLoc()});
+        }
+        if (call->getNumArgs() >= 1 && callee != nullptr && callee->getIdentifier() != nullptr && writers.count(callee->getName().str()) > 0 &&
+            system_function(callee, callee->getName().str().c_str())) {
+            const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+            if (ref != nullptr) literal_writes_.push_back({ref->getDecl(), call->getArg(0)->getBeginLoc()});
+        }
+    }
+
+    // A write to p[i] or *p (at where), or a new value for p itself.
+    void note_literal_write(const Expr *target, const Expr *where) {
+        target = target->IgnoreParenImpCasts();
+        if (const auto *ref = dyn_cast<DeclRefExpr>(target)) {
+            literal_unsure_.insert(ref->getDecl());
+            return;
+        }
+        const Expr *base = nullptr;
+        if (const auto *element = dyn_cast<ArraySubscriptExpr>(target)) base = element->getBase();
+        if (const auto *unary = dyn_cast<UnaryOperator>(target)) {
+            if (unary->getOpcode() == UO_Deref) base = unary->getSubExpr();
+        }
+        const auto *ref = base != nullptr ? dyn_cast<DeclRefExpr>(base->IgnoreParenImpCasts()) : nullptr;
+        if (ref != nullptr) literal_writes_.push_back({ref->getDecl(), where->getBeginLoc()});
+    }
+
+    // An object a signal handler may touch: volatile sig_atomic_t, an atomic
+    // type, or a const object.
+    static bool handler_safe_object(QualType type) {
+        if (type.isConstQualified() || type->isAtomicType()) return true;
+        if (std_class(type, "atomic") || std_class(type, "atomic_flag")) return true;
+        if (!type.isVolatileQualified()) return false;
+        for (QualType step = type; !step.isNull();) {
+            const auto *named = step->getAs<TypedefType>();
+            if (named == nullptr) break;
+            if (named->getDecl()->getName() == "sig_atomic_t") return true;
+            step = named->getDecl()->getUnderlyingType();
+        }
+        return false;
+    }
+
+    // The references and calls of a statement, outside lambdas, blocks and
+    // unevaluated operands.
+    static void refs_and_calls(const Stmt *stmt, std::vector<const DeclRefExpr *> &refs, std::vector<const CallExpr *> &calls) {
+        if (stmt == nullptr || isa<LambdaExpr>(stmt) || isa<BlockExpr>(stmt) || isa<UnaryExprOrTypeTraitExpr>(stmt)) return;
+        if (const auto *address = dyn_cast<UnaryOperator>(stmt)) {
+            if (address->getOpcode() == UO_AddrOf && isa<DeclRefExpr>(address->getSubExpr()->IgnoreParens())) return;
+        }
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) refs.push_back(ref);
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) calls.push_back(call);
+        for (const Stmt *child : stmt->children()) refs_and_calls(child, refs, calls);
+    }
+
+    // The C and POSIX async-signal-safe functions.
+    static bool async_safe(llvm::StringRef name) {
+        static const std::set<std::string> safe = {
+            "_Exit", "_exit", "abort", "quick_exit", "signal", "accept", "access", "aio_error", "aio_return", "aio_suspend",
+            "alarm", "bind", "cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed", "chdir", "chmod", "chown",
+            "clock_gettime", "close", "connect", "creat", "dup", "dup2", "dup3", "execl", "execle", "execv", "execve",
+            "faccessat", "fchdir", "fchmod", "fchmodat", "fchown", "fchownat", "fcntl", "fdatasync", "fexecve", "ffs",
+            "fork", "_Fork", "fstat", "fstatat", "fsync", "ftruncate", "futimens", "getegid", "geteuid", "getgid",
+            "getgroups", "getpeername", "getpgrp", "getpid", "getppid", "getsockname", "getsockopt", "getuid", "htonl",
+            "htons", "kill", "link", "linkat", "listen", "longjmp", "lseek", "lstat", "memccpy", "memchr", "memcmp",
+            "memcpy", "memmove", "memset", "mkdir", "mkdirat", "mkfifo", "mkfifoat", "mknod", "mknodat", "ntohl",
+            "ntohs", "open", "openat", "pause", "pipe", "pipe2", "poll", "pselect", "pthread_kill", "pthread_self",
+            "pthread_sigmask", "raise", "read", "readlink", "readlinkat", "recv", "recvfrom", "recvmsg", "rename",
+            "renameat", "rmdir", "select", "sem_post", "send", "sendmsg", "sendto", "setgid", "setpgid", "setsid",
+            "setsockopt", "setuid", "shutdown", "sigaction", "sigaddset", "sigdelset", "sigemptyset", "sigfillset",
+            "sigismember", "siglongjmp", "sigpause", "sigpending", "sigprocmask", "sigqueue", "sigset", "sigsuspend",
+            "sleep", "sockatmark", "socket", "socketpair", "stat", "stpcpy", "stpncpy", "strcat", "strchr", "strcmp",
+            "strcpy", "strcspn", "strlen", "strncat", "strncmp", "strncpy", "strnlen", "strpbrk", "strrchr", "strspn",
+            "strstr", "strtok_r", "symlink", "symlinkat", "tcdrain", "tcflow", "tcflush", "tcgetattr", "tcgetpgrp",
+            "tcsendbreak", "tcsetattr", "tcsetpgrp", "time", "timer_getoverrun", "timer_gettime", "timer_settime",
+            "times", "umask", "uname", "unlink", "unlinkat", "utime", "utimensat", "utimes", "wait", "waitpid",
+            "wcpcpy", "wcpncpy", "wcscat", "wcschr", "wcscmp", "wcscpy", "wcscspn", "wcslen", "wcsncat", "wcsncmp",
+            "wcsncpy", "wcsnlen", "wcspbrk", "wcsrchr", "wcsspn", "wcsstr", "wcstok", "wmemchr", "wmemcmp", "wmemcpy",
+            "wmemmove", "wmemset", "write", "__errno_location", "__error", "_longjmp", "__sigsetjmp"};
+        return safe.count(name.str()) > 0;
+    }
+
+    // At the end of the unit: privilege order, envp after an environment
+    // change, asctime of unchecked fields, writes into string literals, and what
+    // signal handlers call and touch.
+    void finish_process_calls() {
+        for (const CallExpr *group : gid_calls_) {
+            for (const CallExpr *user : uid_calls_) {
+                if (sequenced_before(user, group)) {
+                    add_ast_mark("late_group_drop", group->getBeginLoc());
+                    break;
+                }
+            }
+        }
+        for (const DeclRefExpr *ref : envp_refs_) {
+            for (const CallExpr *change : env_calls_) {
+                if (sequenced_before(change, ref)) {
+                    add_ast_mark("stale_envp", ref->getBeginLoc());
+                    break;
+                }
+            }
+        }
+        for (const auto &entry : asctime_args_) {
+            if (fields_checked_.count(entry.first) == 0) add_ast_mark("unchecked_asctime", entry.second);
+        }
+        for (const auto &entry : literal_writes_) {
+            const auto *var = dyn_cast<VarDecl>(entry.first);
+            if (var != nullptr && literal_pointers_.count(var) > 0 && literal_unsure_.count(var) == 0) add_ast_mark("literal_write", entry.second);
+        }
+        for (const FunctionDecl *handler : signal_handlers_) {
+            const FunctionDecl *defined = nullptr;
+            if (!handler->hasBody(defined)) continue;
+            std::vector<const DeclRefExpr *> refs;
+            std::vector<const CallExpr *> calls;
+            refs_and_calls(defined->getBody(), refs, calls);
+            for (const DeclRefExpr *ref : refs) {
+                const auto *var = dyn_cast<VarDecl>(ref->getDecl());
+                if (var != nullptr && var->hasGlobalStorage() && !handler_safe_object(var->getType())) add_ast_mark("handler_shared_object", ref->getBeginLoc());
+            }
+            for (const CallExpr *call : calls) {
+                const FunctionDecl *callee = call->getDirectCallee();
+                if (callee == nullptr || callee->getIdentifier() == nullptr || isa<CXXMethodDecl>(callee)) continue;
+                unsigned builtin = callee->getBuiltinID();
+                if (builtin != 0 && !context_.BuiltinInfo.isLibFunction(builtin) && !context_.BuiltinInfo.isPredefinedLibFunction(builtin)) continue;
+                SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+                if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) continue;
+                if (!async_safe(callee->getName())) add_ast_mark("unsafe_in_handler", call->getBeginLoc());
+            }
         }
     }
 
@@ -4339,6 +4577,7 @@ public:
         if (const auto *call = dyn_cast<CallExpr>(stmt)) note_library_calls(call);
         if (const auto *call = dyn_cast<CallExpr>(stmt)) note_signal_calls(call);
         note_fgets_index(stmt);
+        note_process_calls(stmt);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
         }
@@ -5096,6 +5335,15 @@ private:
     std::vector<SourceLocation> unsafe_calls_;
     bool creates_threads_ = false;
     std::vector<SourceLocation> signal_calls_;
+    std::vector<const CallExpr *> uid_calls_;
+    std::vector<const CallExpr *> gid_calls_;
+    std::vector<const CallExpr *> env_calls_;
+    std::vector<const DeclRefExpr *> envp_refs_;
+    std::set<const ValueDecl *> fields_checked_;
+    std::vector<std::pair<const ValueDecl *, SourceLocation>> asctime_args_;
+    std::set<const VarDecl *> literal_pointers_;
+    std::set<const ValueDecl *> literal_unsure_;
+    std::vector<std::pair<const ValueDecl *, SourceLocation>> literal_writes_;
     std::set<const FunctionDecl *> signal_handlers_;
     std::set<const FunctionDecl *> fault_handlers_;
     std::set<const FunctionDecl *> exit_handlers_;

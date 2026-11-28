@@ -95,6 +95,9 @@
 - import: "src/rules/signal_handlers.aiml"
 - import: "src/rules/stdio_checks.aiml"
 - import: "src/rules/environment_calls.aiml"
+- import: "src/rules/handler_safety.aiml"
+- import: "src/rules/process_rights.aiml"
+- import: "src/rules/literal_writes.aiml"
 
 - class:
     name: RuleRegistry
@@ -570,6 +573,20 @@
             - call: [<.rules.push, putenv_static]
             - decl: [setuid_checked, ptr<Rule>, { new: PrivilegeDropCheckedRule }]
             - call: [<.rules.push, setuid_checked]
+            - decl: [stale_envp, ptr<Rule>, { new: StaleEnvpRule }]
+            - call: [<.rules.push, stale_envp]
+            - decl: [constant_seed, ptr<Rule>, { new: ConstantSeedRule }]
+            - call: [<.rules.push, constant_seed]
+            - decl: [asctime_input, ptr<Rule>, { new: AsctimeInputRule }]
+            - call: [<.rules.push, asctime_input]
+            - decl: [group_order, ptr<Rule>, { new: GroupDropOrderRule }]
+            - call: [<.rules.push, group_order]
+            - decl: [async_safe, ptr<Rule>, { new: AsyncSafeHandlerRule }]
+            - call: [<.rules.push, async_safe]
+            - decl: [handler_object, ptr<Rule>, { new: HandlerSharedObjectRule }]
+            - call: [<.rules.push, handler_object]
+            - decl: [literal_write, ptr<Rule>, { new: LiteralWriteRule }]
+            - call: [<.rules.push, literal_write]
       - def:
           name: rule_count
           args: []

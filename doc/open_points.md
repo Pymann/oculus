@@ -33,6 +33,15 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   does). There is no configuration key yet, so every reinstalling call is
   reported; `signal(sig, SIG_DFL)` and `SIG_IGN` in a handler are not.
 
+- **OC-0451 seeded_prng, test code.** The rule exempts tests that seed with a
+  constant on purpose when the project configuration marks the file as test
+  code. There is no such key yet, so every constant `srand` seed is reported.
+  `rand` without any `srand` and C++ engines are not checked yet (cross-TU).
+- **OC-0468 async_safe_signal_handlers, platform.** The POSIX list is always
+  used (the platform is assumed to be POSIX). Open: a configuration key for
+  non-POSIX targets, where only `_Exit`, `abort`, `quick_exit` and `signal`
+  are safe.
+
 ## Left out on purpose
 
 - **OC-0386** catch_all_handler_last and **OC-0329**
@@ -252,3 +261,11 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   itself.
 - **OC-0432**: only the direct form `b[strlen(b) - 1]` on a variable filled by
   `fgets` in the same unit; a length kept in a variable is not followed.
+- **OC-0468, OC-0469**: only what a handler named in `signal` does itself;
+  functions it calls are not followed, and `sigaction` handlers are not seen.
+- **OC-0419, OC-0459**: "on the same path" is the order within one function
+  (see `late_group_drop` in doc/ir.md); copies of `envp` are not followed.
+- **OC-0452**: only `asctime(&variable)`; any comparison of a member of the
+  variable counts as a check.
+- **OC-0472**: only local pointers initialised from a literal and never
+  changed; literals reaching a pointer otherwise are not followed.

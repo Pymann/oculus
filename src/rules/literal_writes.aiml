@@ -1,0 +1,42 @@
+# OC-0452, OC-0472 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): unchecked_asctime, literal_write.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: AsctimeInputRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 452, "safety.c90-.13.4.valid_asctime_input", "asctime is only given broken-down times in range", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unchecked_asctime", 452, "asctime of a struct tm whose fields are not checked can overflow its static buffer; use strftime with a buffer size", out]
+
+- class:
+    name: LiteralWriteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 472, "security.c90-.3.3.no_string_literal_modification", "String literals are not modified", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "literal_write", 472, "this pointer points into a string literal, and writing to a literal is undefined; copy it into an array first", out]
