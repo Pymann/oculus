@@ -1,0 +1,25 @@
+# OC-0347 volatile_appropriate (C++), catalogue in Pymann/coding-rules.  Reads
+# IrDecl.shape pointless_volatile (doc/ir.md): on a function with a volatile
+# parameter or return type, and on a local volatile whose address is not taken.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: VolatileAppropriateRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 347, "safety.cpp98-.6.6.volatile_appropriate", "volatile is used only where it has a meaning", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "pointless_volatile", 347, "volatile here has no effect a reader can rely on (parameter, return type or a local that never leaves the function)", out]

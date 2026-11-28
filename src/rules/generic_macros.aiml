@@ -1,0 +1,61 @@
+# OC-0227 generic_from_macro_only, OC-0228 generic_no_side_effects and OC-0233
+# generic_single_evaluation (C), catalogue in Pymann/coding-rules.  Read
+# IrNode.shape written_generic and generic_side_effect, and the mark
+# generic_reuse of IrFile.lexical_marks (doc/ir.md).
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: GenericFromMacroRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 227, "style.c11-.9.5.generic_from_macro_only", "_Generic appears only in macro expansions", "warn", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "written_generic", 227, "_Generic written outside a macro selects on a type the author already knows; use it to build a type-generic macro", out]
+
+- class:
+    name: GenericNoSideEffectsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 228, "safety.c11-.9.5.generic_no_side_effects", "A _Generic written outside a macro has no side effects in its control expression", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [node_shape_findings, unit, "generic_side_effect", 228, "the controlling expression of _Generic is not evaluated; its side effect never happens", out]
+
+- class:
+    name: GenericSingleEvaluationRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 233, "safety.c11-.9.5.generic_single_evaluation", "A macro using _Generic evaluates its argument once", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "generic_reuse", 233, "this _Generic association evaluates a macro argument more than once", out]

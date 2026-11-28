@@ -617,7 +617,19 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   noexcept, `global_variable` on a modifiable (not const, not volatile)
   variable definition at file or namespace scope, and
   `partial_special_members` (C++) on a class that declares between one and four
-  of the five special members.  IrNode `member_handle` (C++) on a returned
+  of the five special members, `mixed_virtual_base` (C++) on the class where
+  an accessible base first comes together as virtual and non-virtual base,
+  `repeated_overrider` (C++) on a virtual function (not a destructor) defined
+  for the second time on its override chain, `open_template` (C++) on a
+  non-member function template of a named namespace with types (not detail,
+  internal, impl) whose parameters are all bare template type parameters and
+  that has no requires clause, type constraint or enable_if, and
+  `pointless_volatile` (C++) on a function with a volatile parameter or return
+  type and on a non-static local volatile whose address is never taken.  IrNode
+  `written_generic` (C) on a `_Generic` not from a macro expansion and
+  `generic_side_effect` on its controlling expression with side effects; the
+  lexical mark `generic_reuse` at a `_Generic` association of a function-like
+  macro that uses one parameter twice.  IrNode `member_handle` (C++) on a returned
   member of the object as a non-const reference or pointer.  Decl shapes are a
   comma-separated list too.
   `IrDecl.missing_base_init`: a user-provided, non-delegating

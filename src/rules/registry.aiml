@@ -86,6 +86,9 @@
 - import: "src/rules/scope_names.aiml"
 - import: "src/rules/special_members.aiml"
 - import: "src/rules/globals_handles.aiml"
+- import: "src/rules/generic_macros.aiml"
+- import: "src/rules/cxx_hierarchy.aiml"
+- import: "src/rules/volatile_use.aiml"
 
 - class:
     name: RuleRegistry
@@ -517,6 +520,20 @@
             - call: [<.rules.push, globals]
             - decl: [member_handle, ptr<Rule>, { new: NonConstMemberHandleRule }]
             - call: [<.rules.push, member_handle]
+            - decl: [generic_macro, ptr<Rule>, { new: GenericFromMacroRule }]
+            - call: [<.rules.push, generic_macro]
+            - decl: [generic_effects, ptr<Rule>, { new: GenericNoSideEffectsRule }]
+            - call: [<.rules.push, generic_effects]
+            - decl: [generic_once, ptr<Rule>, { new: GenericSingleEvaluationRule }]
+            - call: [<.rules.push, generic_once]
+            - decl: [virtual_base, ptr<Rule>, { new: ConsistentVirtualBaseRule }]
+            - call: [<.rules.push, virtual_base]
+            - decl: [final_overrider, ptr<Rule>, { new: SingleFinalOverriderRule }]
+            - call: [<.rules.push, final_overrider]
+            - decl: [open_template, ptr<Rule>, { new: GenericFunctionNamespaceRule }]
+            - call: [<.rules.push, open_template]
+            - decl: [volatile_use, ptr<Rule>, { new: VolatileAppropriateRule }]
+            - call: [<.rules.push, volatile_use]
       - def:
           name: rule_count
           args: []

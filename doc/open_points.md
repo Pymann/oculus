@@ -207,3 +207,18 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   (the pre-C++11 way to forbid copying) is left out like a deleted one.
 - **OC-0354**: only the "some but not all five declared" part; inconsistent
   copy and move definitions within a full set are not checked.
+- **OC-0233**: only a parameter used twice inside one association. A use
+  outside the `_Generic` is not reported, because it may be on another branch of
+  the macro (Zephyr's cbprintf packing).
+- **OC-0281**: only the "defined twice on one path" part; overriders in two
+  sibling bases that share a virtual base are not checked. gtest listeners that
+  override `EmptyTestEventListener`'s empty definitions are reported, as the
+  rule text says.
+- **OC-0290**: only templates whose parameters all take any type
+  (`format(format_string<T...>, T&&...)` is not reported). Constraints are
+  recognised as requires clauses, type constraints and `enable_if` in the
+  spelled types.
+- **OC-0347**: references to a volatile local (bound or passed by reference)
+  count as leaving the function only through `&` and by-reference lambda
+  captures.
+- **OC-0293** (dependent base names) is not implemented yet.

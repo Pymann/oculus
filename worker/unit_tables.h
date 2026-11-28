@@ -726,6 +726,10 @@ public:
         if (odd_special_signature(decl)) add_shape(rec, "odd_special_signature");
         if (global_variable(decl)) add_shape(rec, "global_variable");
         if (partial_special_members(decl)) add_shape(rec, "partial_special_members");
+        if (mixed_virtual_base(decl)) add_shape(rec, "mixed_virtual_base");
+        if (repeated_overrider(decl)) add_shape(rec, "repeated_overrider");
+        if (open_function_template(decl)) add_shape(rec, "open_template");
+        if (pointless_volatile(decl)) add_shape(rec, "pointless_volatile");
         if (qualified_function(decl)) add_shape(rec, "qualified_function");
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
@@ -2344,10 +2348,66 @@ public:
         if (rec.uses_call_site) call_site_macros_.insert(rec.name);
         macros.push_back(rec);
         if (rec.function_like) note_mixed_params(info);
+        if (rec.function_like) note_generic_reuse(info);
     }
 
     // A parameter that is an operand of # or ## and also used where it is
     // expanded: kind mixed_param at the first expanded use (name the parameter).
+    // A function-like macro whose _Generic association uses a parameter twice:
+    // mark generic_reuse at the association's first token.
+    void note_generic_reuse(const MacroInfo *info) {
+        llvm::ArrayRef<Token> tokens = info->tokens();
+        for (size_t start = 0; start < tokens.size(); ++start) {
+            const IdentifierInfo *word = tokens[start].getIdentifierInfo();
+            if (word == nullptr || word->getName() != "_Generic" || start + 1 >= tokens.size() || !tokens[start + 1].is(tok::l_paren)) continue;
+            // find the parts: controlling expression, then associations
+            std::vector<std::pair<size_t, size_t>> parts;
+            size_t from = start + 2, at = start + 2;
+            int depth = 0;
+            for (; at < tokens.size(); ++at) {
+                if (tokens[at].isOneOf(tok::l_paren, tok::l_square, tok::l_brace)) ++depth;
+                if (tokens[at].isOneOf(tok::r_paren, tok::r_square, tok::r_brace)) {
+                    if (depth == 0) break;
+                    --depth;
+                }
+                if (depth == 0 && tokens[at].is(tok::comma)) {
+                    parts.push_back({from, at});
+                    from = at + 1;
+                }
+            }
+            if (at >= tokens.size()) return;
+            parts.push_back({from, at});
+            size_t end = at;
+            for (const IdentifierInfo *param : info->params()) {
+                int outside = 0;
+                for (size_t one = 0; one < tokens.size(); ++one) {
+                    if ((one < start || one > end) && tokens[one].getIdentifierInfo() == param) ++outside;
+                }
+                for (size_t part = 1; part < parts.size(); ++part) {
+                    size_t colon = parts[part].first;
+                    int nest = 0;
+                    while (colon < parts[part].second) {
+                        if (tokens[colon].is(tok::l_paren)) ++nest;
+                        if (tokens[colon].is(tok::r_paren)) --nest;
+                        if (nest == 0 && tokens[colon].is(tok::colon)) break;
+                        ++colon;
+                    }
+                    if (colon + 1 >= parts[part].second) continue;
+                    int inside = 0;
+                    for (size_t one = colon + 1; one < parts[part].second; ++one) {
+                        if (tokens[one].getIdentifierInfo() == param) ++inside;
+                    }
+                    (void)outside;   // a use outside may sit on another branch of the macro
+                    if (inside >= 2) {
+                        SourceLocation loc = tokens[colon + 1].getLocation();
+                        if (loc.isFileID()) add_ast_mark("generic_reuse", loc);
+                    }
+                }
+            }
+            start = end;
+        }
+    }
+
     void note_mixed_params(const MacroInfo *info) {
         llvm::ArrayRef<Token> tokens = info->tokens();
         for (const IdentifierInfo *param : info->params()) {
@@ -3623,6 +3683,148 @@ public:
         add_pending(back->getRetValue()->IgnoreParenImpCasts(), "member_handle");
     }
 
+    // Bases reached through accessible paths: virtual, non-virtual or both.
+    static void collect_bases(const CXXRecordDecl *record, std::map<const CXXRecordDecl *, int> &seen, int depth) {
+        if (depth > 32) return;
+        for (const CXXBaseSpecifier &base : record->bases()) {
+            if (base.getAccessSpecifier() == AS_private) continue;
+            const CXXRecordDecl *parent = base.getType()->getAsCXXRecordDecl();
+            if (parent == nullptr || !parent->hasDefinition()) continue;
+            parent = parent->getDefinition()->getCanonicalDecl();
+            seen[parent] |= base.isVirtual() ? 1 : 2;
+            collect_bases(parent->getDefinition(), seen, depth + 1);
+        }
+    }
+
+    static bool has_mixed_base(const CXXRecordDecl *record) {
+        std::map<const CXXRecordDecl *, int> seen;
+        collect_bases(record, seen, 0);
+        for (const auto &entry : seen) {
+            if (entry.second == 3) return true;
+        }
+        return false;
+    }
+
+    // C++: a class whose hierarchy has an accessible base both as virtual and
+    // as non-virtual base (where it first comes together: no base has it).
+    bool mixed_virtual_base(const Decl *decl) const {
+        const auto *record = dyn_cast<CXXRecordDecl>(decl);
+        if (record == nullptr || !record->isThisDeclarationADefinition() || record->isDependentType() ||
+            !user_location(sm_, record->getLocation())) return false;
+        if (!has_mixed_base(record)) return false;
+        for (const CXXBaseSpecifier &base : record->bases()) {
+            const CXXRecordDecl *parent = base.getType()->getAsCXXRecordDecl();
+            if (parent != nullptr && parent->hasDefinition() && has_mixed_base(parent->getDefinition())) return false;
+        }
+        return true;
+    }
+
+    // C++: a virtual function defined the second time (or later) on one path
+    // below its first declaration (destructors left out).
+    bool repeated_overrider(const Decl *decl) const {
+        const auto *method = dyn_cast<CXXMethodDecl>(decl);
+        if (method == nullptr || isa<CXXDestructorDecl>(method) || method->isPureVirtual() || method->isImplicit() ||
+            method->size_overridden_methods() == 0 || method->getCanonicalDecl() != method || method->isDependentContext()) return false;
+        if (!user_location(sm_, method->getLocation())) return false;
+        int defined = 1;
+        const CXXMethodDecl *walk = *method->begin_overridden_methods();
+        while (walk != nullptr && walk->size_overridden_methods() > 0) {
+            if (!walk->isPureVirtual()) ++defined;
+            walk = *walk->begin_overridden_methods();
+        }
+        return defined >= 2;
+    }
+
+    // C++: a non-member function template of a named namespace (not detail,
+    // internal or impl) that declares a class or enum, whose parameters are all
+    // bare template type parameters (T, T&, const T&, T&&, packs of them), with
+    // no constraint.
+    bool open_function_template(const Decl *decl) const {
+        const auto *shared = dyn_cast<FunctionTemplateDecl>(decl);
+        if (shared == nullptr || !shared->isThisDeclarationADefinition() || !user_location(sm_, shared->getLocation())) return false;
+        const FunctionDecl *fn = shared->getTemplatedDecl();
+        if (fn == nullptr || isa<CXXMethodDecl>(fn) || fn->getFriendObjectKind() != Decl::FOK_None) return false;
+        const auto *space = dyn_cast<NamespaceDecl>(fn->getDeclContext());
+        if (space == nullptr || space->isAnonymousNamespace()) return false;
+        for (const DeclContext *up = space; up != nullptr; up = up->getParent()) {
+            if (const auto *named = dyn_cast<NamespaceDecl>(up)) {
+                llvm::StringRef word = named->getName();
+                if (word == "detail" || word == "details" || word == "internal" || word == "impl") return false;
+            }
+        }
+        bool types = false;
+        for (const Decl *inner : space->decls()) {
+            if (const auto *tag = dyn_cast<TagDecl>(inner)) types = types || (!tag->isImplicit() && user_location(sm_, tag->getLocation()));
+            if (isa<ClassTemplateDecl>(inner)) types = true;
+        }
+        if (!types) return false;
+        if (fn->getTrailingRequiresClause() || shared->getTemplateParameters()->getRequiresClause() != nullptr) return false;
+        for (const NamedDecl *param : *shared->getTemplateParameters()) {
+            if (const auto *kind = dyn_cast<TemplateTypeParmDecl>(param)) {
+                if (kind->hasTypeConstraint()) return false;
+            } else if (const auto *value = dyn_cast<NonTypeTemplateParmDecl>(param)) {
+                std::string spelled = value->getType().getAsString();
+                if (spelled.find("enable_if") != std::string::npos) return false;
+            }
+        }
+        std::string result = fn->getReturnType().getAsString();
+        if (result.find("enable_if") != std::string::npos || result.find("decltype") != std::string::npos) return false;
+        bool open = false;
+        for (const ParmVarDecl *param : fn->parameters()) {
+            std::string spelled = param->getType().getAsString();
+            if (spelled.find("enable_if") != std::string::npos) return false;
+            QualType bare = param->getType().getNonReferenceType().getUnqualifiedType();
+            if (const auto *expansion = bare->getAs<PackExpansionType>()) bare = expansion->getPattern().getNonReferenceType().getUnqualifiedType();
+            const auto *type_param = bare->getAs<TemplateTypeParmType>();
+            if (type_param == nullptr || type_param->getDepth() != shared->getTemplateParameters()->getDepth()) return false;
+            open = true;
+        }
+        return open;
+    }
+
+    // C++: volatile on a parameter or a return type (marked on the function), or
+    // on a non-static local whose address is never taken.
+    bool pointless_volatile(const Decl *decl) const {
+        if (!context_.getLangOpts().CPlusPlus || !user_location(sm_, decl->getLocation())) return false;
+        if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            if (fn->getCanonicalDecl() != fn || fn->isImplicit()) return false;
+            if (fn->getReturnType().isVolatileQualified()) return true;
+            for (const ParmVarDecl *param : fn->parameters()) {
+                if (param->getType().isVolatileQualified()) return true;
+            }
+            return false;
+        }
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || isa<ParmVarDecl>(var) || !var->isLocalVarDecl() || var->isStaticLocal() ||
+            !var->getType().isVolatileQualified()) return false;
+        const auto *owner = dyn_cast<FunctionDecl>(var->getDeclContext());
+        if (owner == nullptr || owner->getBody() == nullptr) return false;
+        return !address_taken(owner->getBody(), var);
+    }
+
+    static bool address_taken(const Stmt *stmt, const VarDecl *var) {
+        if (stmt == nullptr) return false;
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            if (unary->getOpcode() == UO_AddrOf) {
+                const auto *ref = dyn_cast<DeclRefExpr>(unary->getSubExpr()->IgnoreParens());
+                if (ref != nullptr && ref->getDecl() == var) return true;
+            }
+        }
+        if (const auto *lambda = dyn_cast<LambdaExpr>(stmt)) {
+            for (const LambdaCapture &capture : lambda->captures()) {
+                if (capture.capturesVariable() && capture.getCapturedVar() == var && capture.getCaptureKind() == LCK_ByRef) return true;
+            }
+        }
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) {
+            // bound to a reference or passed to a reference parameter
+            (void)ref;
+        }
+        for (const Stmt *child : stmt->children()) {
+            if (address_taken(child, var)) return true;
+        }
+        return false;
+    }
+
     // Interns one statement or expression (NodeCollector).
     int node_of(const Stmt *stmt, int parent_uid, int function_uid) {
         NodeRec rec;
@@ -3672,6 +3874,13 @@ public:
         }
         if (const auto *lambda = dyn_cast<LambdaExpr>(stmt)) note_lambda(lambda, rec);
         if (const auto *back = dyn_cast<ReturnStmt>(stmt)) note_member_handle(back);
+        if (const auto *generic = dyn_cast<GenericSelectionExpr>(stmt)) {
+            if (!generic->getBeginLoc().isMacroID()) {
+                add_shape(rec, "written_generic");
+                const Expr *control = generic->isExprPredicate() ? generic->getControllingExpr() : nullptr;
+                if (control != nullptr && control->HasSideEffects(context_)) add_pending(control, "generic_side_effect");
+            }
+        }
         if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) note_scaled_offset(binary);
         if (const auto *explicit_cast = dyn_cast<ExplicitCastExpr>(stmt)) {
             if (alignment_increase(explicit_cast)) add_shape(rec, "align_increase");

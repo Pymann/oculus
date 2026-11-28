@@ -1,0 +1,60 @@
+# OC-0279 consistent_virtual_base, OC-0281 single_final_overrider and OC-0290
+# generic_function_namespace (C++), catalogue in Pymann/coding-rules.  Read
+# IrDecl.shape (doc/ir.md): mixed_virtual_base, repeated_overrider,
+# open_template.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+- class:
+    name: ConsistentVirtualBaseRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 279, "safety.cpp98-.15.2.consistent_virtual_base", "An accessible base is not both virtual and non-virtual in one hierarchy", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "mixed_virtual_base", 279, "a base class is reached both as virtual and as non-virtual base, so the class holds two copies of it", out]
+
+- class:
+    name: SingleFinalOverriderRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 281, "safety.cpp98-.15.2.single_final_overrider", "Each virtual function has at most one definition on every inheritance path", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "repeated_overrider", 281, "this virtual function is defined again on a path that already overrides it", out]
+
+- class:
+    name: GenericFunctionNamespaceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 290, "safety.cpp98-.16.1.generic_function_namespace", "Unconstrained non-member function templates are not declared in associated namespaces", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "open_template", 290, "an unconstrained function template next to the namespace's types competes in argument-dependent lookup for every one of them; constrain it", out]
