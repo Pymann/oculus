@@ -1,0 +1,42 @@
+# OC-0086, OC-0213 (catalogue in Pymann/coding-rules). They read
+# shapes and marks that the frontend sets (doc/ir.md): literal_null, eof_char.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: NullMacroRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 86, "safety.c90-.8.3.null_macro_only", "The null pointer constant is written as NULL", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "literal_null", 86, "a literal 0 is used as a null pointer; write NULL", out]
+
+- class:
+    name: EofRawResultRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 213, "safety.c90-.13.5.eof_with_raw_result", "EOF is compared only with the unmodified result of the function that returned it", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "eof_char", 213, "this char is compared with EOF, but storing the int result in a char loses EOF or a character; keep the result in an int", out]

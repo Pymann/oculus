@@ -105,6 +105,9 @@
 - import: "src/rules/string_input.aiml"
 - import: "src/rules/path_checks.aiml"
 - import: "src/rules/c_headers.aiml"
+- import: "src/rules/flow_checks.aiml"
+- import: "src/rules/unused_entities.aiml"
+- import: "src/rules/null_eof.aiml"
 
 - class:
     name: RuleRegistry
@@ -626,6 +629,20 @@
             - call: [<.rules.push, wide_narrow]
             - decl: [c_library, ptr<Rule>, { new: NoCLibraryRule }]
             - call: [<.rules.push, c_library]
+            - decl: [unreachable, ptr<Rule>, { new: UnreachableCodeRule }]
+            - call: [<.rules.push, unreachable]
+            - decl: [unused_macro, ptr<Rule>, { new: UnusedMacroRule }]
+            - call: [<.rules.push, unused_macro]
+            - decl: [null_macro, ptr<Rule>, { new: NullMacroRule }]
+            - call: [<.rules.push, null_macro]
+            - decl: [recursion, ptr<Rule>, { new: NoRecursionRule }]
+            - call: [<.rules.push, recursion]
+            - decl: [unused_object, ptr<Rule>, { new: UnusedObjectRule }]
+            - call: [<.rules.push, unused_object]
+            - decl: [noreturn_returns, ptr<Rule>, { new: NoreturnReturnsRule }]
+            - call: [<.rules.push, noreturn_returns]
+            - decl: [eof_raw, ptr<Rule>, { new: EofRawResultRule }]
+            - call: [<.rules.push, eof_raw]
       - def:
           name: rule_count
           args: []

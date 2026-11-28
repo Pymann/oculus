@@ -1,0 +1,42 @@
+# OC-0014, OC-0180 (catalogue in Pymann/coding-rules). They read
+# shapes and marks that the frontend sets (doc/ir.md): unused_macro, unused_static.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: UnusedMacroRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 14, "style.c90-.2.2.no_unused_macro", "Every defined macro is used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unused_macro", 14, "this macro is never expanded, tested or undefined; remove it", out]
+
+- class:
+    name: UnusedObjectRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 180, "style.c90-.2.2.no_unused_object", "Every defined object is used", "warn", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "unused_static", 180, "this static object is never read, written or taken by address; remove it", out]

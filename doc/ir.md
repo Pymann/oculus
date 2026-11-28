@@ -730,6 +730,22 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   filled before, with no `b[i] =` or `*b =` in between) and
   `checked_then_opened` (`open`/`fopen` of a path variable that `stat` or
   `lstat` looked at before, without `O_NOFOLLOW`).
+  Batch 36 marks: `dead_statement` (the first statement of a block after a
+  return, break, continue, goto, throw or call of a noreturn function, when it
+  holds no label or case, neither comes from a macro and no preprocessor
+  directive stands between them), `unused_macro` (a macro defined in the main
+  file that nothing expands, tests or undefines and whose name the main file
+  spells only once; names after a failing `#ifndef` are taken as include
+  guards), `literal_null` (C: a literal `0` or `(void *)0` converted to a null
+  pointer, not spelled `NULL`, not written in a macro body, not the only
+  element of `{0}`), `recursion_call` (the call that closes a cycle of direct
+  calls between functions with a body in the unit, constexpr functions and
+  templates left out), `noreturn_returns` (the closing brace of a function
+  declared noreturn whose exit the CFG reaches from a block without a
+  noreturn call or throw) and `eof_char` (the operand of `== EOF`/`!= EOF`
+  that has a char type).  IrDecl shape `unused_static` (C): a static object of
+  the main file, file scope with internal linkage or a static local, that is
+  never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,
   `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;

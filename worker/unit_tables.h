@@ -19,6 +19,7 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Analysis/Analyses/ExprMutationAnalyzer.h"
+#include "clang/Analysis/CFG.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/SourceManager.h"
@@ -735,6 +736,9 @@ public:
         if (straddled_by_using(decl)) add_shape(rec, "straddled_using");
         note_late_calls(decl);
         note_throwing_bodies(decl);
+        note_noreturn_returns(decl);
+        note_graph_function(decl);
+        if (unused_static(decl)) add_shape(rec, "unused_static");
         if (throwing_static(decl)) add_shape(rec, "throwing_static");
         if (unjoined_thread(decl)) add_shape(rec, "unjoined_thread");
         if (qualified_function(decl)) add_shape(rec, "qualified_function");
@@ -1430,6 +1434,7 @@ public:
     // null pointer constant, not of malloc, calloc or realloc); the operand is marked.
     void note_implicit_cast(const ImplicitCastExpr *cast) {
         note_literal_to_mutable(cast);
+        note_literal_null(cast);
         if (!context_.getLangOpts().CPlusPlus && cast->getCastKind() == CK_ArrayToPointerDecay &&
             isa<MemberExpr>(cast->getSubExpr()->IgnoreParens()) && temporary_base(cast->getSubExpr())) {
             add_pending(cast->getSubExpr()->IgnoreParens(), "temporary_decay");
@@ -2527,6 +2532,7 @@ public:
         finish_process_calls();
         finish_positions();
         finish_batch35();
+        finish_batch36();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -3943,6 +3949,243 @@ public:
         }
     }
 
+    // Macros defined in the main file, and the macros referenced anywhere
+    // (expanded, tested, undefined): unused_macro for the rest at the end.
+    void note_main_define(const Token &name, const MacroInfo *info) {
+        if (info == nullptr || !sm_.isInMainFile(name.getLocation())) return;
+        if (const IdentifierInfo *ident = name.getIdentifierInfo()) {
+            if (guard_candidates_.count(ident->getName().str()) > 0) return;
+        }
+        main_macros_.push_back({info, name.getLocation()});
+    }
+    void note_macro_use(const MacroDefinition &definition) {
+        if (const MacroInfo *info = definition.getMacroInfo()) used_macros_.insert(info);
+    }
+    void note_ifndef(const Token &name, const MacroDefinition &definition) {
+        if (definition.getMacroInfo() == nullptr) {
+            if (const IdentifierInfo *ident = name.getIdentifierInfo()) guard_candidates_.insert(ident->getName().str());
+        }
+        note_macro_use(definition);
+    }
+
+    // A statement after return, break, continue, goto, throw or a call of a
+    // noreturn function in the same block (mark dead_statement at it), unless
+    // it holds a label, case or default, or either comes from a macro.
+    void note_dead_statements(const CompoundStmt *block) {
+        const Stmt *previous = nullptr;
+        for (const Stmt *child : block->body()) {
+            if (previous != nullptr && ends_flow(previous) && !holds_label(child) && !child->getBeginLoc().isMacroID() &&
+                !previous->getBeginLoc().isMacroID() && !isa<NullStmt>(child) && !directive_between(previous, child)) {
+                add_ast_mark("dead_statement", child->getBeginLoc());
+                return;
+            }
+            previous = child;
+        }
+    }
+    // A preprocessor directive between two statements (the second may be
+    // reachable in another configuration).
+    bool directive_between(const Stmt *first, const Stmt *second) const {
+        SourceLocation from = first->getEndLoc();
+        SourceLocation to = second->getBeginLoc();
+        if (from.isMacroID() || to.isMacroID() || sm_.getFileID(from) != sm_.getFileID(to)) return true;
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(sm_.getFileID(from), &invalid);
+        if (invalid) return true;
+        unsigned start = sm_.getFileOffset(from);
+        unsigned end = sm_.getFileOffset(to);
+        if (end <= start || end > buffer.size()) return true;
+        llvm::StringRef gap = buffer.slice(start, end);
+        size_t line = gap.find('\n');
+        while (line != llvm::StringRef::npos) {
+            llvm::StringRef rest = gap.drop_front(line + 1).ltrim(" \t");
+            if (rest.starts_with("#")) return true;
+            line = gap.find('\n', line + 1);
+        }
+        return false;
+    }
+    static bool ends_flow(const Stmt *stmt) {
+        if (isa<ReturnStmt>(stmt) || isa<BreakStmt>(stmt) || isa<ContinueStmt>(stmt) || isa<GotoStmt>(stmt)) return true;
+        const auto *expr = dyn_cast<Expr>(stmt);
+        if (expr == nullptr) return false;
+        expr = expr->IgnoreParenImpCasts();
+        if (const auto *voided = dyn_cast<CStyleCastExpr>(expr)) expr = voided->getSubExpr()->IgnoreParenImpCasts();
+        if (isa<CXXThrowExpr>(expr)) return true;
+        const auto *call = dyn_cast<CallExpr>(expr);
+        return call != nullptr && call->getDirectCallee() != nullptr && call->getDirectCallee()->isNoReturn();
+    }
+    static bool holds_label(const Stmt *stmt) {
+        if (stmt == nullptr) return false;
+        if (isa<LabelStmt>(stmt) || isa<SwitchCase>(stmt)) return true;
+        if (isa<SwitchStmt>(stmt)) return false;
+        for (const Stmt *child : stmt->children()) {
+            if (holds_label(child)) return true;
+        }
+        return false;
+    }
+
+    // A comparison of EOF with a char operand (mark eof_char at the operand).
+    void note_eof_compare(const BinaryOperator *compare) {
+        if (compare->getOpcode() != BO_EQ && compare->getOpcode() != BO_NE) return;
+        for (int side = 0; side < 2; ++side) {
+            const Expr *eof = side == 0 ? compare->getLHS() : compare->getRHS();
+            const Expr *other = side == 0 ? compare->getRHS() : compare->getLHS();
+            if (expansion_text(eof) != "EOF") continue;
+            const Expr *bare = other->IgnoreParenImpCasts();
+            if (bare->getType()->isCharType()) add_ast_mark("eof_char", other->getBeginLoc());
+        }
+    }
+
+    // C: a literal 0 or (void *)0 used as a null pointer, not spelled NULL
+    // (mark literal_null at it).
+    void note_literal_null(const ImplicitCastExpr *cast) {
+        if (context_.getLangOpts().CPlusPlus || cast->getCastKind() != CK_NullToPointer) return;
+        const Expr *inner = cast->getSubExpr()->IgnoreParens();
+        if (const auto *voided = dyn_cast<CStyleCastExpr>(inner)) inner = voided->getSubExpr()->IgnoreParenImpCasts();
+        const auto *literal = dyn_cast<IntegerLiteral>(inner);
+        if (literal == nullptr || literal->getValue() != 0) return;
+        SourceLocation at = cast->getSubExpr()->getBeginLoc();
+        if (at.isMacroID() && !sm_.isMacroArgExpansion(at)) return;
+        auto up = context_.getParents(*cast);
+        if (up.size() == 1) {
+            if (const auto *list = up[0].get<InitListExpr>()) {
+                const InitListExpr *written = list->isSemanticForm() && list->getSyntacticForm() != nullptr ? list->getSyntacticForm() : list;
+                if (written->getNumInits() == 1) return;   // {0}
+            }
+        }
+        for (SourceLocation walk = at; walk.isMacroID(); walk = sm_.getImmediateMacroCallerLoc(walk)) {
+            if (Lexer::getImmediateMacroName(walk, sm_, context_.getLangOpts()) == "NULL") return;
+        }
+        add_ast_mark("literal_null", at);
+    }
+
+    // C: a static object (file scope with internal linkage, or a static local)
+    // that nothing refers to.
+    bool unused_static(const Decl *decl) const {
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || context_.getLangOpts().CPlusPlus || !var->hasGlobalStorage() || var->isReferenced()) return false;
+        if (var->hasExternalStorage() || var->getType().isVolatileQualified() || var->getLocation().isMacroID()) return false;
+        if (var->hasAttr<UnusedAttr>() || var->hasAttr<UsedAttr>() || var->hasAttr<SectionAttr>() || var->hasAttr<AliasAttr>()) return false;
+        bool internal = var->isStaticLocal() || (var->isFileVarDecl() && var->getFormalLinkage() == Linkage::Internal);
+        if (!internal || !var->isThisDeclarationADefinition()) return false;
+        for (const VarDecl *other : var->redecls()) {
+            if (other->isReferenced()) return false;
+        }
+        return user_location(sm_, var->getLocation()) && sm_.isInMainFile(sm_.getExpansionLoc(var->getLocation()));
+    }
+
+    // A function declared noreturn whose end or a return is reachable (mark
+    // noreturn_returns at the closing brace).
+    void note_noreturn_returns(const Decl *decl) {
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || !fn->doesThisDeclarationHaveABody() || fn->isDependentContext() || fn->isTemplateInstantiation()) return;
+        if (!fn->hasAttr<C11NoReturnAttr>() && !fn->hasAttr<CXX11NoReturnAttr>() && !fn->hasAttr<NoReturnAttr>()) return;
+        if (!user_location(sm_, fn->getLocation())) return;
+        const auto *body = dyn_cast<CompoundStmt>(fn->getBody());
+        if (body == nullptr) return;
+        CFG::BuildOptions options;
+        std::unique_ptr<CFG> graph = CFG::buildCFG(fn, const_cast<CompoundStmt *>(body), const_cast<ASTContext *>(&context_), options);
+        if (!graph) return;
+        std::set<const CFGBlock *> seen;
+        std::vector<const CFGBlock *> work{&graph->getEntry()};
+        while (!work.empty()) {
+            const CFGBlock *block = work.back();
+            work.pop_back();
+            if (block == nullptr || !seen.insert(block).second) continue;
+            for (const CFGBlock::AdjacentBlock &next : block->succs()) {
+                if (next.getReachableBlock() != nullptr) work.push_back(next.getReachableBlock());
+            }
+        }
+        const CFGBlock &exit = graph->getExit();
+        for (const CFGBlock::AdjacentBlock &before : exit.preds()) {
+            const CFGBlock *block = before.getReachableBlock();
+            if (block == nullptr || seen.count(block) == 0 || block->hasNoReturnElement()) continue;
+            bool throws = false;
+            for (const CFGElement &element : *block) {
+                if (std::optional<CFGStmt> item = element.getAs<CFGStmt>()) {
+                    if (isa<CXXThrowExpr>(item->getStmt())) throws = true;
+                }
+            }
+            if (throws) continue;
+            add_ast_mark("noreturn_returns", body->getRBracLoc());
+            return;
+        }
+    }
+
+    // Functions of the unit with a body, for the call graph (recursion_call).
+    void note_graph_function(const Decl *decl) {
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || !fn->doesThisDeclarationHaveABody() || fn->isDependentContext() || fn->isTemplateInstantiation() || fn->isConstexpr()) return;
+        if (!user_location(sm_, fn->getLocation())) return;
+        graph_functions_.push_back(fn);
+    }
+
+    // Each cycle of direct calls once, at the call that closes it in a depth
+    // first walk from the functions in source order.
+    void finish_recursion() {
+        std::map<const FunctionDecl *, std::vector<const CallExpr *>> calls;
+        std::set<const FunctionDecl *> known;
+        for (const FunctionDecl *fn : graph_functions_) known.insert(fn->getCanonicalDecl());
+        for (const FunctionDecl *fn : graph_functions_) {
+            std::vector<const CallExpr *> found;
+            calls_in(fn->getBody(), found);
+            for (const CallExpr *call : found) {
+                const FunctionDecl *callee = call->getDirectCallee();
+                if (callee != nullptr && known.count(callee->getCanonicalDecl()) > 0) calls[fn->getCanonicalDecl()].push_back(call);
+            }
+        }
+        std::map<const FunctionDecl *, int> state;   // 1 on the stack, 2 done
+        for (const FunctionDecl *fn : graph_functions_) {
+            if (state[fn->getCanonicalDecl()] == 0) recursion_walk(fn->getCanonicalDecl(), calls, state);
+        }
+    }
+    void recursion_walk(const FunctionDecl *fn, std::map<const FunctionDecl *, std::vector<const CallExpr *>> &calls,
+                        std::map<const FunctionDecl *, int> &state) {
+        state[fn] = 1;
+        for (const CallExpr *call : calls[fn]) {
+            const FunctionDecl *callee = call->getDirectCallee()->getCanonicalDecl();
+            if (state[callee] == 1) {
+                add_ast_mark("recursion_call", call->getBeginLoc());
+            } else if (state[callee] == 0) {
+                recursion_walk(callee, calls, state);
+            }
+        }
+        state[fn] = 2;
+    }
+
+    void finish_batch36() {
+        // a name written more than once in the main file (also in skipped
+        // code or another configuration) counts as used
+        std::map<std::string, int> words;
+        if (!main_macros_.empty()) {
+            bool invalid = false;
+            llvm::StringRef buffer = sm_.getBufferData(sm_.getMainFileID(), &invalid);
+            size_t at = 0;
+            while (!invalid && at < buffer.size()) {
+                char letter = buffer[at];
+                if (llvm::isAlpha(letter) || letter == '_') {
+                    size_t start = at;
+                    while (at < buffer.size() && (llvm::isAlnum(buffer[at]) || buffer[at] == '_')) ++at;
+                    ++words[buffer.slice(start, at).str()];
+                } else if (llvm::isDigit(letter)) {
+                    while (at < buffer.size() && (llvm::isAlnum(buffer[at]) || buffer[at] == '_')) ++at;
+                } else {
+                    ++at;
+                }
+            }
+        }
+        for (const auto &entry : main_macros_) {
+            if (used_macros_.count(entry.first) > 0) continue;
+            bool invalid = false;
+            const char *start = sm_.getCharacterData(entry.second, &invalid);
+            if (invalid) continue;
+            std::string name;
+            while (*start != 0 && (llvm::isAlnum(*start) || *start == '_')) name += *start++;
+            if (words[name] > 1) continue;
+            add_spelled_mark("unused_macro", entry.second);
+        }
+        finish_recursion();
+    }
+
     // ~ or << of an operand narrower than int (promoted), not cast at once to an
     // integer type narrower than int (C++).
     bool small_bitwise(const Expr *expr) const {
@@ -5072,6 +5315,8 @@ public:
         note_process_calls(stmt);
         note_stream_positions(stmt);
         note_batch35(stmt);
+        if (const auto *block = dyn_cast<CompoundStmt>(stmt)) note_dead_statements(block);
+        if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
         }
@@ -5834,6 +6079,10 @@ private:
     bool creates_threads_ = false;
     std::vector<SourceLocation> signal_calls_;
     std::map<const FunctionDecl *, bool> throwing_memo_;
+    std::vector<std::pair<const MacroInfo *, SourceLocation>> main_macros_;
+    std::set<const MacroInfo *> used_macros_;
+    std::set<std::string> guard_candidates_;
+    std::vector<const FunctionDecl *> graph_functions_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> buffer_writes_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> readlinks_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> string_reads_;
@@ -5884,13 +6133,21 @@ public:
     }
     void MacroDefined(const Token &name, const MacroDirective *directive) override {
         tables_->note_define(pp_, name, directive);
+        tables_->note_main_define(name, directive != nullptr ? directive->getMacroInfo() : nullptr);
     }
     void MacroUndefined(const Token &name, const MacroDefinition &definition,
                         const MacroDirective *) override {
         tables_->note_undef(pp_, name, definition);
+        tables_->note_macro_use(definition);
     }
+    void Defined(const Token &, const MacroDefinition &definition, SourceRange) override { tables_->note_macro_use(definition); }
+    void Ifdef(SourceLocation, const Token &, const MacroDefinition &definition) override { tables_->note_macro_use(definition); }
+    void Ifndef(SourceLocation, const Token &name, const MacroDefinition &definition) override { tables_->note_ifndef(name, definition); }
+    void Elifdef(SourceLocation, const Token &, const MacroDefinition &definition) override { tables_->note_macro_use(definition); }
+    void Elifndef(SourceLocation, const Token &, const MacroDefinition &definition) override { tables_->note_macro_use(definition); }
     void MacroExpands(const Token &name, const MacroDefinition &definition, SourceRange range,
                       const MacroArgs *args) override {
+        tables_->note_macro_use(definition);
         tables_->note_expansion(pp_, name, definition, args);
         tables_->note_argument_range(definition, range);
     }

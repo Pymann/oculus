@@ -1,0 +1,59 @@
+# OC-0010, OC-0121, OC-0192 (catalogue in Pymann/coding-rules). They read
+# shapes and marks that the frontend sets (doc/ir.md): dead_statement, recursion_call, noreturn_returns.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: UnreachableCodeRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 10, "safety.c90-.2.1.no_unreachable_code", "No code that can never be executed", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "dead_statement", 10, "this statement follows a return, break, continue, goto, throw or a call that never returns and can never run; remove it", out]
+
+- class:
+    name: NoRecursionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 121, "safety.c90-.11.2.no_recursion", "No function calls itself, directly or through others", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "recursion_call", 121, "this call closes a cycle of calls (recursion), which makes stack use unbounded; use a loop", out]
+
+- class:
+    name: NoreturnReturnsRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 192, "safety.c11-.11.3.noreturn_does_not_return", "A function declared noreturn never returns", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "noreturn_returns", 192, "this function is declared noreturn but can reach its end or a return; end every path in a call that does not return", out]

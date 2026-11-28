@@ -281,3 +281,12 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   plain `.h` headers may be shared with C and are left alone.
 - **OC-0433, OC-0456, OC-0458**: the order of statements in one function
   stands in for paths (see doc/ir.md).
+- **OC-0014, OC-0180, OC-0121, OC-0010**: within one unit until phase 2.
+  OC-0014 looks only at macros of the main file (headers can be used by other
+  units); in an amalgamation such as sqlite3.c the public header text is part
+  of the main file, so its unused interface macros are reported (55). OC-0180
+  only in C and only for objects of the main file with internal linkage.
+  OC-0121 follows only direct calls. OC-0010 only sees statements that follow
+  a jump in the same block.
+- **OC-0086**: only in C (C++ is OC-0337). sqlite writes 0 for null pointers
+  throughout (3937 findings); they are correct by the rule text.
