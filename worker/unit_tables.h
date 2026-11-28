@@ -3242,13 +3242,22 @@ public:
 
     // C: a prvalue structure (the result of a call) whose member array is
     // reached through `.` chains.
+    static const Expr *without_temporaries(const Expr *expr) {
+        while (true) {
+            expr = expr->IgnoreParenImpCasts();
+            if (const auto *held = dyn_cast<MaterializeTemporaryExpr>(expr)) { expr = held->getSubExpr(); continue; }
+            return expr;
+        }
+    }
+
     static bool temporary_base(const Expr *expr) {
-        expr = expr->IgnoreParens();
+        expr = without_temporaries(expr);
         while (const auto *member = dyn_cast<MemberExpr>(expr)) {
             if (member->isArrow()) return false;
-            expr = member->getBase()->IgnoreParens();
+            expr = without_temporaries(member->getBase());
         }
-        return isa<CallExpr>(expr) && expr->isPRValue() && expr->getType()->isRecordType();
+        const auto *call = dyn_cast<CallExpr>(expr);
+        return call != nullptr && call->getType()->isRecordType() && !call->isLValue();
     }
 
     // C: an array member of a temporary that decays (shape temporary_decay on the
@@ -3263,9 +3272,9 @@ public:
             if (unary->isIncrementDecrementOp()) target = unary->getSubExpr();
         }
         if (target == nullptr) return;
-        target = target->IgnoreParens();
+        target = without_temporaries(target);
         if (const auto *element = dyn_cast<ArraySubscriptExpr>(target)) {
-            const Expr *base = element->getBase()->IgnoreParenImpCasts();
+            const Expr *base = without_temporaries(element->getBase());
             if (isa<MemberExpr>(base) && temporary_base(base)) add_shape(rec, "temporary_write");
         } else if (isa<MemberExpr>(target) && temporary_base(target)) {
             add_shape(rec, "temporary_write");
