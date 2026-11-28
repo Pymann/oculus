@@ -737,6 +737,7 @@ public:
         note_late_calls(decl);
         note_throwing_bodies(decl);
         note_noreturn_returns(decl);
+        note_function_paths(decl);
         note_graph_function(decl);
         if (unused_static(decl)) add_shape(rec, "unused_static");
         if (throwing_static(decl)) add_shape(rec, "throwing_static");
@@ -2533,6 +2534,7 @@ public:
         finish_positions();
         finish_batch35();
         finish_batch36();
+        finish_batch37();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -3287,6 +3289,7 @@ public:
             const Stmt *meet = one[at];
             const Stmt *left = one[at - 1];
             const Stmt *right = *(found - 1);
+            if (left == right) return false;
             if (const auto *block = dyn_cast<CompoundStmt>(meet)) {
                 for (const Stmt *child : block->body()) {
                     if (child == left) return true;
@@ -4184,6 +4187,301 @@ public:
             add_spelled_mark("unused_macro", entry.second);
         }
         finish_recursion();
+    }
+
+    // The blocks of a CFG reachable from its entry; with stop_noreturn the
+    // edges out of blocks with a noreturn call are not followed.
+    static std::set<const CFGBlock *> reachable_blocks(const CFG &graph, bool stop_noreturn) {
+        std::set<const CFGBlock *> seen;
+        std::vector<const CFGBlock *> work{&graph.getEntry()};
+        while (!work.empty()) {
+            const CFGBlock *block = work.back();
+            work.pop_back();
+            if (block == nullptr || !seen.insert(block).second) continue;
+            if (stop_noreturn && block->hasNoReturnElement()) continue;
+            for (const CFGBlock::AdjacentBlock &next : block->succs()) {
+                if (next.getReachableBlock() != nullptr) work.push_back(next.getReachableBlock());
+            }
+        }
+        return seen;
+    }
+    static const Stmt *last_stmt(const CFGBlock &block) {
+        const Stmt *last = nullptr;
+        for (const CFGElement &element : block) {
+            if (std::optional<CFGStmt> item = element.getAs<CFGStmt>()) last = item->getStmt();
+        }
+        return last;
+    }
+
+    // Function bodies by the CFG: missing_return (a non-void function whose
+    // end can be reached without a return, at the closing brace) and
+    // never_returns (a function that is not declared noreturn and whose exit
+    // no path reaches, at its name).
+    void note_function_paths(const Decl *decl) {
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || !fn->doesThisDeclarationHaveABody() || fn->isDependentContext() || fn->isTemplateInstantiation()) return;
+        if (fn->isMain() || fn->isNoReturn() || fn->isImplicit() || fn->isDefaulted() || !user_location(sm_, fn->getLocation())) return;
+        if (fn->getLocation().isMacroID()) return;
+        const auto *body = dyn_cast<CompoundStmt>(fn->getBody());
+        if (body == nullptr || isa<CoroutineBodyStmt>(fn->getBody())) return;
+        CFG::BuildOptions options;
+        std::unique_ptr<CFG> graph = CFG::buildCFG(fn, const_cast<CompoundStmt *>(body), const_cast<ASTContext *>(&context_), options);
+        if (!graph) return;
+        std::set<const CFGBlock *> seen = reachable_blocks(*graph, false);
+        const CFGBlock &exit = graph->getExit();
+        if (!fn->getReturnType()->isVoidType() && !fn->getReturnType()->isUndeducedType()) {
+            for (const CFGBlock::AdjacentBlock &before : exit.preds()) {
+                const CFGBlock *block = before.getReachableBlock();
+                if (block == nullptr || seen.count(block) == 0 || block->hasNoReturnElement()) continue;
+                const Stmt *last = last_stmt(*block);
+                if (last != nullptr && (isa<ReturnStmt>(last) || isa<CXXThrowExpr>(last))) continue;
+                add_ast_mark("missing_return", body->getRBracLoc());
+                break;
+            }
+        }
+        const auto *method = dyn_cast<CXXMethodDecl>(fn);
+        if (method != nullptr && method->isVirtual()) return;
+        std::set<const CFGBlock *> live = reachable_blocks(*graph, true);
+        if (live.count(&exit) > 0 || body->body_empty()) return;
+        bool throws = false;
+        for (const CFGBlock *block : live) {
+            const Stmt *last = last_stmt(*block);
+            if (last != nullptr && isa<CXXThrowExpr>(last)) throws = true;
+        }
+        if (throws || directive_inside(body)) return;
+        add_ast_mark("never_returns", fn->getLocation());
+    }
+
+    // A preprocessor directive inside a statement's text.
+    bool directive_inside(const Stmt *stmt) const {
+        SourceLocation from = stmt->getBeginLoc();
+        SourceLocation to = stmt->getEndLoc();
+        if (from.isMacroID() || to.isMacroID() || sm_.getFileID(from) != sm_.getFileID(to)) return true;
+        bool invalid = false;
+        llvm::StringRef buffer = sm_.getBufferData(sm_.getFileID(from), &invalid);
+        if (invalid) return true;
+        llvm::StringRef text = buffer.slice(sm_.getFileOffset(from), sm_.getFileOffset(to));
+        size_t line = text.find('\n');
+        while (line != llvm::StringRef::npos) {
+            if (text.drop_front(line + 1).ltrim(" \t").starts_with("#")) return true;
+            line = text.find('\n', line + 1);
+        }
+        return false;
+    }
+
+    // A local (automatic) object named by an expression: &local, a local
+    // array that decays, or (want_ref) the local itself.
+    const VarDecl *local_address(const Expr *expr, bool want_ref) const {
+        const Expr *bare = expr->IgnoreParens();
+        while (const auto *cast = dyn_cast<ImplicitCastExpr>(bare)) {
+            CastKind kind = cast->getCastKind();
+            bool plain = kind == CK_NoOp || kind == CK_DerivedToBase || kind == CK_UncheckedDerivedToBase || kind == CK_LValueToRValue || kind == CK_BitCast;
+            if (!plain && !(kind == CK_ArrayToPointerDecay && !want_ref)) return nullptr;
+            bare = cast->getSubExpr()->IgnoreParens();
+        }
+        if (const auto *address = dyn_cast<UnaryOperator>(bare)) {
+            if (address->getOpcode() == UO_AddrOf) bare = address->getSubExpr()->IgnoreParenImpCasts();
+            else return nullptr;
+        } else if (!want_ref) {
+            const auto *decay = dyn_cast<ImplicitCastExpr>(expr->IgnoreParens());
+            if (decay == nullptr || decay->getCastKind() != CK_ArrayToPointerDecay) return nullptr;
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(bare);
+        const auto *var = ref != nullptr ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+        if (var == nullptr || !var->hasLocalStorage() || var->getType()->isReferenceType()) return nullptr;
+        if (isa<ParmVarDecl>(var) && var->getType()->isArrayType()) return nullptr;
+        return var;
+    }
+
+    // Batch 37 statement facts: local addresses stored in longer-lived
+    // objects or returned (escaping_address), overlapping copies
+    // (overlapping_copy), free of something not allocated (free_unallocated),
+    // FILE objects dereferenced (file_dereference), fclose and later uses.
+    void note_batch37(const Stmt *stmt) {
+        if (const auto *back = dyn_cast<ReturnStmt>(stmt)) {
+            const Expr *value = back->getRetValue();
+            const auto *fn = value != nullptr ? dyn_cast_or_null<FunctionDecl>(enclosing_function_decl(back)) : nullptr;
+            if (fn == nullptr || fn->isDependentContext()) return;
+            bool by_ref = fn->getReturnType()->isReferenceType();
+            if (!by_ref && !fn->getReturnType()->isPointerType()) return;
+            if (local_address(value, by_ref) != nullptr) add_ast_mark("escaping_address", value->getBeginLoc());
+            return;
+        }
+        if (const auto *assign = dyn_cast<BinaryOperator>(stmt)) {
+            if (assign->getOpcode() == BO_Assign) {
+                const Expr *target = assign->getLHS()->IgnoreParenImpCasts();
+                bool longer = false;
+                if (const auto *ref = dyn_cast<DeclRefExpr>(target)) {
+                    const auto *var = dyn_cast<VarDecl>(ref->getDecl());
+                    longer = var != nullptr && var->hasGlobalStorage();
+                } else if (const auto *deref = dyn_cast<UnaryOperator>(target)) {
+                    const auto *ref = deref->getOpcode() == UO_Deref ? dyn_cast<DeclRefExpr>(deref->getSubExpr()->IgnoreParenImpCasts()) : nullptr;
+                    longer = ref != nullptr && isa<ParmVarDecl>(ref->getDecl());
+                }
+                if (longer && local_address(assign->getRHS(), false) != nullptr) add_ast_mark("escaping_address", assign->getRHS()->getBeginLoc());
+                const auto *ref = dyn_cast<DeclRefExpr>(target);
+                if (ref != nullptr) stream_writes_.push_back({ref->getDecl(), assign});
+            }
+            return;
+        }
+        if (const auto *deref = dyn_cast<UnaryOperator>(stmt)) {
+            if (deref->getOpcode() == UO_Deref && file_pointer(deref->getSubExpr()->getType()) && !system_spelled(deref->getBeginLoc())) {
+                add_ast_mark("file_dereference", deref->getBeginLoc());
+            }
+            return;
+        }
+        if (const auto *member = dyn_cast<MemberExpr>(stmt)) {
+            if (member->isArrow() && file_pointer(member->getBase()->getType()) && !system_spelled(member->getBeginLoc())) {
+                add_ast_mark("file_dereference", member->getBeginLoc());
+            }
+            return;
+        }
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) {
+            if (file_pointer(ref->getType())) stream_uses_.push_back({ref->getDecl(), ref});
+            return;
+        }
+        const auto *call = dyn_cast<CallExpr>(stmt);
+        if (call == nullptr) return;
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || callee->getIdentifier() == nullptr) return;
+        SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+        if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) return;
+        llvm::StringRef name = callee->getName();
+        if ((name == "memcpy" || name == "strcpy" || name == "strncpy" || name == "strcat" || name == "strncat") && call->getNumArgs() >= 2) {
+            long long first_offset = 0, second_offset = 0;
+            bool first_known = true, second_known = true;
+            const ValueDecl *first = copy_base(call->getArg(0), first_offset, first_known);
+            const ValueDecl *second = copy_base(call->getArg(1), second_offset, second_known);
+            bool apart = false;
+            if (first_known && second_known && call->getNumArgs() == 3 && name == "memcpy") {
+                Expr::EvalResult size;
+                if (!call->getArg(2)->isValueDependent() && call->getArg(2)->EvaluateAsInt(size, context_)) {
+                    long long gap = first_offset > second_offset ? first_offset - second_offset : second_offset - first_offset;
+                    apart = gap >= size.Val.getInt().getExtValue();
+                }
+            }
+            if (first != nullptr && first == second && first_known && second_known && !apart && !(first_known && second_known && first_offset == second_offset && name == "memcpy")) {
+                add_ast_mark("overlapping_copy", call->getBeginLoc());
+            }
+        }
+        if ((name == "free" || name == "realloc") && call->getNumArgs() >= 1) {
+            const Expr *arg = call->getArg(0)->IgnoreParenCasts();
+            bool bad = isa<StringLiteral>(arg);
+            const auto *decay = dyn_cast<ImplicitCastExpr>(call->getArg(0)->IgnoreParens());
+            while (decay != nullptr && decay->getCastKind() != CK_ArrayToPointerDecay) decay = dyn_cast<ImplicitCastExpr>(decay->getSubExpr()->IgnoreParens());
+            if (decay != nullptr) {
+                const auto *ref = dyn_cast<DeclRefExpr>(decay->getSubExpr()->IgnoreParenImpCasts());
+                const auto *var = ref != nullptr ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+                bad = bad || (var != nullptr && !isa<ParmVarDecl>(var) && var->getType()->isArrayType());
+            }
+            if (const auto *address = dyn_cast<UnaryOperator>(arg)) {
+                if (address->getOpcode() == UO_AddrOf) {
+                    const auto *ref = dyn_cast<DeclRefExpr>(address->getSubExpr()->IgnoreParenImpCasts());
+                    bad = bad || (ref != nullptr && isa<VarDecl>(ref->getDecl()) && !ref->getType()->isPointerType());
+                }
+            }
+            if (bad) add_ast_mark("free_unallocated", call->getArg(0)->getBeginLoc());
+        }
+        if (name == "fclose" && call->getNumArgs() == 1) {
+            const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+            if (ref != nullptr) stream_closes_.push_back({ref->getDecl(), call});
+        }
+    }
+
+    // The variable a copy argument points into, and its constant offset.
+    const ValueDecl *copy_base(const Expr *expr, long long &offset, bool &known) const {
+        expr = expr->IgnoreParenCasts();
+        if (const auto *sum = dyn_cast<BinaryOperator>(expr)) {
+            if (sum->getOpcode() == BO_Add || sum->getOpcode() == BO_Sub) {
+                Expr::EvalResult value;
+                if (!sum->getRHS()->isValueDependent() && sum->getRHS()->EvaluateAsInt(value, context_)) {
+                    offset += (sum->getOpcode() == BO_Add ? 1 : -1) * value.Val.getInt().getExtValue();
+                } else {
+                    known = false;
+                }
+                return copy_base(sum->getLHS(), offset, known);
+            }
+            return nullptr;
+        }
+        if (const auto *address = dyn_cast<UnaryOperator>(expr)) {
+            if (address->getOpcode() != UO_AddrOf) return nullptr;
+            const auto *element = dyn_cast<ArraySubscriptExpr>(address->getSubExpr()->IgnoreParens());
+            if (element == nullptr) return nullptr;
+            Expr::EvalResult value;
+            if (!element->getIdx()->isValueDependent() && element->getIdx()->EvaluateAsInt(value, context_)) {
+                offset += value.Val.getInt().getExtValue();
+            } else {
+                known = false;
+            }
+            return copy_base(element->getBase(), offset, known);
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(expr);
+        return ref != nullptr ? ref->getDecl() : nullptr;
+    }
+
+    // A pointer to the library's FILE.
+    static bool file_pointer(QualType type) {
+        if (type.isNull() || !type->isPointerType()) return false;
+        for (QualType step = type->getPointeeType(); !step.isNull();) {
+            const auto *named = step->getAs<TypedefType>();
+            if (named == nullptr) break;
+            if (named->getDecl()->getName() == "FILE") return true;
+            step = named->getDecl()->getUnderlyingType();
+        }
+        return false;
+    }
+    bool system_spelled(SourceLocation loc) const {
+        SourceLocation spelled = sm_.getSpellingLoc(loc);
+        return spelled.isValid() && sm_.isInSystemHeader(spelled);
+    }
+
+    // The function that holds a statement.
+    const Decl *enclosing_function_decl(const Stmt *stmt) const {
+        DynTypedNode node = DynTypedNode::create(*stmt);
+        for (int depth = 0; depth < 256; ++depth) {
+            auto parents = context_.getParents(node);
+            if (parents.empty()) return nullptr;
+            node = parents[0];
+            if (node.get<LambdaExpr>() != nullptr) return nullptr;
+            if (const auto *fn = node.get<FunctionDecl>()) return fn;
+        }
+        return nullptr;
+    }
+
+    // Uses of a FILE pointer that fclose ran before on one path, with no new
+    // value in between (closed_stream_use).
+    // True when nothing conditional (a branch, loop, switch, ?: or && / ||)
+    // stands between first and the statement it shares with second, so first
+    // runs whenever that shared statement goes on to second.
+    bool unconditional_below(const Stmt *first, const Stmt *second) const {
+        std::vector<const Stmt *> one = stmt_chain(first);
+        std::vector<const Stmt *> two = stmt_chain(second);
+        for (size_t at = 1; at < one.size(); ++at) {
+            const Stmt *step = one[at];
+            if (std::find(two.begin(), two.end(), step) != two.end()) return true;
+            if (isa<IfStmt>(step) || isa<SwitchStmt>(step) || isa<WhileStmt>(step) || isa<DoStmt>(step) || isa<ForStmt>(step)) return false;
+            if (isa<CXXForRangeStmt>(step) || isa<ConditionalOperator>(step) || isa<BinaryConditionalOperator>(step) || isa<SwitchCase>(step)) return false;
+            if (const auto *binary = dyn_cast<BinaryOperator>(step)) {
+                if (binary->getOpcode() == BO_LAnd || binary->getOpcode() == BO_LOr) return false;
+            }
+        }
+        return false;
+    }
+
+    void finish_batch37() {
+        for (const auto &use : stream_uses_) {
+            for (const auto &close : stream_closes_) {
+                if (close.first != use.first || !sequenced_before(close.second, use.second) || !unconditional_below(close.second, use.second)) continue;
+                bool renewed = false;
+                for (const auto &write : stream_writes_) {
+                    if (write.first == use.first && sequenced_before(close.second, write.second) && !sequenced_before(use.second, write.second)) renewed = true;
+                }
+                if (!renewed) {
+                    add_ast_mark("closed_stream_use", use.second->getBeginLoc());
+                    break;
+                }
+            }
+        }
     }
 
     // ~ or << of an operand narrower than int (promoted), not cast at once to an
@@ -5316,6 +5614,7 @@ public:
         note_stream_positions(stmt);
         note_batch35(stmt);
         if (const auto *block = dyn_cast<CompoundStmt>(stmt)) note_dead_statements(block);
+        note_batch37(stmt);
         if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
@@ -6083,6 +6382,9 @@ private:
     std::set<const MacroInfo *> used_macros_;
     std::set<std::string> guard_candidates_;
     std::vector<const FunctionDecl *> graph_functions_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_uses_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_closes_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_writes_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> buffer_writes_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> readlinks_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> string_reads_;

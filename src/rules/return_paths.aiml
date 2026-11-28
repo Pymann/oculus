@@ -1,0 +1,42 @@
+# OC-0123, OC-0194 (catalogue in Pymann/coding-rules). They read marks that the
+# frontend sets (doc/ir.md): missing_return, never_returns.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: MissingReturnRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 123, "safety.c90-.11.3.return_value_on_all_paths", "Every path out of a non-void function returns a value", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "missing_return", 123, "a path reaches the end of this non-void function without returning a value", out]
+
+- class:
+    name: MarkNoreturnRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 194, "style.c11-.11.3.mark_noreturn", "A function that cannot return is declared _Noreturn", "warn", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "never_returns", 194, "this function cannot return; declare it _Noreturn", out]

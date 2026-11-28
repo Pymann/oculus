@@ -108,6 +108,9 @@
 - import: "src/rules/flow_checks.aiml"
 - import: "src/rules/unused_entities.aiml"
 - import: "src/rules/null_eof.aiml"
+- import: "src/rules/return_paths.aiml"
+- import: "src/rules/local_lifetime.aiml"
+- import: "src/rules/stream_objects.aiml"
 
 - class:
     name: RuleRegistry
@@ -643,6 +646,20 @@
             - call: [<.rules.push, noreturn_returns]
             - decl: [eof_raw, ptr<Rule>, { new: EofRawResultRule }]
             - call: [<.rules.push, eof_raw]
+            - decl: [r0123, ptr<Rule>, { new: MissingReturnRule }]
+            - call: [<.rules.push, r0123]
+            - decl: [r0194, ptr<Rule>, { new: MarkNoreturnRule }]
+            - call: [<.rules.push, r0194]
+            - decl: [r0135, ptr<Rule>, { new: EscapingAddressRule }]
+            - call: [<.rules.push, r0135]
+            - decl: [r0138, ptr<Rule>, { new: OverlappingCopyRule }]
+            - call: [<.rules.push, r0138]
+            - decl: [r0173, ptr<Rule>, { new: FreeUnallocatedRule }]
+            - call: [<.rules.push, r0173]
+            - decl: [r0176, ptr<Rule>, { new: FileDereferenceRule }]
+            - call: [<.rules.push, r0176]
+            - decl: [r0177, ptr<Rule>, { new: ClosedStreamRule }]
+            - call: [<.rules.push, r0177]
       - def:
           name: rule_count
           args: []

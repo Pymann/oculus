@@ -1,0 +1,59 @@
+# OC-0173, OC-0176, OC-0177 (catalogue in Pymann/coding-rules). They read marks that the
+# frontend sets (doc/ir.md): free_unallocated, file_dereference, closed_stream_use.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: FreeUnallocatedRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 173, "safety.c90-.14.1.free_only_allocated", "Only memory obtained from the allocation functions is freed", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "free_unallocated", 173, "this pointer does not come from an allocation function and must not be freed", out]
+
+- class:
+    name: FileDereferenceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 176, "safety.c90-.14.2.no_file_dereference", "FILE objects are not accessed through their pointer", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "file_dereference", 176, "a FILE object is accessed or copied through its pointer; use only the pointer", out]
+
+- class:
+    name: ClosedStreamRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 177, "safety.c90-.14.2.no_use_after_fclose", "A FILE pointer is not used after its stream was closed", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "closed_stream_use", 177, "this FILE pointer is used after its stream was closed", out]

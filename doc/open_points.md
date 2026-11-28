@@ -290,3 +290,13 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   a jump in the same block.
 - **OC-0086**: only in C (C++ is OC-0337). sqlite writes 0 for null pointers
   throughout (3937 findings); they are correct by the rule text.
+- **OC-0177**: only an `fclose` that runs unconditionally before the use in
+  the same function (an fclose in a branch, such as an error path that then
+  returns, is not followed); paths through other functions are not checked.
+- **OC-0138**: only copies within one named variable at constant offsets;
+  copies through two different pointers that may alias are not checked.
+- **OC-0135**: returns and stores into static objects; addresses stored into
+  heap objects or out parameters are not followed.
+- **OC-0194**: within one unit; a function counts as non-returning only when
+  the CFG shows it, so calls to functions not declared noreturn keep it
+  returning.

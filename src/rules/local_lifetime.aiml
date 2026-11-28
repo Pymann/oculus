@@ -1,0 +1,42 @@
+# OC-0135, OC-0138 (catalogue in Pymann/coding-rules). They read marks that the
+# frontend sets (doc/ir.md): escaping_address, overlapping_copy.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: EscapingAddressRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 135, "safety.c90-.10.3.no_escaping_local_address", "The address of a local or thread-local object does not outlive it", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "escaping_address", 135, "the address of a local object outlives the object", out]
+
+- class:
+    name: OverlappingCopyRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 138, "safety.c90-.10.3.no_overlapping_copy", "An object is not copied or assigned onto memory it overlaps", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "overlapping_copy", 138, "source and destination of this copy overlap; use memmove", out]

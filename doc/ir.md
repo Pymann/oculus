@@ -743,7 +743,23 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   templates left out), `noreturn_returns` (the closing brace of a function
   declared noreturn whose exit the CFG reaches from a block without a
   noreturn call or throw) and `eof_char` (the operand of `== EOF`/`!= EOF`
-  that has a char type).  IrDecl shape `unused_static` (C): a static object of
+  that has a char type).
+  Batch 37 marks: `missing_return` (the closing brace of a non-void function
+  whose exit the CFG reaches from a block that ends in neither return, throw
+  nor a noreturn call), `never_returns` (the name of a non-virtual function
+  with a non-empty body whose exit no CFG path reaches, without throw and
+  without directives in the body; main, templates and functions already
+  declared noreturn left out), `escaping_address` (a return of `&local`, of a
+  local array or, from a reference-returning non-template function, of a local
+  object through plain casts only; and stores of such an address into an
+  object with static storage), `overlapping_copy` (memcpy, strcpy, strncpy,
+  strcat, strncat whose two pointers address the same variable at constant
+  offsets that overlap within a constant size, or whose size is not constant),
+  `free_unallocated` (free or realloc of a string literal, a local or global
+  array or the address of a non-pointer variable), `file_dereference` (`*fp`,
+  `fp->` or a copy of a FILE object) and `closed_stream_use` (a use of a FILE
+  pointer variable that an unconditional `fclose` of it is sequenced before,
+  with no assignment to the variable in between).  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,
