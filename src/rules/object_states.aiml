@@ -1,0 +1,42 @@
+# OC-0184, OC-0188 (catalogue in Pymann/coding-rules). They read marks that the
+# frontend sets (doc/ir.md): unaligned_redeclaration, uninitialised_atomic_read.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: AlignedRedeclRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 184, "safety.c11-.6.8.consistent_alignment", "Every declaration of an aligned object uses the same alignment", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unaligned_redeclaration", 184, "this declaration lacks the alignment specifier of another declaration of the object", out]
+
+- class:
+    name: AtomicInitRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 188, "safety.c11-.18.1.atomic_initialized", "Atomic objects are initialized before first use", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "uninitialised_atomic_read", 188, "this atomic object is read before it is initialized", out]

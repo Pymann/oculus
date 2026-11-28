@@ -355,3 +355,12 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   not checked yet.
 - **OC-0437**: from Clang's format checks, so only functions declared with
   a format attribute (the C library and wrappers that say so).
+- **OC-0184**: within one unit (C); other units in phase 2.
+- **OC-0188**: only the first use in the source, outside loops, through the
+  C11 atomic builtins; allocated atomics are not checked yet.
+- **OC-0427**: only writes through a cast of the object's own address, or a
+  local pointer initialised with it and never changed; pointers passed on
+  to other functions are not followed.
+- **OC-0453**: only uses that do not compile (the name is a function-like
+  macro used without call); taking the address of errno and redeclaring
+  these names are not checked yet.

@@ -318,6 +318,7 @@ struct DiagSeen {
     bool atomic_void = false;   // err_atomic_specifier_bad_type on void
     bool try_scope = false;     // a jump whose notes name a try block or handler
     bool odd_name = false;      // err_pp_file_not_found of a name with ' \\ " /* or //
+    bool macro_name = false;    // err_undeclared_var_use of a library name that is a macro (OC-0453)
     bool error = false;         // reported as an error (not a warning)
 };
 inline thread_local std::vector<DiagSeen> *diag_sink = nullptr;
@@ -338,6 +339,7 @@ inline int rule_errors(const std::vector<DiagSeen> &seen) {
         if (one.id == diag::err_atomic_specifier_bad_type) reported = one.atomic_void;
         if (one.id == diag::err_goto_into_protected_scope || one.id == diag::err_switch_into_protected_scope) reported = one.try_scope;
         if (one.id == diag::err_pp_file_not_found) reported = one.odd_name;
+        if (one.id == diag::err_undeclared_var_use) reported = one.macro_name;
         if (one.id == diag::err_pp_unterminated_conditional) reported = orphan;
         if (reported) ++count;
     }
@@ -348,6 +350,7 @@ inline bool format_diagnostic(unsigned id);
 
 // The warnings that rules read stay on whatever the project's flags say
 // (batch 44): -w and -Werror are dropped, the rule warnings appended.
+// Spelling correction is off so an undeclared name stays one error (OC-0453).
 inline tooling::ArgumentsAdjuster rule_warning_adjuster() {
     return [](const tooling::CommandLineArguments &args, llvm::StringRef) {
         tooling::CommandLineArguments out;
@@ -356,7 +359,7 @@ inline tooling::ArgumentsAdjuster rule_warning_adjuster() {
             if (flag == "-w" || flag == "-Werror" || flag.starts_with("-Werror=") || flag == "-pedantic-errors") continue;
             out.push_back(arg);
         }
-        for (const char *flag : {"-Wformat", "-Wshift-count-overflow", "-Wshift-count-negative", "-Wdivision-by-zero", "-Wvarargs"}) out.push_back(flag);
+        for (const char *flag : {"-Wformat", "-Wshift-count-overflow", "-Wshift-count-negative", "-Wdivision-by-zero", "-Wvarargs", "-fno-spell-checking"}) out.push_back(flag);
         return out;
     };
 }
@@ -378,7 +381,8 @@ inline bool kept_diagnostic(unsigned id) {
         diag::warn_cannot_pass_non_pod_arg_to_vararg, diag::warn_non_pod_vararg_with_format_string,
         diag::err_cannot_pass_to_vararg, diag::err_cannot_pass_to_vararg_format,
         diag::err_cannot_pass_non_trivial_c_struct_to_vararg, diag::warn_explicit_instantiation_after_specialization,
-        diag::warn_shift_gt_typewidth, diag::warn_shift_negative, diag::warn_remainder_division_by_zero};
+        diag::warn_shift_gt_typewidth, diag::warn_shift_negative, diag::warn_remainder_division_by_zero,
+        diag::err_undeclared_var_use};
     for (unsigned one : kept) {
         if (one == id) return true;
     }
@@ -831,6 +835,7 @@ public:
         note_function_paths(decl);
         note_obsolescent(decl);
         note_batch42_decl(decl);
+        note_batch45_decl(decl);
         if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
             if (fn->doesThisDeclarationHaveABody() && user_location(sm_, fn->getLocation())) defined_functions_.push_back(fn);
         }
@@ -2643,6 +2648,7 @@ public:
         finish_batch42();
         finish_batch43();
         finish_batch44();
+        finish_batch45();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -5483,6 +5489,137 @@ public:
         return false;
     }
 
+    // Batch 45 declaration facts: unaligned_redeclaration (OC-0184, C: a
+    // declaration of an object without the alignas that another declaration
+    // of it has).
+    void note_batch45_decl(const Decl *decl) {
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || context_.getLangOpts().CPlusPlus || !user_location(sm_, var->getLocation())) return;
+        auto written = [](const VarDecl *one) {
+            for (const auto *attr : one->specific_attrs<AlignedAttr>()) {
+                if (!attr->isInherited() && attr->isAlignas()) return true;
+            }
+            return false;
+        };
+        if (written(var)) return;
+        for (const VarDecl *other : var->redecls()) {
+            if (other != var && written(other)) {
+                add_ast_mark("unaligned_redeclaration", var->getBeginLoc());
+                return;
+            }
+        }
+    }
+
+    // The object a pointer expression points to when it is the address of a
+    // const object, cast to a pointer to mutable: (T *)&object or (T *)array.
+    const VarDecl *cast_const_object(const Expr *pointer, int depth) const {
+        const Expr *bare = pointer->IgnoreParenImpCasts();
+        if (const auto *ref = dyn_cast<DeclRefExpr>(bare)) {
+            const auto *local = dyn_cast<VarDecl>(ref->getDecl());
+            if (depth > 0 || local == nullptr || !local->hasLocalStorage() || isa<ParmVarDecl>(local) || local->getInit() == nullptr) return nullptr;
+            if (reassigned_locals_.count(local) > 0) return nullptr;
+            return cast_const_object(local->getInit(), depth + 1);
+        }
+        const auto *cast = dyn_cast<ExplicitCastExpr>(bare);
+        if (cast == nullptr) return nullptr;
+        const Expr *inner = cast->getSubExpr()->IgnoreParenImpCasts();
+        if (const auto *address = dyn_cast<UnaryOperator>(inner)) {
+            if (address->getOpcode() != UO_AddrOf) return nullptr;
+            inner = address->getSubExpr()->IgnoreParens();
+        } else if (!inner->getType()->isArrayType()) {
+            return nullptr;
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(inner);
+        const auto *object = ref != nullptr ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+        if (object == nullptr || object->getType()->isReferenceType() || isa<ParmVarDecl>(object)) return nullptr;
+        return context_.getBaseElementType(object->getType()).isConstQualified() ? object : nullptr;
+    }
+
+    // Batch 45 statement facts: const_object_write (OC-0427, a write through a
+    // pointer that casts const away from the address of a const object, also
+    // through a local pointer set once) and the uses of uninitialised
+    // automatic atomics (OC-0188).
+    void note_batch45(const Stmt *stmt) {
+        const Expr *target = nullptr;
+        if (const auto *binary = dyn_cast<BinaryOperator>(stmt)) {
+            if (binary->isAssignmentOp()) target = binary->getLHS();
+        }
+        if (const auto *unary = dyn_cast<UnaryOperator>(stmt)) {
+            if (unary->isIncrementDecrementOp()) target = unary->getSubExpr();
+            if (unary->getOpcode() == UO_AddrOf) {
+                if (const auto *ref = dyn_cast<DeclRefExpr>(unary->getSubExpr()->IgnoreParens())) {
+                    if (const auto *var = dyn_cast<VarDecl>(ref->getDecl())) reassigned_locals_.insert(var);
+                }
+            }
+        }
+        if (target != nullptr) {
+            const Expr *place = target->IgnoreParens();
+            if (const auto *ref = dyn_cast<DeclRefExpr>(place)) {
+                if (const auto *var = dyn_cast<VarDecl>(ref->getDecl())) reassigned_locals_.insert(var);
+            }
+            const Expr *pointer = nullptr;
+            if (const auto *deref = dyn_cast<UnaryOperator>(place)) {
+                if (deref->getOpcode() == UO_Deref) pointer = deref->getSubExpr();
+            }
+            if (const auto *index = dyn_cast<ArraySubscriptExpr>(place)) pointer = index->getBase();
+            if (const auto *member = dyn_cast<MemberExpr>(place)) {
+                const auto *field = dyn_cast<FieldDecl>(member->getMemberDecl());
+                if (member->isArrow() && (field == nullptr || !field->isMutable())) pointer = member->getBase();
+            }
+            if (pointer != nullptr && !target->isValueDependent()) {
+                const auto *ref = dyn_cast<DeclRefExpr>(pointer->IgnoreParenImpCasts());
+                const auto *local = ref != nullptr ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+                if (local != nullptr) {
+                    const_writes_through_.push_back({local, target->getBeginLoc()});
+                } else if (cast_const_object(pointer, 0) != nullptr) {
+                    add_ast_mark("const_object_write", target->getBeginLoc());
+                }
+            }
+        }
+        const auto *ref = dyn_cast<DeclRefExpr>(stmt);
+        const auto *var = ref != nullptr ? dyn_cast<VarDecl>(ref->getDecl()) : nullptr;
+        if (var == nullptr || context_.getLangOpts().CPlusPlus || !var->hasLocalStorage() || isa<ParmVarDecl>(var) || var->getInit() != nullptr || !var->getType()->isAtomicType()) return;
+        AtomicUse use;
+        use.offset = sm_.getFileOffset(sm_.getExpansionLoc(ref->getBeginLoc()));
+        use.looped = enclosing_loop(ref) != nullptr;
+        auto parents = context_.getParents(*ref);
+        const auto *address = parents.size() == 1 ? parents[0].get<UnaryOperator>() : nullptr;
+        if (address != nullptr && address->getOpcode() == UO_AddrOf) {
+            const Stmt *node = address;
+            for (int step = 0; step < 4; ++step) {
+                auto above = context_.getParents(*node);
+                if (above.size() != 1) break;
+                if (const auto *atomic = above[0].get<AtomicExpr>()) {
+                    AtomicExpr::AtomicOp op = atomic->getOp();
+                    use.read = atomic->getPtr() == node && op != AtomicExpr::AO__c11_atomic_init && op != AtomicExpr::AO__c11_atomic_store;
+                    use.loc = sm_.getFileLoc(address->getBeginLoc());
+                    break;
+                }
+                const Stmt *next = above[0].get<Stmt>();
+                if (next == nullptr || !(isa<ParenExpr>(next) || isa<ImplicitCastExpr>(next))) break;
+                node = next;
+            }
+        }
+        atomic_uses_[var].push_back(use);
+    }
+
+    // Batch 45 unit facts: const_object_write through a local pointer, and
+    // uninitialised_atomic_read (the first use of an uninitialised automatic
+    // atomic in the source is an atomic read, outside any loop).
+    void finish_batch45() {
+        for (const auto &write : const_writes_through_) {
+            const VarDecl *local = write.first;
+            if (!local->hasLocalStorage() || isa<ParmVarDecl>(local) || local->getInit() == nullptr || reassigned_locals_.count(local) > 0) continue;
+            if (cast_const_object(local->getInit(), 1) == nullptr) continue;
+            add_ast_mark("const_object_write", write.second);
+        }
+        for (auto &entry : atomic_uses_) {
+            std::vector<AtomicUse> &uses = entry.second;
+            std::sort(uses.begin(), uses.end(), [](const AtomicUse &left, const AtomicUse &right) { return left.offset < right.offset; });
+            if (!uses.empty() && uses.front().read && !uses.front().looped) add_ast_mark("uninitialised_atomic_read", uses.front().loc);
+        }
+    }
+
     // Batch 44 statement facts: the operator and right operand of shifts and
     // divisions (OC-0091, OC-0445, matched with Clang's diagnostics, which
     // leave out unreachable code), divisions by an unchecked parameter
@@ -5559,6 +5696,7 @@ public:
                 if (id == diag::warn_shift_gt_typewidth || id == diag::warn_shift_negative) add_ast_mark("shift_out_of_range", rhs);
                 if (id == diag::warn_remainder_division_by_zero) add_ast_mark("zero_divisor", rhs);
                 if (format_diagnostic(id)) add_ast_mark("format_mismatch", one.loc);
+                if (id == diag::err_undeclared_var_use && one.macro_name) add_ast_mark("library_macro_object", one.loc);
             }
         }
         for (const auto &divisor : parameter_divisors_) {
@@ -6854,6 +6992,7 @@ public:
         note_batch42(stmt);
         note_batch43(stmt);
         note_batch44(stmt);
+        note_batch45(stmt);
         if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
@@ -7631,6 +7770,15 @@ private:
     std::map<SourceLocation, SourceLocation> operator_rhs_;
     std::vector<std::pair<const ParmVarDecl *, SourceLocation>> parameter_divisors_;
     std::set<const ParmVarDecl *> checked_params_;
+    struct AtomicUse {
+        unsigned offset = 0;
+        bool read = false;
+        bool looped = false;
+        SourceLocation loc;
+    };
+    std::map<const VarDecl *, std::vector<AtomicUse>> atomic_uses_;
+    std::vector<std::pair<const VarDecl *, SourceLocation>> const_writes_through_;
+    std::set<const VarDecl *> reassigned_locals_;
     std::set<const FunctionDecl *> decayed_functions_;
     std::vector<const FunctionDecl *> defined_functions_;
     struct MutexOp {
@@ -7892,6 +8040,15 @@ public:
         if (id == diag::err_pp_file_not_found && info.getNumArgs() > 0 && info.getArgKind(0) == DiagnosticsEngine::ak_std_string) {
             llvm::StringRef name = info.getArgStdStr(0);
             one.odd_name = name.contains('\'') || name.contains('\\') || name.contains('"') || name.contains("/*") || name.contains("//");
+        }
+        if (id == diag::err_undeclared_var_use) {
+            llvm::SmallString<128> text;
+            info.FormatDiagnostic(text);
+            llvm::StringRef message(text);
+            for (const char *name : {"'assert'", "'errno'", "'setjmp'", "'va_start'", "'va_arg'", "'va_end'", "'va_copy'", "'math_errhandling'"}) {
+                one.macro_name = one.macro_name || message.ends_with(name);
+            }
+            if (!one.macro_name) return;
         }
         if (id == diag::err_atomic_specifier_bad_type) {
             llvm::SmallString<128> text;

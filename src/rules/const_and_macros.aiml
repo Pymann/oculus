@@ -1,0 +1,42 @@
+# OC-0427, OC-0453 (catalogue in Pymann/coding-rules). They read marks that the
+# frontend sets (doc/ir.md): const_object_write, library_macro_object.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ConstWriteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 427, "safety.c90-.6.6.no_const_modification", "Objects defined const are not modified", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "const_object_write", 427, "this writes to an object defined const", out]
+
+- class:
+    name: MacroObjectRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 453, "safety.c90-.13.1.no_macro_identifier_as_object", "Library names that may be macros are not used as objects or redeclared", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "library_macro_object", 453, "this library name may be a macro and is used as an object or function", out]

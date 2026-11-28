@@ -843,7 +843,16 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   warnings: argument type, missing or unused arguments, invalid or
   incomplete conversions, nonsensical length, `*` arguments). The frontend
   drops `-w`, `-Werror` and `-pedantic-errors` from the unit's command and
-  appends the warnings these marks read.  IrDecl shape `unused_static` (C): a static object of
+  appends the warnings these marks read, and turns spelling correction off.
+  Batch 45 marks: `unaligned_redeclaration` (C: a declaration of an object
+  without the alignas that another of its declarations has),
+  `uninitialised_atomic_read` (C: the first use of an automatic atomic
+  without initializer is an atomic read outside any loop),
+  `const_object_write` (a write through `(T *)&object` or `(T *)array` of an
+  object defined const, also through a local pointer set once to that) and
+  `library_macro_object` (an undeclared-identifier error for assert, errno,
+  setjmp, va_start, va_arg, va_end, va_copy or math_errhandling; counted as
+  a rule error, so the unit is still checked).  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,

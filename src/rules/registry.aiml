@@ -131,6 +131,8 @@
 - import: "src/rules/order_and_macros.aiml"
 - import: "src/rules/arithmetic_ranges.aiml"
 - import: "src/rules/variadic_formats.aiml"
+- import: "src/rules/object_states.aiml"
+- import: "src/rules/const_and_macros.aiml"
 
 - class:
     name: RuleRegistry
@@ -766,6 +768,14 @@
             - call: [<.rules.push, r0429]
             - decl: [r0437, ptr<Rule>, { new: FormatStringRule }]
             - call: [<.rules.push, r0437]
+            - decl: [r0184, ptr<Rule>, { new: AlignedRedeclRule }]
+            - call: [<.rules.push, r0184]
+            - decl: [r0188, ptr<Rule>, { new: AtomicInitRule }]
+            - call: [<.rules.push, r0188]
+            - decl: [r0427, ptr<Rule>, { new: ConstWriteRule }]
+            - call: [<.rules.push, r0427]
+            - decl: [r0453, ptr<Rule>, { new: MacroObjectRule }]
+            - call: [<.rules.push, r0453]
             - decl: [r0141, ptr<Rule>, { new: HeaderNameCharsRule }]
             - call: [<.rules.push, r0141]
             - decl: [r0142, ptr<Rule>, { new: IncludeFormRule }]
