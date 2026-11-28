@@ -1,0 +1,25 @@
+# OC-0314 (catalogue in Pymann/coding-rules). They read
+# shapes and marks that the frontend sets (doc/ir.md): unjoined_thread.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ImplicitTerminateRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 314, "safety.cpp98-.17.3.no_implicit_terminate", "No path calls terminate implicitly", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "unjoined_thread", 314, "this std::thread is destroyed while joinable, which calls std::terminate; join or detach it, or use std::jthread", out]

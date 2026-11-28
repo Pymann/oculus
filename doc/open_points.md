@@ -260,3 +260,15 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   character could not continue it (`"\x1b[0m"`, `"One\0Two"`).
 - **OC-0343**: every built-in unary `+` is reported, written literals such as
   `+1.0f` included (decided).
+- **OC-0361, OC-0312, OC-0306**: "can throw" is known only for code with a
+  body in the unit and for C++ library functions; calls of the user's
+  functions defined in other units are not reported (phase 2). A throw inside a
+  try block is never reported, whatever its handlers catch. Destructors of
+  static objects are not looked at.
+- **OC-0314**: only a local `std::thread` built with a function and never named
+  again; the other implicit terminate paths are left to their own rules or not
+  checked.
+- **OC-0435**: a position counts as filled when the unit has an `fgetpos` of the
+  same variable and stream anywhere, not on every path.
+- **OC-0462**: only stores into `sin_port`/`sin6_port`; buffers given to
+  `send`/`recv` are not followed.

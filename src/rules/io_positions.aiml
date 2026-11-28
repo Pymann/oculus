@@ -1,0 +1,59 @@
+# OC-0435, OC-0462, OC-0466 (catalogue in Pymann/coding-rules). They read
+# shapes and marks that the frontend sets (doc/ir.md): foreign_position, host_order_port, ucn_paste.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ForeignPositionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 435, "safety.c90-.14.2.fsetpos_from_fgetpos", "fsetpos only receives positions obtained from fgetpos", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "foreign_position", 435, "this position was not filled by fgetpos on the same stream; fsetpos accepts only such positions", out]
+
+- class:
+    name: NetworkOrderRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 462, "safety.c90-.21.1.network_byte_order", "Data sent between systems is converted to and from network byte order", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "host_order_port", 462, "the port is stored in host byte order; convert it with htons", out]
+
+- class:
+    name: UcnPasteRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 466, "security.c99-.12.2.no_ucn_by_paste", "Universal character names are not formed by token pasting", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "ucn_paste", 466, "## forms a universal character name here, which is undefined; write the character or its full \\u name directly", out]

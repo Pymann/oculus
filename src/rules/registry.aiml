@@ -98,6 +98,9 @@
 - import: "src/rules/handler_safety.aiml"
 - import: "src/rules/process_rights.aiml"
 - import: "src/rules/literal_writes.aiml"
+- import: "src/rules/exception_escapes.aiml"
+- import: "src/rules/thread_lifetime.aiml"
+- import: "src/rules/io_positions.aiml"
 
 - class:
     name: RuleRegistry
@@ -587,6 +590,20 @@
             - call: [<.rules.push, handler_object]
             - decl: [literal_write, ptr<Rule>, { new: LiteralWriteRule }]
             - call: [<.rules.push, literal_write]
+            - decl: [noexcept_throw, ptr<Rule>, { new: NoexceptThrowRule }]
+            - call: [<.rules.push, noexcept_throw]
+            - decl: [destructor_throw, ptr<Rule>, { new: DestructorThrowRule }]
+            - call: [<.rules.push, destructor_throw]
+            - decl: [static_throw, ptr<Rule>, { new: StaticInitThrowRule }]
+            - call: [<.rules.push, static_throw]
+            - decl: [implicit_terminate, ptr<Rule>, { new: ImplicitTerminateRule }]
+            - call: [<.rules.push, implicit_terminate]
+            - decl: [foreign_position, ptr<Rule>, { new: ForeignPositionRule }]
+            - call: [<.rules.push, foreign_position]
+            - decl: [network_order, ptr<Rule>, { new: NetworkOrderRule }]
+            - call: [<.rules.push, network_order]
+            - decl: [ucn_paste, ptr<Rule>, { new: UcnPasteRule }]
+            - call: [<.rules.push, ucn_paste]
       - def:
           name: rule_count
           args: []

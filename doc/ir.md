@@ -638,7 +638,11 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   qualifiers); IrNode `width_from_size` on `sizeof(integer) * CHAR_BIT`;
   IrDecl `ambiguous_inherited` (C++) on a class inheriting one member name from
   two bases that are not one shared virtual base, without declaring or using
-  it, `unguarded_main` (C++ with exceptions) on a main whose statements that
+  it, `throwing_static` (C++ with exceptions) on a variable of static storage
+  outside functions, not thread_local, constexpr or constant-initialised,
+  whose initialiser has a throwing point (see `noexcept_throw`),
+  `unjoined_thread` on a local `std::thread` built with a function and never
+  named again, `unguarded_main` (C++ with exceptions) on a main whose statements that
   can throw are not inside a try with `catch (...)`, `straddled_using` (C++)
   on a function declared in a namespace after a using-declaration of its name
   from there; mark `late_call` (C++) at a named non-member call of an
@@ -696,7 +700,21 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   outside the C and POSIX async-signal-safe lists called directly in a function
   passed to `signal`) and `handler_shared_object` (a reference in such a handler
   to an object of static storage that is not const, atomic or
-  `volatile sig_atomic_t`).  Literals in skipped code and on `#include`,
+  `volatile sig_atomic_t`), `noexcept_throw` (C++, at each outermost
+  throwing point of a function written `noexcept` or `throw()`),
+  `destructor_throw` (the same in a destructor), `foreign_position` (the
+  position argument of `fsetpos` when no `fgetpos` of the unit fills that
+  variable for the same stream), `host_order_port` (a value stored into
+  `sin_port`/`sin6_port` that is a non-zero constant or a parameter not of
+  type `in_port_t`, with no `hton*` on the way) and `ucn_paste` (in a macro
+  definition, the backslash of `\u`/`\U` and hex digits that `##` pastes).
+  A throwing point is a `throw`, a `new` whose allocation function can throw,
+  or a call or non-trivial construction of a function known to throw: not
+  nothrow and with a throwing point in its body (followed up to 10 levels,
+  member initialisers of constructors included), or a C++ library function
+  with no body in the unit. Functions of the user's without a body are not
+  known (phase 2). Try blocks, lambdas and unevaluated operands are skipped.
+  Literals in skipped code and on `#include`,
   `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;
   `IrNode.detail` of `sizeof` (`sizeof` or `sizeof_type`), of `typeid`

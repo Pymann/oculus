@@ -734,6 +734,9 @@ public:
         if (unguarded_main(decl)) add_shape(rec, "unguarded_main");
         if (straddled_by_using(decl)) add_shape(rec, "straddled_using");
         note_late_calls(decl);
+        note_throwing_bodies(decl);
+        if (throwing_static(decl)) add_shape(rec, "throwing_static");
+        if (unjoined_thread(decl)) add_shape(rec, "unjoined_thread");
         if (qualified_function(decl)) add_shape(rec, "qualified_function");
         note_class_shape(decl, rec);
         note_must_not_throw(decl, rec);
@@ -2353,6 +2356,26 @@ public:
         macros.push_back(rec);
         if (rec.function_like) note_mixed_params(info);
         if (rec.function_like) note_generic_reuse(info);
+        note_ucn_paste(info, pp);
+    }
+
+    // A backslash and u or U (with hex digits) pasted by ## into something
+    // that would be a universal character name: mark ucn_paste at the
+    // backslash.
+    void note_ucn_paste(const MacroInfo *info, Preprocessor &pp) {
+        llvm::ArrayRef<Token> tokens = info->tokens();
+        for (size_t at = 2; at < tokens.size(); ++at) {
+            if (!tokens[at].is(tok::hashhash)) continue;
+            const Token &word = tokens[at - 1];
+            const Token &slash = tokens[at - 2];
+            const IdentifierInfo *ident = word.getIdentifierInfo();
+            if (ident == nullptr || word.hasLeadingSpace() || !slash.is(tok::unknown) || pp.getSpelling(slash) != "\\") continue;
+            llvm::StringRef name = ident->getName();
+            if (name.empty() || (name[0] != 'u' && name[0] != 'U')) continue;
+            bool hex = true;
+            for (char letter : name.drop_front()) hex = hex && llvm::isHexDigit(letter);
+            if (hex) add_spelled_mark("ucn_paste", slash.getLocation());
+        }
     }
 
     // A parameter that is an operand of # or ## and also used where it is
@@ -2502,6 +2525,7 @@ public:
     void finish_lines(const LangOptions &lang) {
         finish_signals();
         finish_process_calls();
+        finish_positions();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -3461,6 +3485,179 @@ public:
                 if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) continue;
                 if (!async_safe(callee->getName())) add_ast_mark("unsafe_in_handler", call->getBeginLoc());
             }
+        }
+    }
+
+    // Whether a function is known to let an exception out: it is not nothrow
+    // and its body (looked at up to a depth) has a throwing point, or it is a
+    // library function of C++ (not extern "C") with no body in the unit.
+    // Functions of the user's without a body here are not known (phase 2).
+    bool known_throwing(const FunctionDecl *fn, int depth) {
+        if (fn == nullptr) return false;
+        const auto *proto = fn->getType()->getAs<FunctionProtoType>();
+        if (proto != nullptr && !isUnresolvedExceptionSpec(proto->getExceptionSpecType()) && proto->isNothrow()) return false;
+        if (fn->getBuiltinID() != 0) return false;
+        const FunctionDecl *canonical = fn->getCanonicalDecl();
+        auto known = throwing_memo_.find(canonical);
+        if (known != throwing_memo_.end()) return known->second;
+        const FunctionDecl *defined = nullptr;
+        bool result = false;
+        if (fn->hasBody(defined) && defined->getBody() != nullptr) {
+            if (depth >= 10) return false;
+            throwing_memo_[canonical] = false;
+            std::vector<const Stmt *> points;
+            throwing_points(defined->getBody(), depth + 1, points, true);
+            if (const auto *ctor = dyn_cast<CXXConstructorDecl>(defined)) {
+                for (const CXXCtorInitializer *init : ctor->inits()) {
+                    if (points.empty() && init->getInit() != nullptr && init->isWritten()) throwing_points(init->getInit(), depth + 1, points, true);
+                }
+            }
+            result = !points.empty();
+        } else {
+            SourceLocation declared = sm_.getSpellingLoc(fn->getLocation());
+            bool library = declared.isValid() && sm_.isInSystemHeader(declared);
+            result = library && !fn->isExternC() && !fn->isInExternCContext();
+        }
+        throwing_memo_[canonical] = result;
+        return result;
+    }
+
+    // The outermost points of a statement that are known to throw: a throw, a
+    // new that is not nothrow, a call or construction of a known throwing
+    // function.  Try blocks (with any handler), lambdas and unevaluated
+    // operands are skipped.  With first_only it stops at the first point.
+    void throwing_points(const Stmt *stmt, int depth, std::vector<const Stmt *> &out, bool first_only) {
+        if (stmt == nullptr || (first_only && !out.empty())) return;
+        if (isa<LambdaExpr>(stmt) || isa<BlockExpr>(stmt) || isa<UnaryExprOrTypeTraitExpr>(stmt) || isa<CXXNoexceptExpr>(stmt) ||
+            isa<CXXTypeidExpr>(stmt) || isa<DeclRefExpr>(stmt)) {
+            return;
+        }
+        if (const auto *attempt = dyn_cast<CXXTryStmt>(stmt)) {
+            for (unsigned at = 0; at < attempt->getNumHandlers(); ++at) throwing_points(attempt->getHandler(at)->getHandlerBlock(), depth, out, first_only);
+            return;
+        }
+        bool point = false;
+        if (isa<CXXThrowExpr>(stmt)) point = true;
+        if (const auto *fresh = dyn_cast<CXXNewExpr>(stmt)) {
+            const FunctionDecl *op = fresh->getOperatorNew();
+            point = op != nullptr && !fresh->shouldNullCheckAllocation() && known_throwing(op, depth);
+        }
+        if (const auto *call = dyn_cast<CallExpr>(stmt)) point = known_throwing(call->getDirectCallee(), depth);
+        if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
+            if (!make->getConstructor()->isTrivial()) point = known_throwing(make->getConstructor(), depth);
+        }
+        if (point) {
+            out.push_back(stmt);
+            return;
+        }
+        for (const Stmt *child : stmt->children()) throwing_points(child, depth, out, first_only);
+    }
+
+    // C++ functions written noexcept (or throw()) with a throwing point
+    // (noexcept_throw at each), and destructors with one (destructor_throw).
+    void note_throwing_bodies(const Decl *decl) {
+        const auto *fn = dyn_cast<FunctionDecl>(decl);
+        if (fn == nullptr || !context_.getLangOpts().CPlusPlus || !context_.getLangOpts().CXXExceptions) return;
+        if (!fn->doesThisDeclarationHaveABody() || fn->isDependentContext() || fn->isImplicit() || fn->isDefaulted()) return;
+        if (fn->isTemplateInstantiation() || !user_location(sm_, fn->getLocation())) return;
+        const auto *proto = fn->getType()->getAs<FunctionProtoType>();
+        if (proto == nullptr) return;
+        const char *code = nullptr;
+        if (isa<CXXDestructorDecl>(fn)) {
+            code = "destructor_throw";
+        } else {
+            ExceptionSpecificationType spec = proto->getExceptionSpecType();
+            if (spec == EST_BasicNoexcept || spec == EST_NoexceptTrue || spec == EST_DynamicNone) code = "noexcept_throw";
+        }
+        if (code == nullptr) return;
+        std::vector<const Stmt *> points;
+        throwing_points(fn->getBody(), 0, points, false);
+        for (const Stmt *point : points) add_ast_mark(code, point->getBeginLoc());
+    }
+
+    // A variable of static storage outside functions whose initialiser can
+    // throw before main (not constant-initialised, not thread_local).
+    bool throwing_static(const Decl *decl) {
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || !context_.getLangOpts().CPlusPlus || !context_.getLangOpts().CXXExceptions) return false;
+        if (!var->hasGlobalStorage() || var->isLocalVarDecl() || var->getTLSKind() != VarDecl::TLS_None || var->isConstexpr()) return false;
+        if (!var->isThisDeclarationADefinition() || var->getInit() == nullptr || var->getType()->isDependentType()) return false;
+        if (var->isTemplated() || isa<VarTemplateSpecializationDecl>(var) || var->isStaticDataMember() && var->getTemplateInstantiationPattern() != nullptr) return false;
+        if (!user_location(sm_, var->getLocation())) return false;
+        if (var->hasConstantInitialization()) return false;
+        std::vector<const Stmt *> points;
+        throwing_points(var->getInit(), 0, points, true);
+        return !points.empty();
+    }
+
+    // A local std::thread that is never named again: it is destroyed while
+    // joinable.
+    bool unjoined_thread(const Decl *decl) const {
+        const auto *var = dyn_cast<VarDecl>(decl);
+        if (var == nullptr || !var->isLocalVarDecl() || var->isStaticLocal() || var->isReferenced()) return false;
+        if (!std_class(var->getType(), "thread") || var->getType()->isReferenceType()) return false;
+        const auto *make = var->getInit() != nullptr ? dyn_cast<CXXConstructExpr>(var->getInit()->IgnoreImplicit()) : nullptr;
+        if (make == nullptr || make->getNumArgs() == 0 || make->getConstructor()->isDefaultConstructor()) return false;
+        return user_location(sm_, var->getLocation());
+    }
+
+    // fsetpos and fgetpos positions (finish_process_calls), and sin_port or
+    // sin6_port given a host-order value: a non-zero constant or a parameter
+    // not of type in_port_t (mark host_order_port at the value).
+    void note_stream_positions(const Stmt *stmt) {
+        if (const auto *assign = dyn_cast<BinaryOperator>(stmt)) {
+            if (assign->getOpcode() != BO_Assign) return;
+            const auto *member = dyn_cast<MemberExpr>(assign->getLHS()->IgnoreParenImpCasts());
+            const auto *field = member != nullptr ? dyn_cast<FieldDecl>(member->getMemberDecl()) : nullptr;
+            if (field == nullptr || field->getIdentifier() == nullptr || (field->getName() != "sin_port" && field->getName() != "sin6_port")) return;
+            SourceLocation declared = sm_.getSpellingLoc(field->getLocation());
+            if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) return;
+            const Expr *value = assign->getRHS()->IgnoreParenImpCasts();
+            if (isa<CallExpr>(value) || expansion_text(assign->getRHS()).find("hton") != std::string::npos) return;
+            bool host = false;
+            Expr::EvalResult constant;
+            if (!value->isValueDependent() && value->EvaluateAsInt(constant, context_)) {
+                host = constant.Val.getInt() != 0;
+            } else if (const auto *ref = dyn_cast<DeclRefExpr>(value)) {
+                const auto *param = dyn_cast<ParmVarDecl>(ref->getDecl());
+                bool network = false;
+                if (param != nullptr) {
+                    for (QualType step = param->getType(); !step.isNull();) {
+                        const auto *named = step->getAs<TypedefType>();
+                        if (named == nullptr) break;
+                        if (named->getDecl()->getName() == "in_port_t") network = true;
+                        step = named->getDecl()->getUnderlyingType();
+                    }
+                }
+                host = param != nullptr && !network;
+            }
+            if (host) add_ast_mark("host_order_port", assign->getRHS()->getBeginLoc());
+            return;
+        }
+        const auto *call = dyn_cast<CallExpr>(stmt);
+        if (call == nullptr || call->getNumArgs() != 2) return;
+        const FunctionDecl *callee = call->getDirectCallee();
+        bool set = system_function(callee, "fsetpos");
+        bool get = system_function(callee, "fgetpos");
+        if (!set && !get) return;
+        const auto *address = dyn_cast<UnaryOperator>(call->getArg(1)->IgnoreParenImpCasts());
+        const auto *place = address != nullptr && address->getOpcode() == UO_AddrOf ? dyn_cast<DeclRefExpr>(address->getSubExpr()->IgnoreParenImpCasts()) : nullptr;
+        if (place == nullptr) return;
+        const auto *stream = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+        const ValueDecl *from = stream != nullptr ? stream->getDecl() : nullptr;
+        if (set) position_sets_.push_back({place->getDecl(), from, call->getArg(1)->getBeginLoc()});
+        if (get) position_gets_.push_back({place->getDecl(), from});
+    }
+
+    // fsetpos of a position that no fgetpos of the same stream filled.
+    void finish_positions() {
+        for (const PositionUse &use : position_sets_) {
+            bool filled = false;
+            for (const auto &get : position_gets_) {
+                if (get.first != use.position) continue;
+                if (get.second == nullptr || use.stream == nullptr || get.second == use.stream) filled = true;
+            }
+            if (!filled) add_ast_mark("foreign_position", use.where);
         }
     }
 
@@ -4591,6 +4788,7 @@ public:
         if (const auto *call = dyn_cast<CallExpr>(stmt)) note_signal_calls(call);
         note_fgets_index(stmt);
         note_process_calls(stmt);
+        note_stream_positions(stmt);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
         }
@@ -5352,6 +5550,14 @@ private:
     std::vector<SourceLocation> unsafe_calls_;
     bool creates_threads_ = false;
     std::vector<SourceLocation> signal_calls_;
+    std::map<const FunctionDecl *, bool> throwing_memo_;
+    struct PositionUse {
+        const ValueDecl *position;
+        const ValueDecl *stream;
+        SourceLocation where;
+    };
+    std::vector<PositionUse> position_sets_;
+    std::vector<std::pair<const ValueDecl *, const ValueDecl *>> position_gets_;
     std::vector<const CallExpr *> uid_calls_;
     std::vector<const CallExpr *> gid_calls_;
     std::vector<const CallExpr *> env_calls_;

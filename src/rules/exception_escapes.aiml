@@ -1,0 +1,59 @@
+# OC-0361, OC-0312, OC-0306 (catalogue in Pymann/coding-rules). They read
+# shapes and marks that the frontend sets (doc/ir.md): noexcept_throw, destructor_throw, throwing_static.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: NoexceptThrowRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 361, "safety.cpp11-.17.3.noexcept_does_not_throw", "A noexcept function does not let an exception escape", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "noexcept_throw", 361, "this can throw inside a noexcept function, and an escaping exception calls std::terminate; catch it here or drop noexcept", out]
+
+- class:
+    name: DestructorThrowRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 312, "safety.cpp98-.17.3.no_throw_from_destructor", "A destructor does not exit by an exception", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "destructor_throw", 312, "an exception can leave this destructor and calls std::terminate; catch everything inside the destructor", out]
+
+- class:
+    name: StaticInitThrowRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 306, "safety.cpp98-.17.2.throw_during_main_only", "Exceptions are not thrown during static initialisation or termination", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [decl_shape_findings, unit, "throwing_static", 306, "the initialiser of this static object can throw before main, where nothing catches it; use a function-local static or a constant initialiser", out]
