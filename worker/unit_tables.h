@@ -2526,6 +2526,7 @@ public:
         finish_signals();
         finish_process_calls();
         finish_positions();
+        finish_batch35();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -3083,7 +3084,7 @@ public:
     // collects signal calls and handlers for finish_signals, marks
     // stream_side_effect at a getc/putc stream argument with a side effect,
     // putenv_automatic at a putenv argument that is a local array, and
-    // unchecked_setuid at a uid change whose result is thrown away.
+    // unchecked_setuid at a uid or gid change whose result is thrown away.
     void note_signal_calls(const CallExpr *call) {
         const FunctionDecl *callee = call->getDirectCallee();
         if (callee == nullptr || callee->getIdentifier() == nullptr) return;
@@ -3123,7 +3124,8 @@ public:
                 add_ast_mark("putenv_automatic", sm_.getFileLoc(call->getArg(0)->getBeginLoc()));
             }
         }
-        if ((name == "setuid" || name == "seteuid" || name == "setreuid" || name == "setresuid") && result_dropped(call)) {
+        static const std::set<std::string> drops = {"setuid", "seteuid", "setreuid", "setresuid", "setgid", "setegid", "setregid", "setresgid", "setgroups"};
+        if (drops.count(name.str()) > 0 && result_dropped(call)) {
             add_ast_mark("unchecked_setuid", call->getBeginLoc());
         }
     }
@@ -3658,6 +3660,286 @@ public:
                 if (get.second == nullptr || use.stream == nullptr || get.second == use.stream) filled = true;
             }
             if (!filled) add_ast_mark("foreign_position", use.where);
+        }
+    }
+
+    // The parameter of a function template (or generic lambda) declared T&&
+    // with T a template type parameter of that same function: a forwarding
+    // reference.
+    static bool forwarding_param(const ValueDecl *decl) {
+        const auto *param = dyn_cast_or_null<ParmVarDecl>(decl);
+        if (param == nullptr) return false;
+        const auto *ref = param->getType()->getAs<RValueReferenceType>();
+        if (ref == nullptr) return false;
+        QualType pointee = ref->getPointeeTypeAsWritten();
+        if (pointee.hasQualifiers()) return false;
+        const auto *parm_type = pointee->getAs<TemplateTypeParmType>();
+        if (parm_type == nullptr) return false;
+        const auto *fn = dyn_cast<FunctionDecl>(param->getDeclContext());
+        const FunctionTemplateDecl *tmpl = fn != nullptr ? fn->getDescribedFunctionTemplate() : nullptr;
+        if (tmpl == nullptr) return false;
+        const TemplateParameterList *own = tmpl->getTemplateParameters();
+        return parm_type->getDepth() == own->getDepth() && parm_type->getIndex() < own->size() &&
+               isa<TemplateTypeParmDecl>(own->getParam(parm_type->getIndex()));
+    }
+
+    // Batch 35 statement facts: a forwarding reference passed on without
+    // std::forward (mark unforwarded), throw operands that can throw
+    // (throwing_operand), atoi-style conversions and strto* without an end
+    // pointer (unchecked_conversion), device names opened (device_path),
+    // narrow/wide strings cast into the other family (wrong_width_string),
+    // and the facts of readlink, stat/open and fgets failure.
+    void note_batch35(const Stmt *stmt) {
+        if (const auto *ref = dyn_cast<DeclRefExpr>(stmt)) {
+            if (!forwarding_param(ref->getDecl())) return;
+            auto parents = context_.getParents(*ref);
+            if (parents.size() != 1) return;
+            const auto *call = parents[0].get<CallExpr>();
+            const auto *make = parents[0].get<CXXConstructExpr>();
+            const auto *unresolved = parents[0].get<CXXUnresolvedConstructExpr>();
+            bool argument = false;
+            if (call != nullptr && !isa<CXXOperatorCallExpr>(call) && call->getCallee() != ref) {
+                for (const Expr *arg : call->arguments()) argument = argument || arg == ref;
+                std::string callee = expansion_text(call->getCallee());
+                if (callee.find("forward") != std::string::npos || callee.find("move") != std::string::npos) argument = false;
+            }
+            if (make != nullptr && make->getNumArgs() > 0 && !make->isElidable()) {
+                for (const Expr *arg : make->arguments()) argument = argument || arg == ref;
+            }
+            if (unresolved != nullptr) {
+                for (const Expr *arg : unresolved->arguments()) argument = argument || arg == ref;
+            }
+            if (argument && single_plain_use(ref)) add_ast_mark("unforwarded", ref->getBeginLoc());
+            return;
+        }
+        if (const auto *raise = dyn_cast<CXXThrowExpr>(stmt)) {
+            if (!context_.getLangOpts().CXXExceptions || raise->getSubExpr() == nullptr || raise->isTypeDependent()) return;
+            const Expr *operand = raise->getSubExpr()->IgnoreImplicit();
+            while (true) {
+                if (const auto *cast = dyn_cast<CXXFunctionalCastExpr>(operand)) { operand = cast->getSubExpr()->IgnoreImplicit(); continue; }
+                if (const auto *bind = dyn_cast<CXXBindTemporaryExpr>(operand)) { operand = bind->getSubExpr()->IgnoreImplicit(); continue; }
+                if (const auto *temp = dyn_cast<MaterializeTemporaryExpr>(operand)) { operand = temp->getSubExpr()->IgnoreImplicit(); continue; }
+                break;
+            }
+            std::vector<const Stmt *> points;
+            const auto *make = dyn_cast<CXXConstructExpr>(operand);
+            const CXXRecordDecl *record = make != nullptr ? make->getConstructor()->getParent() : nullptr;
+            if (record != nullptr && record->isInStdNamespace()) {
+                for (const Expr *arg : make->arguments()) throwing_points(arg, 0, points, true);
+            } else {
+                throwing_points(operand, 0, points, true);
+            }
+            if (!points.empty()) add_ast_mark("throwing_operand", raise->getSubExpr()->getBeginLoc());
+            return;
+        }
+        if (const auto *assign = dyn_cast<BinaryOperator>(stmt)) {
+            if (!assign->isAssignmentOp()) return;
+            const Expr *target = assign->getLHS()->IgnoreParenImpCasts();
+            const Expr *base = nullptr;
+            if (const auto *element = dyn_cast<ArraySubscriptExpr>(target)) base = element->getBase();
+            if (const auto *deref = dyn_cast<UnaryOperator>(target)) {
+                if (deref->getOpcode() == UO_Deref) base = deref->getSubExpr();
+            }
+            const auto *ref = base != nullptr ? dyn_cast<DeclRefExpr>(base->IgnoreParenImpCasts()) : nullptr;
+            if (ref != nullptr) buffer_writes_.push_back({ref->getDecl(), assign});
+            return;
+        }
+        if (const auto *branch = dyn_cast<IfStmt>(stmt)) {
+            note_fgets_failure(branch);
+            return;
+        }
+        const auto *call = dyn_cast<CallExpr>(stmt);
+        if (call == nullptr) return;
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (callee == nullptr || callee->getIdentifier() == nullptr) return;
+        SourceLocation declared = sm_.getSpellingLoc(callee->getLocation());
+        if (declared.isInvalid() || !sm_.isInSystemHeader(declared)) return;
+        llvm::StringRef name = callee->getName();
+        if (name == "atoi" || name == "atol" || name == "atoll" || name == "atof") add_ast_mark("unchecked_conversion", call->getBeginLoc());
+        static const std::set<std::string> strto = {"strtol", "strtoll", "strtoul", "strtoull", "strtod", "strtof", "strtold", "strtoimax", "strtoumax",
+                                                    "wcstol", "wcstoll", "wcstoul", "wcstoull", "wcstod", "wcstof", "wcstold"};
+        if (strto.count(name.str()) > 0 && call->getNumArgs() >= 2) {
+            const Expr *end = call->getArg(1);
+            if (end->isNullPointerConstant(context_, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull) add_ast_mark("unchecked_conversion", call->getBeginLoc());
+        }
+        if ((name == "fopen" || name == "open" || name == "freopen" || name == "open64" || name == "fopen64") && call->getNumArgs() >= 1) {
+            const auto *text = dyn_cast<StringLiteral>(call->getArg(0)->IgnoreParenImpCasts());
+            if (text != nullptr && text->getCharByteWidth() == 1 && device_name(text->getString())) add_ast_mark("device_path", call->getArg(0)->getBeginLoc());
+        }
+        bool narrow = name.starts_with("str");
+        bool wide = name.starts_with("wcs");
+        if (narrow || wide) {
+            for (unsigned at = 0; at < call->getNumArgs(); ++at) {
+                const auto *cast = dyn_cast<ExplicitCastExpr>(call->getArg(at)->IgnoreParenImpCasts());
+                if (cast == nullptr || !cast->getType()->isPointerType()) continue;
+                QualType from = cast->getSubExpr()->IgnoreParenImpCasts()->getType();
+                if (!from->isPointerType()) continue;
+                QualType held = from->getPointeeType().getCanonicalType().getUnqualifiedType();
+                QualType made = cast->getType()->getPointeeType().getCanonicalType().getUnqualifiedType();
+                bool held_wide = held->isWideCharType() || held->isChar16Type() || held->isChar32Type() || wide_typedef(from->getPointeeType());
+                bool made_narrow = made->isCharType();
+                bool held_narrow = held->isCharType();
+                bool made_wide = made->isWideCharType() || wide_typedef(cast->getType()->getPointeeType());
+                if ((narrow && made_narrow && held_wide) || (wide && made_wide && held_narrow)) add_ast_mark("wrong_width_string", cast->getSubExpr()->getBeginLoc());
+            }
+        }
+        if (name == "readlink" && call->getNumArgs() == 3) {
+            const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(1)->IgnoreParenImpCasts());
+            if (ref != nullptr) readlinks_.push_back({ref->getDecl(), call});
+        }
+        if ((name == "stat" || name == "lstat") && call->getNumArgs() == 2) {
+            const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+            if (ref != nullptr) path_checks_.push_back({ref->getDecl(), call});
+        }
+        if ((name == "open" || name == "fopen" || name == "open64" || name == "fopen64") && call->getNumArgs() >= 2) {
+            const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+            bool nofollow = name.starts_with("open") && expansion_text(call->getArg(1)).find("O_NOFOLLOW") != std::string::npos;
+            if (ref != nullptr && !nofollow) path_opens_.push_back({ref->getDecl(), call});
+        }
+        // a const char * argument: the buffer read as a string
+        for (unsigned at = 0; at < call->getNumArgs() && at < callee->getNumParams(); ++at) {
+            QualType param = callee->getParamDecl(at)->getType();
+            if (!param->isPointerType() || !param->getPointeeType().isConstQualified() || !param->getPointeeType()->isCharType()) continue;
+            const auto *ref = dyn_cast<DeclRefExpr>(call->getArg(at)->IgnoreParenImpCasts());
+            if (ref != nullptr) string_reads_.push_back({ref->getDecl(), ref});
+        }
+    }
+
+    // A type spelled through the typedef wchar_t, char16_t or char32_t (C).
+    static bool wide_typedef(QualType type) {
+        for (QualType step = type; !step.isNull();) {
+            const auto *named = step->getAs<TypedefType>();
+            if (named == nullptr) return false;
+            llvm::StringRef name = named->getDecl()->getName();
+            if (name == "wchar_t" || name == "char16_t" || name == "char32_t") return true;
+            step = named->getDecl()->getUnderlyingType();
+        }
+        return false;
+    }
+
+    // The only reference to its parameter in the function, not inside a loop
+    // or a pack expansion (where forwarding would move the object twice).
+    bool single_plain_use(const DeclRefExpr *ref) const {
+        const auto *param = cast<ParmVarDecl>(ref->getDecl());
+        const auto *fn = dyn_cast<FunctionDecl>(param->getDeclContext());
+        if (fn == nullptr || fn->getBody() == nullptr || inside_loop(ref)) return false;
+        std::vector<const Stmt *> work{fn->getBody()};
+        int uses = 0;
+        while (!work.empty()) {
+            const Stmt *here = work.back();
+            work.pop_back();
+            if (here == nullptr) continue;
+            if (const auto *other = dyn_cast<DeclRefExpr>(here)) {
+                if (other->getDecl() == param) ++uses;
+            }
+            for (const Stmt *child : here->children()) work.push_back(child);
+        }
+        if (uses != 1) return false;
+        DynTypedNode node = DynTypedNode::create(*static_cast<const Stmt *>(ref));
+        for (int depth = 0; depth < 64; ++depth) {
+            auto parents = context_.getParents(node);
+            if (parents.size() != 1) return true;
+            node = parents[0];
+            if (node.get<PackExpansionExpr>() != nullptr || node.get<CXXFoldExpr>() != nullptr) return false;
+            if (node.get<FunctionDecl>() != nullptr) return true;
+        }
+        return true;
+    }
+
+    // Literal names of devices: /dev/..., and the reserved DOS names.
+    static bool device_name(llvm::StringRef path) {
+        if (path.starts_with("/dev/")) return true;
+        std::string lower = path.lower();
+        size_t dot = lower.find('.');
+        std::string stem = dot == std::string::npos ? lower : lower.substr(0, dot);
+        static const std::set<std::string> dos = {"con", "nul", "prn", "aux", "com1", "com2", "com3", "com4", "lpt1", "lpt2", "lpt3"};
+        return dos.count(stem) > 0;
+    }
+
+    // if (fgets(b, ...) == NULL) or !fgets(...): the first use of b in the
+    // failure branch before b is written (mark failed_fgets_buffer).
+    void note_fgets_failure(const IfStmt *branch) {
+        const Expr *cond = branch->getCond()->IgnoreParenImpCasts();
+        const CallExpr *call = nullptr;
+        bool failure_then = true;
+        if (const auto *not_op = dyn_cast<UnaryOperator>(cond)) {
+            if (not_op->getOpcode() == UO_LNot) call = dyn_cast<CallExpr>(not_op->getSubExpr()->IgnoreParenImpCasts());
+        } else if (const auto *compare = dyn_cast<BinaryOperator>(cond)) {
+            if (compare->getOpcode() == BO_EQ || compare->getOpcode() == BO_NE) {
+                failure_then = compare->getOpcode() == BO_EQ;
+                const Expr *left = compare->getLHS()->IgnoreParenImpCasts();
+                const Expr *right = compare->getRHS()->IgnoreParenImpCasts();
+                if (right->isNullPointerConstant(context_, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull) call = dyn_cast<CallExpr>(left);
+                else if (left->isNullPointerConstant(context_, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull) call = dyn_cast<CallExpr>(right);
+            }
+        } else {
+            call = dyn_cast<CallExpr>(cond);
+            failure_then = false;
+        }
+        if (call == nullptr || call->getNumArgs() != 3) return;
+        const FunctionDecl *callee = call->getDirectCallee();
+        if (!system_function(callee, "fgets") && !system_function(callee, "fgetws")) return;
+        const auto *buffer = dyn_cast<DeclRefExpr>(call->getArg(0)->IgnoreParenImpCasts());
+        if (buffer == nullptr) return;
+        const Stmt *failed = failure_then ? branch->getThen() : branch->getElse();
+        if (failed == nullptr) return;
+        std::vector<const Stmt *> steps;
+        if (const auto *block = dyn_cast<CompoundStmt>(failed)) {
+            for (const Stmt *child : block->body()) steps.push_back(child);
+        } else {
+            steps.push_back(failed);
+        }
+        for (const Stmt *step : steps) {
+            std::vector<const DeclRefExpr *> refs;
+            std::vector<const CallExpr *> calls;
+            refs_and_calls(step, refs, calls);
+            const DeclRefExpr *use = nullptr;
+            for (const DeclRefExpr *ref : refs) {
+                if (ref->getDecl() == buffer->getDecl()) {
+                    use = ref;
+                    break;
+                }
+            }
+            if (use == nullptr) continue;
+            if (const auto *assign = dyn_cast<BinaryOperator>(step->IgnoreContainers())) {
+                if (assign->isAssignmentOp()) return;
+            }
+            for (const CallExpr *inner : calls) {
+                const FunctionDecl *fn = inner->getDirectCallee();
+                if (fn == nullptr || fn->getIdentifier() == nullptr || inner->getNumArgs() == 0) continue;
+                static const std::set<std::string> writers = {"memset", "strcpy", "strncpy", "snprintf", "sprintf", "memcpy", "fgets", "strcat"};
+                const auto *first = dyn_cast<DeclRefExpr>(inner->getArg(0)->IgnoreParenImpCasts());
+                if (writers.count(fn->getName().str()) > 0 && first != nullptr && first->getDecl() == buffer->getDecl()) return;
+            }
+            add_ast_mark("failed_fgets_buffer", use->getBeginLoc());
+            return;
+        }
+    }
+
+    // readlink results read as strings without a write in between
+    // (unterminated_link), opens of a path that stat/lstat looked at first
+    // (checked_then_opened).
+    void finish_batch35() {
+        for (const auto &read : string_reads_) {
+            for (const auto &link : readlinks_) {
+                if (link.first != read.first || !sequenced_before(link.second, read.second)) continue;
+                bool written = false;
+                for (const auto &write : buffer_writes_) {
+                    if (write.first == read.first && sequenced_before(link.second, write.second) && sequenced_before(write.second, read.second)) written = true;
+                }
+                if (!written) {
+                    add_ast_mark("unterminated_link", read.second->getBeginLoc());
+                    break;
+                }
+            }
+        }
+        for (const auto &opened : path_opens_) {
+            for (const auto &checked : path_checks_) {
+                if (checked.first == opened.first && sequenced_before(checked.second, opened.second)) {
+                    add_ast_mark("checked_then_opened", opened.second->getBeginLoc());
+                    break;
+                }
+            }
         }
     }
 
@@ -4789,6 +5071,7 @@ public:
         note_fgets_index(stmt);
         note_process_calls(stmt);
         note_stream_positions(stmt);
+        note_batch35(stmt);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
         }
@@ -5551,6 +5834,11 @@ private:
     bool creates_threads_ = false;
     std::vector<SourceLocation> signal_calls_;
     std::map<const FunctionDecl *, bool> throwing_memo_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> buffer_writes_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> readlinks_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> string_reads_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> path_checks_;
+    std::vector<std::pair<const ValueDecl *, const Stmt *>> path_opens_;
     struct PositionUse {
         const ValueDecl *position;
         const ValueDecl *stream;

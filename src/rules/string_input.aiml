@@ -1,0 +1,59 @@
+# OC-0421, OC-0433, OC-0476 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): unchecked_conversion, failed_fgets_buffer, wrong_width_string.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: StringConversionRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 421, "security.c90-.13.4.checked_string_conversion", "Conversions from string to number detect invalid input and overflow", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unchecked_conversion", 421, "this conversion cannot report invalid input or overflow; use strtol and friends and examine the end pointer and errno", out]
+
+- class:
+    name: FailedFgetsBufferRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 433, "safety.c90-.14.2.reset_after_fgets_failure", "The buffer of a failed fgets is reset before it is used", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "failed_fgets_buffer", 433, "fgets failed and left this buffer indeterminate; write it (buffer[0] = '\\0') before using it", out]
+
+- class:
+    name: WideNarrowRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 476, "safety.c90-.13.4.narrow_wide_mismatch", "Narrow and wide strings are not passed to functions of the other kind", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "wrong_width_string", 476, "a string of the other width is cast and passed here; the function reads the wrong number of bytes", out]

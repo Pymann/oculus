@@ -1,0 +1,42 @@
+# OC-0303, OC-0378 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): throwing_operand, unforwarded.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ThrowOperandRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 303, "safety.cpp98-.17.1.throw_operand_no_throw", "Evaluating the operand of throw cannot itself throw", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "throwing_operand", 303, "building this exception object can throw, and that exception replaces the intended one; use a type whose construction cannot throw", out]
+
+- class:
+    name: ForwardingReferenceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 378, "safety.cpp11-.13.6.forward_with_forwarding_ref", "Forwarding references and std::forward are used together", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unforwarded", 378, "this forwarding reference is passed on as an lvalue and loses its value category; pass std::forward<T>(...) instead", out]

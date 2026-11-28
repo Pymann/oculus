@@ -1,0 +1,59 @@
+# OC-0431, OC-0456, OC-0458 (catalogue in Pymann/coding-rules). They read
+# marks of IrFile.lexical_marks that the frontend sets (doc/ir.md): device_path, unterminated_link, checked_then_opened.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: DeviceNameRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 431, "security.c90-.14.2.file_only_operations", "File operations are not applied to device names", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "device_path", 431, "this path names a device, not a file; file functions on devices can block or behave unlike files", out]
+
+- class:
+    name: ReadlinkTerminationRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 456, "security.c90-.21.1.readlink_termination", "The buffer filled by readlink is terminated using its return value", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "unterminated_link", 456, "readlink does not terminate the buffer; set buffer[length] = '\\0' from its result before reading it as a string", out]
+
+- class:
+    name: CheckThenOpenRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 458, "security.c90-.21.1.no_symlink_check_race", "Symbolic links are not checked and then opened in two separate steps", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "checked_then_opened", 458, "this path was checked with stat or lstat and is now opened by name; the file can be swapped in between, open it with O_NOFOLLOW and check the descriptor with fstat", out]

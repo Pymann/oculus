@@ -101,6 +101,10 @@
 - import: "src/rules/exception_escapes.aiml"
 - import: "src/rules/thread_lifetime.aiml"
 - import: "src/rules/io_positions.aiml"
+- import: "src/rules/throw_forwarding.aiml"
+- import: "src/rules/string_input.aiml"
+- import: "src/rules/path_checks.aiml"
+- import: "src/rules/c_headers.aiml"
 
 - class:
     name: RuleRegistry
@@ -604,6 +608,24 @@
             - call: [<.rules.push, network_order]
             - decl: [ucn_paste, ptr<Rule>, { new: UcnPasteRule }]
             - call: [<.rules.push, ucn_paste]
+            - decl: [throw_operand, ptr<Rule>, { new: ThrowOperandRule }]
+            - call: [<.rules.push, throw_operand]
+            - decl: [forwarding_ref, ptr<Rule>, { new: ForwardingReferenceRule }]
+            - call: [<.rules.push, forwarding_ref]
+            - decl: [string_conversion, ptr<Rule>, { new: StringConversionRule }]
+            - call: [<.rules.push, string_conversion]
+            - decl: [device_name, ptr<Rule>, { new: DeviceNameRule }]
+            - call: [<.rules.push, device_name]
+            - decl: [failed_fgets, ptr<Rule>, { new: FailedFgetsBufferRule }]
+            - call: [<.rules.push, failed_fgets]
+            - decl: [readlink_end, ptr<Rule>, { new: ReadlinkTerminationRule }]
+            - call: [<.rules.push, readlink_end]
+            - decl: [check_open, ptr<Rule>, { new: CheckThenOpenRule }]
+            - call: [<.rules.push, check_open]
+            - decl: [wide_narrow, ptr<Rule>, { new: WideNarrowRule }]
+            - call: [<.rules.push, wide_narrow]
+            - decl: [c_library, ptr<Rule>, { new: NoCLibraryRule }]
+            - call: [<.rules.push, c_library]
       - def:
           name: rule_count
           args: []

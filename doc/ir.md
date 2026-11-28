@@ -685,7 +685,8 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   or reads `b[0]` or `*b`), `stream_side_effect` (a stream argument of `getc`,
   `putc`, `getwc`, `putwc` with a side effect), `putenv_automatic` (a `putenv`
   argument that is a local array or `&local[i]`) and `unchecked_setuid`
-  (`setuid`, `seteuid`, `setreuid` or `setresuid` whose result is cast to void
+  (`setuid`, `seteuid`, `setreuid`, `setresuid`, `setgid`, `setegid`,
+  `setregid`, `setresgid` or `setgroups` whose result is cast to void
   or dropped as a statement), `late_group_drop` (a `setgid`, `setegid`,
   `setregid`, `setresgid` or `setgroups` call that a uid change runs before on
   one path: an earlier statement of a common block, the left side of `&&`, `||`
@@ -714,6 +715,21 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   member initialisers of constructors included), or a C++ library function
   with no body in the unit. Functions of the user's without a body are not
   known (phase 2). Try blocks, lambdas and unevaluated operands are skipped.
+  Batch 35 marks: `throwing_operand` (a throw operand with a throwing point;
+  for a standard exception type only its constructor arguments count),
+  `unforwarded` (a forwarding reference, `T&&` of the function's own template
+  parameter or `auto&&`, used once in its function, outside loops and pack
+  expansions, as a call or construction argument without `std::forward`),
+  `unchecked_conversion` (`atoi`, `atol`, `atoll`, `atof`, and `strto*` /
+  `wcsto*` with a null end pointer), `device_path` (a literal `/dev/...` or
+  DOS device name opened with `fopen`/`open`), `wrong_width_string` (a
+  wide string cast to `char *` for a `str*` function, or a narrow one cast for
+  a `wcs*` function), `failed_fgets_buffer` (the first use of the buffer in
+  the failure branch of `if (fgets(b, ...) == NULL)` before a write to it),
+  `unterminated_link` (a `const char *` argument that is a buffer `readlink`
+  filled before, with no `b[i] =` or `*b =` in between) and
+  `checked_then_opened` (`open`/`fopen` of a path variable that `stat` or
+  `lstat` looked at before, without `O_NOFOLLOW`).
   Literals in skipped code and on `#include`,
   `#error` and `#warning` lines are not looked at.
 - `IrDecl.array_param` and `static_array_pos` for parameters written as arrays;

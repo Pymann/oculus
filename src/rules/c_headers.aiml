@@ -1,0 +1,68 @@
+# OC-0322 no_c_library (C++, catalogue in Pymann/coding-rules).  Reads the
+# #include records: a C library header (<stdio.h> or <cstdio> form) included
+# from a C++ source file (.cpp, .cc, .cxx, .hpp ...; plain .h headers may be
+# shared with C and are not looked at).  Allowed by default: cstdint, cstddef,
+# climits, cfloat, cmath, cassert and their .h forms; the rule's `names` key
+# of oculus.json replaces that list.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+
+# The <cname> form of a C library header name (stdio.h -> cstdio), or "".
+- def:
+    name: c_header_stem
+    args: [[name, string]]
+    return: string
+    body:
+      - decl: [c_names, string, "assert complex ctype errno fenv float inttypes iso646 limits locale math setjmp signal stdalign stdarg stdatomic stdbool stddef stdint stdio stdlib stdnoreturn string tgmath threads time uchar wchar wctype"]
+      - decl: [words, list<string>, { call: [c_names.split, " "] }]
+      - decl: [idx, i32, 0]
+      - while:
+          condition: { lt: [idx, words.len] }
+          body:
+            - decl: [word, string, { at: [words, idx] }]
+            - if: { condition: { "||": [{ eq: [name, "${word}.h"] }, { eq: [name, "c${word}"] }] }, then: [{ return: "c${word}" }] }
+            - set: [idx, { "+": [idx, 1] }]
+      - return: ""
+
+- class:
+    name: NoCLibraryRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 322, "style.cpp98-.13.3.no_c_library", "The C standard library headers are not used", "warn", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - decl: [info, RuleInformation, unit.info]
+            - decl: [allowed, list<string>, setting.names]
+            - if:
+                condition: { eq: [allowed.len, 0] }
+                then:
+                  - decl: [defaults, string, "cstdint cstddef climits cfloat cmath cassert"]
+                  - set: [allowed, { call: [defaults.split, " "] }]
+            - decl: [idx, i32, 0]
+            - while:
+                condition: { lt: [idx, info.macros.len] }
+                body:
+                  - decl: [rec, ref<IrMacro>, { at: [info.macros, idx] }]
+                  - if:
+                      condition: { "&&": [{ eq: [{ call: [regex.search, "^include$", rec.kind] }, 0] }, { gte: [rec.pos.file_uid, 0] }, { lt: [rec.pos.file_uid, info.files.len] }] }
+                      then:
+                        - decl: [file, ref<IrFile>, { at: [info.files, rec.pos.file_uid] }]
+                        - decl: [stem, string, { call: [c_header_stem, rec.name] }]
+                        - decl: [cxx_file, bool, { gte: [{ call: [regex.search, "\\.(cpp|cc|cxx|c\\+\\+|C|hpp|hh|hxx|h\\+\\+|ipp|tpp|inl)$", file.path] }, 0] }]
+                        - decl: [user, bool, { eq: [{ call: [regex.search, "^(source|header)$", file.kind] }, 0] }]
+                        - if:
+                            condition: { "&&": [user, cxx_file, { gt: [stem.len, 0] }, { eq: [{ call: [allowed.contains, stem] }, false] }, { eq: [{ call: [allowed.contains, rec.name] }, false] }] }
+                            then:
+                              - call: [out.push, { call: [pos_finding, unit, rec.pos, 322, "${rec.name} is a C library header; use the C++ facilities instead or allow it in oculus.json"] }]
+                  - set: [idx, { "+": [idx, 1] }]

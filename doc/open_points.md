@@ -11,12 +11,6 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   by the rule text. Open: should headers that only wrap a namespace be treated
   differently?
 
-- **OC-0460 privilege_drop_checked, gid functions.** The rule text names
-  `setuid`, `setgid` and the related functions, but the catalogue's bad case
-  drops the result of `setgid` and expects only the `setuid` line. Only the uid
-  functions (`setuid`, `seteuid`, `setreuid`, `setresuid`) are reported until
-  the catalogue says whether the gid functions count too. A path that goes on
-  without testing a stored result is not checked yet.
 - **OC-0451 seeded_prng, test code.** The rule exempts tests that seed with a
   constant on purpose when the project configuration marks the file as test
   code. There is no such key yet, so every constant `srand` seed is reported.
@@ -272,3 +266,18 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
   same variable and stream anywhere, not on every path.
 - **OC-0462**: only stores into `sin_port`/`sin6_port`; buffers given to
   `send`/`recv` are not followed.
+- **OC-0460**: the uid and the gid functions are reported (decided; the
+  catalogue's bad example now expects its `setgid` too). A path that goes on
+  without testing a stored result is not checked yet.
+- **OC-0303**: exceptions of types derived from the standard ones (fmt's
+  `system_error`, `assertion_failure`) count as user types: their
+  construction is followed like any other.
+- **OC-0378**: only the half "a forwarding reference passed on without
+  std::forward", and only for a single use outside loops and pack expansions;
+  `std::forward` applied to something else is not checked yet.
+- **OC-0421**: `strto*` is reported only with a null end pointer; whether the
+  end pointer and errno are examined afterwards is not checked.
+- **OC-0322**: only includes written in C++ files (.cpp, .cc, .hpp and so on);
+  plain `.h` headers may be shared with C and are left alone.
+- **OC-0433, OC-0456, OC-0458**: the order of statements in one function
+  stands in for paths (see doc/ir.md).
