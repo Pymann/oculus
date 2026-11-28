@@ -124,6 +124,9 @@
 - import: "src/rules/macro_prefixes.aiml"
 - import: "src/rules/stream_modes.aiml"
 - import: "src/rules/member_handles.aiml"
+- import: "src/rules/declaration_forms.aiml"
+- import: "src/rules/mutex_use.aiml"
+- import: "src/rules/template_files.aiml"
 
 - class:
     name: RuleRegistry
@@ -727,6 +730,20 @@
             - call: [<.rules.push, r0270]
             - decl: [r0273, ptr<Rule>, { new: ConstMemberHandleRule }]
             - call: [<.rules.push, r0273]
+            - decl: [r0030, ptr<Rule>, { new: ExternalPrefixRule }]
+            - call: [<.rules.push, r0030]
+            - decl: [r0352, ptr<Rule>, { new: InitialisedLocalRule }]
+            - call: [<.rules.push, r0352]
+            - decl: [r0222, ptr<Rule>, { new: ReturnLockedRule }]
+            - call: [<.rules.push, r0222]
+            - decl: [r0224, ptr<Rule>, { new: LockTwiceRule }]
+            - call: [<.rules.push, r0224]
+            - decl: [r0404, ptr<Rule>, { new: DestroyLockedRule }]
+            - call: [<.rules.push, r0404]
+            - decl: [r0296, ptr<Rule>, { new: InstantiationAfterSpecializationRule }]
+            - call: [<.rules.push, r0296]
+            - decl: [r0297, ptr<Rule>, { new: SpecializationFileRule }]
+            - call: [<.rules.push, r0297]
             - decl: [r0141, ptr<Rule>, { new: HeaderNameCharsRule }]
             - call: [<.rules.push, r0141]
             - decl: [r0142, ptr<Rule>, { new: IncludeFormRule }]

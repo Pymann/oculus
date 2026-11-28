@@ -1,0 +1,2 @@
+int left_engine_temperature;
+int right_engine_temperature;

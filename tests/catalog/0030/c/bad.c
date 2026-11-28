@@ -1,0 +1,2 @@
+int engine_temperature_sensor_reading_left;
+int engine_temperature_sensor_reading_right;

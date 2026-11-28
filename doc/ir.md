@@ -808,7 +808,20 @@ Built since then, rule by rule (the models in `src/ir/` are the reference):
   `param_reference_return` (C++: a return of a const lvalue or rvalue
   reference parameter, or its address, also through ?:) and
   `const_member_handle` (C++: a const member function returning a non-const
-  pointer or reference to a non-mutable data member of *this).  IrDecl shape `unused_static` (C): a static object of
+  pointer or reference to a non-mutable data member of *this).
+  Batch 42 marks: `external_prefix_clash` (C: the first declaration of an
+  external name that agrees with an earlier different one in 31 characters,
+  6 case-insensitive before C99), `uninitialised_local` (a local object of
+  automatic storage without initializer, not a parameter, handler variable
+  or structured binding, not in a template), `specialization_elsewhere`
+  (C++: an explicit specialisation of a user template whose declarations are
+  in none of the files of the primary template or of a class or enum among
+  its arguments), `instantiation_after_specialization` (from the diagnostic),
+  `destroy_locked`, `return_locked` (a return after an unconditional lock
+  statement with no unlock in between, in a function that unlocks that mutex
+  elsewhere) and `lock_twice` (C11 mutexes not initialized recursive: a
+  second lock, or a call of a unit function that locks the same global
+  mutex, while it is held).  IrDecl shape `unused_static` (C): a static object of
   the main file, file scope with internal linkage or a static local, that is
   never referenced (not volatile, not `used`, `unused` or in a section).
   Literals in skipped code and on `#include`,

@@ -360,7 +360,7 @@ inline bool kept_diagnostic(unsigned id) {
         diag::ext_mismatched_exception_spec, diag::ext_register_storage_class, diag::warn_deprecated_register,
         diag::warn_cannot_pass_non_pod_arg_to_vararg, diag::warn_non_pod_vararg_with_format_string,
         diag::err_cannot_pass_to_vararg, diag::err_cannot_pass_to_vararg_format,
-        diag::err_cannot_pass_non_trivial_c_struct_to_vararg};
+        diag::err_cannot_pass_non_trivial_c_struct_to_vararg, diag::warn_explicit_instantiation_after_specialization};
     for (unsigned one : kept) {
         if (one == id) return true;
     }
@@ -799,6 +799,7 @@ public:
         note_noreturn_returns(decl);
         note_function_paths(decl);
         note_obsolescent(decl);
+        note_batch42_decl(decl);
         if (decl->getLocation().isValid()) decl_begins_[decl->getLocation().getRawEncoding()] = decl->getBeginLoc();
         note_graph_function(decl);
         if (unused_static(decl)) add_shape(rec, "unused_static");
@@ -2605,6 +2606,7 @@ public:
         finish_diagnostics();
         finish_batch40();
         finish_batch41();
+        finish_batch42();
         if (creates_threads_) {
             for (SourceLocation call : unsafe_calls_) add_ast_mark("unsafe_in_threads", call);
         }
@@ -4600,6 +4602,7 @@ public:
             if ((id == diag::err_goto_into_protected_scope || id == diag::err_switch_into_protected_scope) && one.try_scope) add_ast_mark("jump_into_try", one.loc);
             if (id == diag::err_early_catch_all) add_ast_mark("early_catch_all", one.loc);
             if (id == diag::err_unsupported_string_concat) add_ast_mark("mixed_string_prefix", one.loc);
+            if (id == diag::warn_explicit_instantiation_after_specialization) add_ast_mark("instantiation_after_specialization", one.loc);
             if (id == diag::err_cast_pointer_to_non_pointer_int || id == diag::err_cast_pointer_from_non_pointer_int) add_ast_mark("float_pointer_cast", cast_open(one.loc));
             if (id == diag::err_missing_exception_specification || id == diag::err_mismatched_exception_spec || id == diag::ext_missing_exception_specification || id == diag::ext_mismatched_exception_spec) {
                 add_ast_mark("exception_spec_mismatch", one.loc);
@@ -5052,6 +5055,182 @@ public:
                 if (!replaced) {
                     add_ast_mark("aligned_realloc", grow.second->getArg(0)->getBeginLoc());
                     break;
+                }
+            }
+        }
+    }
+
+    // Batch 42 declaration facts: external_prefix_clash (C: an external name
+    // that agrees with an earlier different one in the significant characters,
+    // 31 or 6 case-insensitive before C99), uninitialised_local (a local
+    // object without an initializer), specialization_elsewhere (C++: an
+    // explicit or partial specialization of a user template in a file without
+    // the primary template).
+    void note_batch42_decl(const Decl *decl) {
+        const LangOptions &lang = context_.getLangOpts();
+        if (decl->isImplicit() || !user_location(sm_, decl->getLocation())) return;
+        const auto *named = dyn_cast<NamedDecl>(decl);
+        if (!lang.CPlusPlus && named != nullptr && named->getIdentifier() != nullptr && (isa<VarDecl>(decl) || isa<FunctionDecl>(decl)) &&
+            decl->getCanonicalDecl() == decl && named->hasExternalFormalLinkage() && !decl->getLocation().isMacroID()) {
+            size_t limit = lang.C99 ? 31 : 6;
+            std::string word = named->getName().str();
+            if (word.size() > limit) {
+                std::string key = word.substr(0, limit);
+                if (!lang.C99) key = llvm::StringRef(key).lower();
+                auto found = external_prefixes_.emplace(key, word);
+                if (!found.second && found.first->second != word) add_ast_mark("external_prefix_clash", decl->getLocation());
+            }
+        }
+        if (const auto *var = dyn_cast<VarDecl>(decl)) {
+            bool plain = var->hasLocalStorage() && !isa<ParmVarDecl>(var) && !var->isExceptionVariable() && var->getInit() == nullptr &&
+                         !var->getType()->isDependentType() && !var->getDeclContext()->isDependentContext() && !isa<DecompositionDecl>(var) &&
+                         !var->getLocation().isMacroID();
+            if (plain) add_ast_mark("uninitialised_local", var->getLocation());
+        }
+        if (!lang.CPlusPlus) return;
+        const NamedDecl *primary = nullptr;
+        std::vector<const Decl *> versions;
+        const TemplateArgumentList *arguments = nullptr;
+        if (const auto *spec = dyn_cast<ClassTemplateSpecializationDecl>(decl)) {
+            if (spec->getSpecializationKind() == TSK_ExplicitSpecialization) {
+                primary = spec->getSpecializedTemplate();
+                arguments = &spec->getTemplateArgs();
+                for (const Decl *one : spec->redecls()) versions.push_back(one);
+            }
+        } else if (const auto *fn = dyn_cast<FunctionDecl>(decl)) {
+            if (fn->getTemplateSpecializationKind() == TSK_ExplicitSpecialization && fn->getPrimaryTemplate() != nullptr) {
+                primary = fn->getPrimaryTemplate();
+                arguments = fn->getTemplateSpecializationArgs();
+                for (const Decl *one : fn->redecls()) versions.push_back(one);
+            }
+        }
+        if (primary == nullptr) return;
+        SourceLocation home = sm_.getExpansionLoc(primary->getCanonicalDecl()->getLocation());
+        if (home.isInvalid() || sm_.isInSystemHeader(home)) return;
+        // The file of the primary template, or of a class or enum the
+        // specialisation is for: every user of the specialisation sees it.
+        std::set<FileID> primary_files;
+        for (const Decl *one : primary->redecls()) primary_files.insert(sm_.getFileID(sm_.getExpansionLoc(one->getLocation())));
+        for (unsigned at = 0; arguments != nullptr && at < arguments->size(); ++at) {
+            const TemplateArgument &argument = arguments->get(at);
+            if (argument.getKind() != TemplateArgument::Type) continue;
+            const TagDecl *tag = argument.getAsType()->getAsTagDecl();
+            for (const Decl *one = tag; tag != nullptr && one != nullptr; one = nullptr) {
+                for (const Decl *version : tag->redecls()) primary_files.insert(sm_.getFileID(sm_.getExpansionLoc(version->getLocation())));
+            }
+        }
+        bool together = false;
+        for (const Decl *one : versions) {
+            if (primary_files.count(sm_.getFileID(sm_.getExpansionLoc(one->getLocation()))) > 0) together = true;
+        }
+        if (!together) add_ast_mark("specialization_elsewhere", decl->getLocation());
+    }
+
+    // Is `call` a statement of its own (its value dropped or cast to void)?
+    bool statement_call(const Stmt *call) const {
+        const Stmt *node = call;
+        for (int step = 0; step < 8; ++step) {
+            auto parents = context_.getParents(*node);
+            if (parents.size() != 1) return false;
+            const Stmt *above = parents[0].get<Stmt>();
+            if (above == nullptr) return false;
+            if (isa<CompoundStmt>(above)) return true;
+            if (!isa<ImplicitCastExpr>(above) && !isa<CStyleCastExpr>(above) && !isa<ParenExpr>(above)) return false;
+            node = above;
+        }
+        return false;
+    }
+
+    // Batch 42 statement facts: the mutex calls, returns and calls of user functions.
+    void note_batch42(const Stmt *stmt) {
+        if (const auto *back = dyn_cast<ReturnStmt>(stmt)) {
+            returns_.push_back(back);
+            return;
+        }
+        const auto *call = dyn_cast<CallExpr>(stmt);
+        if (call == nullptr) return;
+        const FunctionDecl *direct = call->getDirectCallee();
+        const FunctionDecl *body = direct != nullptr ? direct->getDefinition() : nullptr;
+        if (body != nullptr && user_location(sm_, body->getLocation())) user_calls_.push_back({body, call});
+        const FunctionDecl *callee = library_callee(call);
+        if (callee == nullptr || call->getNumArgs() < 1) return;
+        llvm::StringRef name = callee->getName();
+        int kind = 0;
+        if (name == "mtx_lock" || name == "pthread_mutex_lock") kind = 1;
+        if (name == "mtx_unlock" || name == "pthread_mutex_unlock") kind = 2;
+        if (name == "mtx_destroy" || name == "pthread_mutex_destroy") kind = 3;
+        if (name == "mtx_init" && call->getNumArgs() == 2 && mentions_recursive(call->getArg(1))) {
+            if (const ValueDecl *var = named_variable(call->getArg(0), true)) recursive_mutexes_.insert(var);
+        }
+        if (kind == 0) return;
+        MutexOp op;
+        op.kind = kind;
+        op.stmt = call;
+        op.c11 = name.starts_with("mtx_");
+        const ValueDecl *addressed = named_variable(call->getArg(0), true);
+        op.key = addressed != nullptr ? std::make_pair(addressed, true) : std::make_pair(named_variable(call->getArg(0), false), false);
+        if (op.key.first == nullptr) return;
+        mutex_ops_.push_back(op);
+        if (kind == 1 && addressed != nullptr) {
+            const auto *var = dyn_cast<VarDecl>(addressed);
+            const auto *fn = dyn_cast_or_null<FunctionDecl>(enclosing_function_decl(call));
+            if (var != nullptr && var->hasGlobalStorage() && fn != nullptr) function_locks_[fn->getCanonicalDecl()].insert(addressed);
+        }
+    }
+
+    static bool mentions_recursive(const Expr *type) {
+        std::vector<const Stmt *> work = {type};
+        while (!work.empty()) {
+            const Stmt *node = work.back();
+            work.pop_back();
+            if (node == nullptr) continue;
+            if (const auto *ref = dyn_cast<DeclRefExpr>(node)) {
+                if (ref->getDecl()->getName() == "mtx_recursive") return true;
+            }
+            for (const Stmt *child : node->children()) work.push_back(child);
+        }
+        return false;
+    }
+
+    // Is there an unlock of `key` sequenced after `first` and before `second`?
+    bool unlocked_between(const std::pair<const ValueDecl *, bool> &key, const Stmt *first, const Stmt *second) const {
+        for (const MutexOp &op : mutex_ops_) {
+            if (op.kind == 2 && op.key == key && sequenced_before(first, op.stmt) && sequenced_before(op.stmt, second)) return true;
+        }
+        return false;
+    }
+
+    // Batch 42 unit facts: destroy_locked (OC-0404), return_locked (OC-0222,
+    // only in functions that also unlock the mutex) and lock_twice (OC-0224:
+    // C11 mutexes, not initialized recursive; a second lock, or a call of a
+    // function of the unit that locks the same global mutex).
+    void finish_batch42() {
+        for (const MutexOp &lock : mutex_ops_) {
+            if (lock.kind != 1 || !statement_call(lock.stmt)) continue;
+            const Decl *home = enclosing_function_decl(lock.stmt);
+            for (const MutexOp &later : mutex_ops_) {
+                if (later.key != lock.key || later.stmt == lock.stmt) continue;
+                bool ordered = sequenced_before(lock.stmt, later.stmt) && unconditional_below(lock.stmt, later.stmt) && !unlocked_between(lock.key, lock.stmt, later.stmt);
+                if (!ordered) continue;
+                if (later.kind == 3) add_ast_mark("destroy_locked", later.stmt->getBeginLoc());
+                bool recursive = recursive_mutexes_.count(lock.key.first) > 0;
+                if (later.kind == 1 && lock.c11 && later.c11 && !recursive) add_ast_mark("lock_twice", later.stmt->getBeginLoc());
+            }
+            bool unlocks_here = false;
+            for (const MutexOp &op : mutex_ops_) {
+                if (op.kind == 2 && op.key == lock.key && enclosing_function_decl(op.stmt) == home) unlocks_here = true;
+            }
+            for (const ReturnStmt *back : returns_) {
+                if (unlocks_here && sequenced_before(lock.stmt, back) && unconditional_below(lock.stmt, back) && !unlocked_between(lock.key, lock.stmt, back)) {
+                    add_ast_mark("return_locked", back->getBeginLoc());
+                }
+            }
+            if (!lock.c11 || !lock.key.second || recursive_mutexes_.count(lock.key.first) > 0) continue;
+            for (const auto &call : user_calls_) {
+                auto found = function_locks_.find(call.first->getCanonicalDecl());
+                if (found == function_locks_.end() || found->second.count(lock.key.first) == 0) continue;
+                if (sequenced_before(lock.stmt, call.second) && unconditional_below(lock.stmt, call.second) && !unlocked_between(lock.key, lock.stmt, call.second)) {
+                    add_ast_mark("lock_twice", call.second->getBeginLoc());
                 }
             }
         }
@@ -6273,6 +6452,7 @@ public:
         note_batch39(stmt);
         note_batch40(stmt);
         note_batch41(stmt);
+        note_batch42(stmt);
         if (const auto *compare = dyn_cast<BinaryOperator>(stmt)) note_eof_compare(compare);
         if (const auto *make = dyn_cast<CXXConstructExpr>(stmt)) {
             if (std_class(make->getType(), "thread") || std_class(make->getType(), "jthread")) creates_threads_ = true;
@@ -7044,6 +7224,18 @@ private:
     std::vector<std::pair<const ValueDecl *, const Stmt *>> stream_uses_;
     std::set<unsigned> ctype_args_;
     std::map<std::string, std::string> macro_prefixes_;
+    std::map<std::string, std::string> external_prefixes_;
+    struct MutexOp {
+        int kind = 0;   // 1 lock, 2 unlock, 3 destroy, 4 call of a function that locks
+        std::pair<const ValueDecl *, bool> key;   // the variable and whether it was written as &variable
+        const Stmt *stmt = nullptr;
+        bool c11 = false;
+    };
+    std::vector<MutexOp> mutex_ops_;
+    std::vector<const ReturnStmt *> returns_;
+    std::vector<std::pair<const FunctionDecl *, const CallExpr *>> user_calls_;
+    std::map<const FunctionDecl *, std::set<const ValueDecl *>> function_locks_;
+    std::set<const ValueDecl *> recursive_mutexes_;
     std::map<const ValueDecl *, int> stream_modes_;   // 1 opened read-only only, 2 otherwise
     std::vector<std::pair<const ValueDecl *, const Expr *>> stream_puts_;
     std::vector<std::pair<const ValueDecl *, const Stmt *>> aligned_writes_;   // second: the aligned_alloc call

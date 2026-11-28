@@ -326,3 +326,12 @@ and what it waits for. Rule numbers are the catalogue ids (Pymann/coding-rules).
 - **OC-0259**: only continue in while and do loops; whether a for loop is
   well-formed is not checked yet.
 - **OC-0175, OC-0450**: within one function, on local variables.
+- **OC-0030**: within one unit; before C99 (yyjson's compile_ansi.c with
+  -ansi) the 6 case-insensitive characters make every yyjson_ name clash (50).
+- **OC-0352**: many findings (sqlite 5027, yyjson 1031); a C++ object whose
+  class has a trivial default constructor counts as initialised.
+- **OC-0297**: fmt specialises formatter (primary in base.h) for standard
+  types in chrono.h, std.h and so on (54); reported as the rule text says.
+- **OC-0222, OC-0224, OC-0404**: within one function (OC-0224 also one call
+  deep); OC-0222 only in functions that also unlock the mutex, so lock
+  wrappers are not reported.

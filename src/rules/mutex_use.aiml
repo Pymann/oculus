@@ -1,0 +1,59 @@
+# OC-0222, OC-0224, OC-0404 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): return_locked, lock_twice, destroy_locked.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ReturnLockedRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 222, "safety.c11-.18.2.unlock_own_mutexes", "A thread unlocks every mutex it locked", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "return_locked", 222, "this return leaves a mutex locked that the function locked", out]
+
+- class:
+    name: LockTwiceRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 224, "safety.c11-.18.2.no_recursive_lock", "A non-recursive mutex is not locked twice", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "lock_twice", 224, "this locks a non-recursive mutex that is already held", out]
+
+- class:
+    name: DestroyLockedRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 404, "safety.c11-.18.2.no_destroy_locked_mutex", "A mutex is not destroyed while it is locked", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "destroy_locked", 404, "this mutex is destroyed while it is still locked", out]

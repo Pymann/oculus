@@ -1,0 +1,42 @@
+# OC-0296, OC-0297 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): instantiation_after_specialization, specialization_elsewhere.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: InstantiationAfterSpecializationRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 296, "safety.cpp98-.16.2.no_instantiation_of_specialization", "A specialised template is not explicitly instantiated for the same arguments", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "instantiation_after_specialization", 296, "this explicit instantiation names arguments that are already explicitly specialised", out]
+
+- class:
+    name: SpecializationFileRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 297, "safety.cpp98-.16.2.specializations_with_primary", "Specialisations are declared in the same file as their primary template", "error", "c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "specialization_elsewhere", 297, "this specialisation is not declared in the file of its primary template", out]

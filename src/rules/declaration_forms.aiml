@@ -1,0 +1,42 @@
+# OC-0030, OC-0352 (catalogue in Pymann/coding-rules). They read marks
+# that the frontend sets (doc/ir.md): external_prefix_clash, uninitialised_local.
+
+- import: "src/ir/ir.aiml"
+- import: "src/report/finding.aiml"
+- import: "src/rules/rule.aiml"
+- import: "src/rules/rule_kit.aiml"
+- import: "src/rules/lexical_comments.aiml"
+
+- class:
+    name: ExternalPrefixRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 30, "safety.c90-.5.1.distinct_external_names", "Names with external linkage differ within the significant characters", "error", "c"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "external_prefix_clash", 30, "this external name agrees with another external name in the significant characters", out]
+
+- class:
+    name: InitialisedLocalRule
+    implements: [Rule]
+    methods:
+      - def:
+          name: spec
+          args: []
+          return: RuleSpec
+          body:
+            - return: { call: [rule_spec, 352, "safety.c90-.7.1.initialize_all_variables", "Every variable is initialised at its declaration", "error", "c,c++"] }
+      - def:
+          name: check_unit
+          args: [[unit, IrUnit], [metrics, map<string:i32>], [setting, RuleSetting], [out, list<Finding>]]
+          return: void
+          body:
+            - call: [mark_findings, unit, "uninitialised_local", 352, "this variable is not initialised at its declaration", out]
